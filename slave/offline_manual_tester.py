@@ -1,60 +1,67 @@
-# offline_manual_tester.py
-# 手動離線測試器：pack -> (chunk) -> StreamParser -> compare
-# 支援：
-# - 任意 payload 測試（text / hex）
-# - 檔案分包傳輸測試（chunk + 重組 + hash 比對）
+# offline_manual_tester_cn.py
+# 離線手動測試器（不使用網路）
+# - 手動輸入資料：pack -> StreamParser -> compare
+# - 檔案分包測試：file -> chunks -> packets -> StreamParser -> rebuild -> compare + sha256
+# - 計時統計
 
-import sys
+import time
+from proto import pack_packet, StreamParser
 
-from proto import pack_packet, StreamParser, ADDR_BROADCAST
-
-# 你可以自行改 CMD
 CMD_ECHO = 0x0101
 CMD_FILE_CHUNK = 0x0201
 
 MY_ADDR = 0x0002
-SERVER_ADDR = 0x0001
 
 
-def _to_bytes_from_user(s: str) -> bytes:
+def now_ms():
+    """Get ms timestamp (MicroPython/CPython compatible)."""
+    try:
+        return time.ticks_ms()
+    except AttributeError:
+        return int(time.time() * 1000)
+
+
+def ms_diff(t1, t0):
+    """Get ms delta (MicroPython/CPython compatible)."""
+    try:
+        return time.ticks_diff(t1, t0)
+    except AttributeError:
+        return t1 - t0
+
+
+def sha256_hex(data: bytes):
+    """Return sha256 hex string, or None if hashlib not available."""
+    try:
+        import hashlib
+        return hashlib.sha256(data).hexdigest()
+    except Exception:
+        return None
+
+
+def input_to_bytes(s: str) -> bytes:
     """
     支援兩種輸入：
-    1) text: hello
-    2) hex:  01 02 0A FF  或 01020AFF（不含 0x）
+    1) 文字：hello
+    2) 十六進位：hex: 01 02 0A FF  或 hex:01020AFF
     """
     s = s.strip()
     if not s:
         return b""
 
-    # 使用者指定 hex 模式：以 "hex:" 開頭
     if s.startswith("hex:"):
         h = s[4:].strip().replace(" ", "")
         if len(h) % 2 != 0:
-            raise ValueError("hex length must be even")
-        return bytes(int(h[i:i+2], 16) for i in range(0, len(h), 2))
+            raise ValueError("十六進位長度必須為偶數")
+        return bytes(int(h[i:i + 2], 16) for i in range(0, len(h), 2))
 
-    # 自動判斷：如果只包含 0-9a-fA-F 與空格，且長度合理，就當 hex
-    maybe_hex = s.replace(" ", "")
-    if maybe_hex and all(c in "0123456789abcdefABCDEF" for c in maybe_hex) and (len(maybe_hex) % 2 == 0):
-        # 你如果不想自動判斷，可刪掉這段，全部要求用 hex: 前綴
-        return bytes(int(maybe_hex[i:i+2], 16) for i in range(0, len(maybe_hex), 2))
-
-    # 預設當作 utf-8 text
     return s.encode("utf-8")
 
 
-def chunk_bytes(data: bytes, chunk_size: int) -> list:
-    """把 bytes 切成固定大小 chunks"""
-    out = []
-    for i in range(0, len(data), chunk_size):
-        out.append(data[i:i+chunk_size])
-    return out
-
-
-def simulate_stream_delivery(packets: list, fragment_pattern=(1, 2, 5, 3, 8, 13, 21, 34)) -> list:
+def simulate_tcp_fragmentation(packets: list, pattern=(1, 2, 5, 3, 8, 13, 21, 34)) -> list:
     """
-    模擬 TCP 傳輸：把多個 packet 黏在一起後，再用不規則大小切碎
-    回傳 chunks（每次 feed 的資料）
+    模擬 TCP 拆包/黏包：
+    - 先將多個 packet 串接成一條 byte stream
+    - 再用不規則長度切碎，模擬 recv() 可能拿到任意片段
     """
     stream = b"".join(packets)
 
@@ -62,105 +69,131 @@ def simulate_stream_delivery(packets: list, fragment_pattern=(1, 2, 5, 3, 8, 13,
     i = 0
     p = 0
     while i < len(stream):
-        sz = fragment_pattern[p % len(fragment_pattern)]
-        chunks.append(stream[i:i+sz])
+        sz = pattern[p % len(pattern)]
+        chunks.append(stream[i:i + sz])
         i += sz
         p += 1
     return chunks
 
 
-def sha256_bytes(data: bytes) -> str:
-    """MicroPython/CPython 兼容 sha256"""
-    try:
-        import hashlib
-        return hashlib.sha256(data).hexdigest()
-    except Exception:
-        # 部分 MicroPython 可能沒有 hashlib（通常 ESP32 有）
-        return ""
+def test_manual_echo():
+    print("\n=== [1] 手動資料回環測試（打包 -> 解析 -> 比對）===")
+    print("請輸入任意資料：")
+    print("  - 文字範例：hello")
+    print("  - 十六進位範例：hex: 01 02 0A FF")
 
-
-def test_echo_manual():
-    print("\n=== [1] MANUAL ECHO TEST ===")
-    print("輸入任意資料：")
-    print("- 文字：hello")
-    print("- hex：hex: 01 02 0A FF")
     user = input("data> ").strip()
+    try:
+        payload = input_to_bytes(user)
+    except Exception as e:
+        print("輸入格式錯誤：%s" % e)
+        return
 
-    payload = _to_bytes_from_user(user)
-    print("payload len =", len(payload))
+    print("原始資料長度：%d bytes" % len(payload))
 
-    # pack -> packets
-    pkt = pack_packet(CMD_ECHO, payload, src=SERVER_ADDR, dst=MY_ADDR)
+    # pack timing
+    t0 = now_ms()
+    pkt = pack_packet(CMD_ECHO, payload, addr=MY_ADDR)
+    t1 = now_ms()
 
-    # 模擬拆包/黏包：這裡只有一包，但仍然把它切碎再餵 parser
-    chunks = simulate_stream_delivery([pkt])
+    # fragmentation
+    chunks = simulate_tcp_fragmentation([pkt])
 
-    parser = StreamParser(max_len=4096, accept_dst=MY_ADDR)
-
+    # parse timing
+    parser = StreamParser(max_len=4096, accept_addr=MY_ADDR)
     got = None
+
+    t2 = now_ms()
     for c in chunks:
         parser.feed(c)
-        for ver, src, dst, cmd, pl in parser.pop():
-            got = (ver, src, dst, cmd, pl)
+        for ver, addr, cmd, pl in parser.pop():
+            got = (ver, addr, cmd, pl)
+    t3 = now_ms()
 
     if got is None:
-        print("FAIL: parser did not output any frame")
+        print("結果：失敗（解析器沒有輸出任何封包）")
+        print("丟棄位元組數（drop_bytes）：%d" % parser.drop_bytes)
         return
 
-    ver, src, dst, cmd, pl = got
+    ver, addr, cmd, pl = got
     ok = (cmd == CMD_ECHO and pl == payload)
 
-    print("decoded cmd=0x%04X payload_len=%d" % (cmd, len(pl)))
-    print("compare:", "PASS" if ok else "FAIL")
-    if not ok:
-        print("orig:", payload[:64])
-        print("recv:", pl[:64])
-    print("drop_bytes:", parser.drop_bytes)
+    print("解包結果：ver=%d addr=0x%04X cmd=0x%04X payload_len=%d"
+          % (ver, addr, cmd, len(pl)))
+
+    print("資料比對：%s" % ("通過" if ok else "失敗"))
+    print("丟棄位元組數（drop_bytes）：%d" % parser.drop_bytes)
+    print("耗時：打包=%dms、解析=%dms、總計=%dms"
+          % (ms_diff(t1, t0), ms_diff(t3, t2), ms_diff(t3, t0)))
+
+    # sha256 (optional)
+    h1 = sha256_hex(payload)
+    h2 = sha256_hex(pl)
+    if h1 and h2:
+        print("SHA256（原始）：%s" % h1)
+        print("SHA256（解包）：%s" % h2)
+        print("SHA256比對：%s" % ("一致" if h1 == h2 else "不一致"))
+    else:
+        print("SHA256：此平台不可用（缺少 hashlib），已以 bytes 直接比對為準。")
 
 
-def test_file_chunking():
-    print("\n=== [2] FILE CHUNKING TEST ===")
-    print("輸入檔案路徑（在 MicroPython 上請先把檔案放進板子 FS，例如 /test.bin）：")
+def test_file_chunking_ram_rebuild():
+    print("\n=== [2] 檔案分包測試（檔案 -> 多封包 -> 解析 -> 重組 -> 驗證）===")
+    print("請輸入檔案路徑：")
+    print("  - MicroPython 範例：/test.bin")
+    print("  - CPython 範例：./test.bin")
+
     path = input("file> ").strip()
     if not path:
-        print("skip")
+        print("未輸入檔案路徑，已取消。")
         return
 
-    # 讀檔（MicroPython 也可）
-    with open(path, "rb") as f:
-        data = f.read()
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except Exception as e:
+        print("讀取檔案失敗：%s" % e)
+        return
 
     total = len(data)
-    print("file size:", total)
+    print("檔案大小：%d bytes" % total)
 
-    chunk_size = input("區塊大小 (e.g. 256/512/1024) > ").strip()
-    chunk_size = int(chunk_size) if chunk_size else 512
+    s = input("chunk_size（建議 256/512/1024）> ").strip()
+    chunk_size = int(s) if s else 512
 
-    # --- sender side: 將檔案切成多個「協議封包」
+    # 1) packetize timing
+    t0 = now_ms()
+
     packets = []
-    # DATA 內我們放一個最小重組頭：offset(u32) + chunk_bytes
-    # 這是「文件分包」最簡模型，仍然不改協議 header
     off = 0
     while off < total:
         chunk = data[off:off + chunk_size]
-        # offset(u32 LE)
+
+        # payload format (minimal):
+        # offset(u32 little-endian) + chunk_bytes
         off_le = (off & 0xFFFFFFFF).to_bytes(4, "little")
         payload = off_le + chunk
-        pkt = pack_packet(CMD_FILE_CHUNK, payload, src=SERVER_ADDR, dst=MY_ADDR)
-        packets.append(pkt)
+
+        packets.append(pack_packet(CMD_FILE_CHUNK, payload, addr=MY_ADDR))
         off += len(chunk)
 
-    # --- transport simulation: 黏包後切碎（模擬 TCP）
-    chunks = simulate_stream_delivery(packets)
+    t1 = now_ms()
 
-    # --- receiver side: 用 StreamParser 解包，按 offset 重組
-    parser = StreamParser(max_len=4096, accept_dst=MY_ADDR)
+    print("封包數量：%d 包" % len(packets))
+    print("耗時：封包化=%dms" % ms_diff(t1, t0))
+
+    # 2) simulate TCP fragmentation
+    chunks = simulate_tcp_fragmentation(packets)
+
+    # 3) parse + rebuild (RAM)
+    parser = StreamParser(max_len=4096, accept_addr=MY_ADDR)
     rebuilt = bytearray(total)
     written = 0
 
+    t2 = now_ms()
     for c in chunks:
         parser.feed(c)
-        for ver, src, dst, cmd, pl in parser.pop():
+        for ver, addr, cmd, pl in parser.pop():
             if cmd != CMD_FILE_CHUNK:
                 continue
             if len(pl) < 4:
@@ -170,45 +203,55 @@ def test_file_chunking():
             blk = pl[4:]
             end = off + len(blk)
             if end > total:
-                print("WARN: chunk out of range off=%d len=%d" % (off, len(blk)))
+                print("警告：分包超出檔案範圍 off=%d len=%d（已忽略）" % (off, len(blk)))
                 continue
 
-            # 寫回重組 buffer
             rebuilt[off:end] = blk
             written += len(blk)
+    t3 = now_ms()
 
-    ok = (bytes(rebuilt) == data)
-    print("重建寫入位元組數:", written, "(註：如果重新發送，可能包含重複位元組)")
-    print("比較:", "PASS" if ok else "FAIL")
+    # 4) verify timing
+    t4 = now_ms()
+    same = (bytes(rebuilt) == data)
+    h1 = sha256_hex(data)
+    h2 = sha256_hex(bytes(rebuilt))
+    t5 = now_ms()
 
-    # hash 對比（如果 hashlib 可用）
-    h1 = sha256_bytes(data)
-    h2 = sha256_bytes(bytes(rebuilt))
+    print("重組寫入位元組數：%d（可能包含重複寫入）" % written)
+    print("bytes 比對：%s" % ("通過" if same else "失敗"))
+
     if h1 and h2:
-        print("sha256 orig :", h1)
-        print("sha256 rebuilt:", h2)
+        print("SHA256（原始）：%s" % h1)
+        print("SHA256（重組）：%s" % h2)
+        print("SHA256比對：%s" % ("一致" if h1 == h2 else "不一致"))
+    else:
+        print("SHA256：此平台不可用（缺少 hashlib），已以 bytes 直接比對為準。")
 
-    print("丟棄位元組:", parser.drop_bytes)
+    print("丟棄位元組數（drop_bytes）：%d" % parser.drop_bytes)
+    print("耗時：解析+重組=%dms、驗證=%dms、總計=%dms"
+          % (ms_diff(t3, t2), ms_diff(t5, t4), ms_diff(t5, t0)))
 
 
 def main():
-    print("=== OFFLINE MANUAL TESTER (no network) ===")
-    print("proto: SOF+VER+SRC+DST+CMD+LEN+DATA+CRC16")
+    print("=== 離線手動測試器（不使用網路）===")
+    print("協議：SOF(2)=NL VER(1)=3 ADDR(2) CMD(2) LEN(2) DATA CRC16(2)")
+
     while True:
-        print("\nSelect:")
-        print("  1) 手動回顯測試（輸入資料 -> 打包 -> 解析 -> 比較）")
-        print("  2) 文件分塊測試（檔案 -> 封包 -> 解析 -> 重建 -> 比較）")
-        print("  3) 出口")
+        print("\n請選擇功能：")
+        print("  1) 手動資料回環測試（輸入資料 -> 打包 -> 解析 -> 比對）")
+        print("  2) 檔案分包測試（檔案 -> 分包 -> 解析 -> 重組 -> 驗證）")
+        print("  3) 離開")
+
         sel = input("> ").strip()
         if sel == "1":
-            test_echo_manual()
+            test_manual_echo()
         elif sel == "2":
-            test_file_chunking()
+            test_file_chunking_ram_rebuild()
         elif sel == "3":
-            print("bye")
+            print("已離開。")
             break
         else:
-            print("unknown")
-# /sin_table.bin
-# MicroPython 有時 __name__ 判斷可用也可不用
+            print("未知選項，請重新輸入。")
+
+
 main()
