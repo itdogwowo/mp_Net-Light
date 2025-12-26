@@ -1,4 +1,3 @@
-```markdown
 # AI_CONTEXT.md — mp_Net-Light（協議/現況/擴展基礎說明）
 
 > 用途：下次找 AI/工程師擴展功能時，直接貼這份文件即可快速對齊背景與約束，避免重複說明。
@@ -153,4 +152,3 @@ DATA = dst_addr(u16 LE) + body(...)
 > 請遵守既定協議與 DATA 前綴規則，提供 MicroPython 端可直接使用的程式骨架與必要註釋。
 
 ---
-```
