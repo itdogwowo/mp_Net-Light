@@ -1,0 +1,141 @@
+<!-- templates/light_control/index.html -->
+{% extends 'base.html' %}
+
+{% block title %}{{ title }} - mp_Net-Light{% endblock %}
+
+{% block content %}
+<div class="stats">
+    <div class="stat-card">
+        <h3>📱 總設備數</h3>
+        <div class="stat-value">{{ total_devices }}</div>
+    </div>
+    
+    <div class="stat-card">
+        <h3>✅ 在線設備</h3>
+        <div class="stat-value">
+            <span class="status-indicator status-online"></span>
+            {{ online_devices }}
+        </div>
+    </div>
+    
+    <div class="stat-card">
+        <h3>💡 可用燈效</h3>
+        <div class="stat-value">{{ total_effects }}</div>
+    </div>
+</div>
+
+<div class="content">
+    <h2 style="margin-bottom: 20px; color: #667eea;">🎯 快速開始</h2>
+    
+    <div style="margin-bottom: 20px;">
+        <h3 style="color: #764ba2; margin-bottom: 10px;">1. 伺服器資訊</h3>
+        <p style="line-height: 1.8;">
+            <strong>WebSocket 地址:</strong> <code>ws://your-server-ip:8000/ws/light/{device_id}/</code><br>
+            <strong>REST API:</strong> <code>http://your-server-ip:8000/api/</code>
+        </p>
+    </div>
+    
+    <div style="margin-bottom: 20px;">
+        <h3 style="color: #764ba2; margin-bottom: 10px;">2. 功能說明</h3>
+        <ul style="line-height: 2; padding-left: 20px;">
+            <li>✨ 實時 WebSocket 通信控制燈效</li>
+            <li>🎨 支持多種燈效模式</li>
+            <li>📊 設備狀態監控</li>
+            <li>📝 命令執行日誌</li>
+            <li>🔧 RESTful API 接口</li>
+        </ul>
+    </div>
+    
+    <div style="margin-bottom: 30px;">
+        <h3 style="color: #764ba2; margin-bottom: 10px;">3. API 端點</h3>
+        <table>
+            <tr>
+                <th>端點</th>
+                <th>方法</th>
+                <th>說明</th>
+            </tr>
+            <tr>
+                <td><code>/api/devices/</code></td>
+                <td>GET</td>
+                <td>獲取所有設備</td>
+            </tr>
+            <tr>
+                <td><code>/api/devices/{id}/send_command/</code></td>
+                <td>POST</td>
+                <td>發送命令到設備</td>
+            </tr>
+            <tr>
+                <td><code>/api/effects/</code></td>
+                <td>GET</td>
+                <td>獲取所有燈效</td>
+            </tr>
+            <tr>
+                <td><code>/api/logs/</code></td>
+                <td>GET</td>
+                <td>獲取命令日誌</td>
+            </tr>
+        </table>
+    </div>
+    
+    <div style="text-align: center;">
+        <a href="/light/dashboard/" class="btn">進入控制台 →</a>
+        <a href="/admin/" class="btn" style="margin-left: 10px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">管理後台</a>
+    </div>
+</div>
+
+<div class="content" style="margin-top: 20px;">
+    <h2 style="margin-bottom: 20px; color: #667eea;">📡 MicroPython 客戶端示例</h2>
+    <pre><code># main.py - MicroPython 客戶端示例
+import network
+import time
+import json
+
+# WiFi 設定
+SSID = 'your-wifi-ssid'
+PASSWORD = 'your-wifi-password'
+
+# 伺服器設定
+SERVER = 'your-server-ip'
+PORT = 8000
+DEVICE_ID = 'esp32_001'
+
+def connect_wifi():
+    """連接 WiFi"""
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    if not wlan.isconnected():
+        print('正在連接 WiFi...')
+        wlan.connect(SSID, PASSWORD)
+        while not wlan.isconnected():
+            time.sleep(1)
+    print('WiFi 已連接:', wlan.ifconfig())
+    return wlan
+
+def main():
+    """主程序"""
+    print('=' * 40)
+    print('mp_Net-Light 客戶端')
+    print('=' * 40)
+    
+    # 連接 WiFi
+    wlan = connect_wifi()
+    
+    # WebSocket 客戶端將在下一階段實現
+    print('準備連接到伺服器...')
+    print(f'WebSocket URL: ws://{SERVER}:{PORT}/ws/light/{DEVICE_ID}/')
+    
+if __name__ == '__main__':
+    main()
+</code></pre>
+</div>
+
+<div class="content" style="margin-top: 20px;">
+    <h2 style="margin-bottom: 20px; color: #667eea;">📚 使用說明</h2>
+    <ol style="line-height: 2; padding-left: 20px;">
+        <li>點擊 <strong>"進入控制台"</strong> 查看所有設備和控制燈效</li>
+        <li>點擊 <strong>"管理後台"</strong> 進行系統管理 (需要登入)</li>
+        <li>使用 REST API 進行程序化控制</li>
+        <li>MicroPython 設備通過 WebSocket 連接並接收命令</li>
+    </ol>
+</div>
+{% endblock %}
