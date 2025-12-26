@@ -1,28 +1,28 @@
-# proto.py (VER=2)
+# proto.py (VER=3)
 # Packet format:
-# SOF(2) VER(1) SRC(2) DST(2) CMD(2) LEN(2) DATA(LEN) CRC16(2)
+# SOF(2) VER(1) ADDR(2) CMD(2) LEN(2) DATA(LEN) CRC16(2)
+#
+# Strategy:
+# - Always read full frame (HDR+DATA+CRC)
+# - Verify CRC16
+# - Then check ADDR (is mine or broadcast) and dispatch
 
 import struct
 
 SOF = b"NL"
-CUR_VER = 2
+CUR_VER = 3
 
-# Header fields:
-# SOF: 2s
-# VER: u8
-# SRC: u16
-# DST: u16
-# CMD: u16
-# LEN: u16
-HDR_FMT = "<2sBHHHH"
-HDR_LEN = struct.calcsize(HDR_FMT)  # 2+1+2+2+2+2 = 11
+# Address convention
+ADDR_BROADCAST = 0xFFFF
+
+# Header: SOF(2) VER(1) ADDR(2) CMD(2) LEN(2) => 9 bytes
+HDR_FMT = "<2sBHHH"
+HDR_LEN = struct.calcsize(HDR_FMT)  # 2+1+2+2+2 = 9
 
 CRC_FMT = "<H"
 CRC_LEN = 2
 
 MAX_LEN_DEFAULT = 4096
-
-ADDR_BROADCAST = 0xFFFF
 
 
 def crc16_ccitt(data: bytes, init=0xFFFF) -> int:
@@ -38,36 +38,35 @@ def crc16_ccitt(data: bytes, init=0xFFFF) -> int:
     return crc
 
 
-def pack_packet(cmd: int, payload: bytes = b"", src: int = 1, dst: int = ADDR_BROADCAST, ver: int = CUR_VER) -> bytes:
+def pack_packet(cmd: int, payload: bytes = b"", addr: int = ADDR_BROADCAST, ver: int = CUR_VER) -> bytes:
     """
-    組包（任何通道通用）
-    - cmd: u16
-    - src/dst: u16
-    - payload: bytes
+    Build packet bytes:
+      SOF + VER + ADDR + CMD + LEN + DATA + CRC16
+    CRC covers: VER..LEN + DATA (SOF excluded)
     """
     if payload is None:
         payload = b""
     ln = len(payload)
-    header = struct.pack(HDR_FMT, SOF, ver & 0xFF, src & 0xFFFF, dst & 0xFFFF, cmd & 0xFFFF, ln & 0xFFFF)
+    header = struct.pack(HDR_FMT, SOF, ver & 0xFF, addr & 0xFFFF, cmd & 0xFFFF, ln & 0xFFFF)
 
-    # CRC 覆蓋：VER..LEN + DATA（不含 SOF）
-    crc_input = header[2:] + payload
+    crc_input = header[2:] + payload  # exclude SOF
     crc = crc16_ccitt(crc_input)
+
     return header + payload + struct.pack(CRC_FMT, crc)
 
 
 def parse_one(packet: bytes, max_len=MAX_LEN_DEFAULT):
     """
-    單包解析（UDP/檔案）：成功回 (ver, src, dst, cmd, payload) 否則 None
+    Parse exactly one packet (UDP/file use-case).
+    Return (ver, addr, cmd, payload) or None.
     """
     if not packet or len(packet) < (HDR_LEN + CRC_LEN):
         return None
 
-    sof, ver, src, dst, cmd, ln = struct.unpack_from(HDR_FMT, packet, 0)
+    sof, ver, addr, cmd, ln = struct.unpack_from(HDR_FMT, packet, 0)
     if sof != SOF:
         return None
     if ver != CUR_VER:
-        # 如需兼容多版本，可在這裡擴展
         return None
     if ln > max_len:
         return None
@@ -83,17 +82,24 @@ def parse_one(packet: bytes, max_len=MAX_LEN_DEFAULT):
     if crc_recv != crc_calc:
         return None
 
-    return ver, src, dst, cmd, payload
+    return ver, addr, cmd, payload
 
 
 class StreamParser:
     """
-    TCP/串口流式解析器：可處理黏包/拆包/雜訊
-    MicroPython 兼容版：避免使用 del buf[:n] 這類切片刪除
+    Stream parser for TCP/serial:
+    - Handles packet fragmentation/coalescing
+    - Resync by SOF
+    - MicroPython-safe (no del bytearray slicing)
     """
-    def __init__(self, max_len=MAX_LEN_DEFAULT, accept_dst=None):
+    def __init__(self, max_len=MAX_LEN_DEFAULT, accept_addr=None):
+        """
+        accept_addr:
+          - None: yield all valid packets
+          - int: only yield addr==accept_addr or addr==broadcast
+        """
         self.max_len = max_len
-        self.accept_dst = accept_dst
+        self.accept_addr = accept_addr
         self.buf = bytearray()
         self.drop_bytes = 0
 
@@ -102,21 +108,16 @@ class StreamParser:
             self.buf.extend(data)
 
     def _shrink_front(self, n: int):
-        """
-        刪掉 buffer 前 n bytes（MicroPython 安全作法）
-        注意：這會分配新的 bytearray，但最可靠且易懂
-        """
+        """Remove first n bytes (MicroPython compatible)"""
         if n <= 0:
             return
         if n >= len(self.buf):
             self.buf = bytearray()
         else:
-            self.buf = self.buf[n:]  # 重新切片生成新 bytearray
+            self.buf = self.buf[n:]
 
     def _shrink_keep_last(self, n_last: int):
-        """
-        只保留最後 n_last bytes，其餘丟棄
-        """
+        """Keep only last n_last bytes, drop the rest"""
         if n_last <= 0:
             self.drop_bytes += len(self.buf)
             self.buf = bytearray()
@@ -131,7 +132,7 @@ class StreamParser:
 
         idx = self.buf.find(SOF)
         if idx < 0:
-            # 沒找到 SOF：保留最後 1 byte（避免 SOF 被拆成兩段）
+            # keep last 1 byte in case SOF splits
             self._shrink_keep_last(1)
             return False
 
@@ -141,12 +142,16 @@ class StreamParser:
 
         return len(self.buf) >= HDR_LEN
 
-    def _dst_ok(self, dst: int) -> bool:
-        if self.accept_dst is None:
+    def _addr_ok(self, addr: int) -> bool:
+        if self.accept_addr is None:
             return True
-        return (dst == self.accept_dst) or (dst == ADDR_BROADCAST)
+        return (addr == self.accept_addr) or (addr == ADDR_BROADCAST)
 
     def pop(self):
+        """
+        Yield (ver, addr, cmd, payload) for valid packets.
+        Strategy1: always read full frame -> crc -> addr filter -> yield
+        """
         while True:
             if not self._resync_to_sof():
                 return
@@ -154,7 +159,7 @@ class StreamParser:
             if len(self.buf) < HDR_LEN:
                 return
 
-            sof, ver, src, dst, cmd, ln = struct.unpack_from(HDR_FMT, self.buf, 0)
+            sof, ver, addr, cmd, ln = struct.unpack_from(HDR_FMT, self.buf, 0)
 
             if sof != SOF:
                 self.drop_bytes += 1
@@ -173,7 +178,7 @@ class StreamParser:
 
             frame_len = HDR_LEN + ln + CRC_LEN
             if len(self.buf) < frame_len:
-                return
+                return  # wait more
 
             payload = bytes(self.buf[HDR_LEN:HDR_LEN + ln])
             crc_recv = struct.unpack_from(CRC_FMT, self.buf, HDR_LEN + ln)[0]
@@ -184,10 +189,11 @@ class StreamParser:
                 self._shrink_front(1)
                 continue
 
-            # consume 整包
+            # consume full frame
             self._shrink_front(frame_len)
 
-            if not self._dst_ok(dst):
+            # after CRC ok, apply addr filter
+            if not self._addr_ok(addr):
                 continue
 
-            yield ver, src, dst, cmd, payload
+            yield ver, addr, cmd, payload
