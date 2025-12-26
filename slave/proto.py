@@ -2,39 +2,55 @@
 # Packet format:
 # SOF(2) VER(1) ADDR(2) CMD(2) LEN(2) DATA(LEN) CRC16(2)
 #
+# CRC16: CRC16-CCITT-FALSE (poly=0x1021, init=0xFFFF)
+# CRC coverage: VER..LEN + DATA (SOF excluded)
+#
 # Strategy:
-# - Always read full frame (HDR+DATA+CRC)
-# - Verify CRC16
-# - Then check ADDR (is mine or broadcast) and dispatch
+# - Always read full frame -> verify CRC -> then apply accept_addr filter
 
 import struct
 
 SOF = b"NL"
 CUR_VER = 3
 
-# Address convention
 ADDR_BROADCAST = 0xFFFF
 
-# Header: SOF(2) VER(1) ADDR(2) CMD(2) LEN(2) => 9 bytes
-HDR_FMT = "<2sBHHH"
-HDR_LEN = struct.calcsize(HDR_FMT)  # 2+1+2+2+2 = 9
+HDR_FMT = "<2sBHHH"   # SOF, VER, ADDR, CMD, LEN
+HDR_LEN = struct.calcsize(HDR_FMT)  # 9 bytes
 
 CRC_FMT = "<H"
 CRC_LEN = 2
 
 MAX_LEN_DEFAULT = 4096
 
+# ---- CRC16 table accel ----
+_CRC16_TAB = None
 
-def crc16_ccitt(data: bytes, init=0xFFFF) -> int:
-    """CRC16-CCITT-FALSE (poly=0x1021, init=0xFFFF)"""
-    crc = init
-    for b in data:
-        crc ^= (b << 8)
+def _crc16_init_table():
+    global _CRC16_TAB
+    tab = [0] * 256
+    poly = 0x1021
+    for i in range(256):
+        crc = i << 8
         for _ in range(8):
             if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+                crc = ((crc << 1) ^ poly) & 0xFFFF
             else:
                 crc = (crc << 1) & 0xFFFF
+        tab[i] = crc
+    _CRC16_TAB = tab
+
+def crc16_ccitt(data: bytes, init=0xFFFF) -> int:
+    """
+    CRC16-CCITT-FALSE (poly=0x1021, init=0xFFFF) - table accelerated
+    """
+    global _CRC16_TAB
+    if _CRC16_TAB is None:
+        _crc16_init_table()
+
+    crc = init & 0xFFFF
+    for b in data:
+        crc = ((crc << 8) ^ _CRC16_TAB[((crc >> 8) ^ b) & 0xFF]) & 0xFFFF
     return crc
 
 
@@ -42,7 +58,6 @@ def pack_packet(cmd: int, payload: bytes = b"", addr: int = ADDR_BROADCAST, ver:
     """
     Build packet bytes:
       SOF + VER + ADDR + CMD + LEN + DATA + CRC16
-    CRC covers: VER..LEN + DATA (SOF excluded)
     """
     if payload is None:
         payload = b""
@@ -108,7 +123,6 @@ class StreamParser:
             self.buf.extend(data)
 
     def _shrink_front(self, n: int):
-        """Remove first n bytes (MicroPython compatible)"""
         if n <= 0:
             return
         if n >= len(self.buf):
@@ -117,7 +131,6 @@ class StreamParser:
             self.buf = self.buf[n:]
 
     def _shrink_keep_last(self, n_last: int):
-        """Keep only last n_last bytes, drop the rest"""
         if n_last <= 0:
             self.drop_bytes += len(self.buf)
             self.buf = bytearray()
@@ -132,8 +145,7 @@ class StreamParser:
 
         idx = self.buf.find(SOF)
         if idx < 0:
-            # keep last 1 byte in case SOF splits
-            self._shrink_keep_last(1)
+            self._shrink_keep_last(1)  # keep last 1 byte in case SOF splits
             return False
 
         if idx > 0:
@@ -150,7 +162,7 @@ class StreamParser:
     def pop(self):
         """
         Yield (ver, addr, cmd, payload) for valid packets.
-        Strategy1: always read full frame -> crc -> addr filter -> yield
+        Strategy: always read full frame -> crc -> addr filter -> yield
         """
         while True:
             if not self._resync_to_sof():
@@ -161,17 +173,7 @@ class StreamParser:
 
             sof, ver, addr, cmd, ln = struct.unpack_from(HDR_FMT, self.buf, 0)
 
-            if sof != SOF:
-                self.drop_bytes += 1
-                self._shrink_front(1)
-                continue
-
-            if ver != CUR_VER:
-                self.drop_bytes += 1
-                self._shrink_front(1)
-                continue
-
-            if ln > self.max_len:
+            if sof != SOF or ver != CUR_VER or ln > self.max_len:
                 self.drop_bytes += 1
                 self._shrink_front(1)
                 continue
@@ -189,10 +191,8 @@ class StreamParser:
                 self._shrink_front(1)
                 continue
 
-            # consume full frame
             self._shrink_front(frame_len)
 
-            # after CRC ok, apply addr filter
             if not self._addr_ok(addr):
                 continue
 
