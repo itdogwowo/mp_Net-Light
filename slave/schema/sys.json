@@ -1,0 +1,10 @@
+{
+  "group": "sys",
+  "cmds": [
+    {
+      "cmd": "0x1101",
+      "name": "STATUS_GET",
+      "payload": []
+    }
+  ]
+}

@@ -27,7 +27,7 @@ class Device(models.Model):
     
     # 當前燈效
     current_effect = models.CharField(max_length=50, default='off', verbose_name='當前燈效')
-    brightness = models.IntegerField(default=100, verbose_name='亮度 (0-100)')
+    brightness = models.IntegerField(default=31, verbose_name='亮度 (0-31)')
     
     # 時間戳
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='創建時間')

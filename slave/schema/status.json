@@ -1,0 +1,20 @@
+{
+  "group": "status",
+  "cmds": [
+    {
+      "cmd": "0x1101",
+      "name": "STATUS_GET",
+      "payload": []
+    },
+    {
+      "cmd": "0x1102",
+      "name": "STATUS_RSP",
+      "payload": [
+        {"name": "uptime_ms", "type": "u32"},
+        {"name": "fs_total", "type": "u32"},
+        {"name": "fs_free", "type": "u32"},
+        {"name": "mem_free", "type": "u32"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "group": "file",
+  "cmds": [
+    {
+      "cmd": "0x2001",
+      "name": "FILE_BEGIN",
+      "payload": [
+        {"name": "file_id", "type": "u32"},
+        {"name": "total_size", "type": "u32"},
+        {"name": "chunk_size", "type": "u16"},
+        {"name": "sha256", "type": "bytes_fixed", "len": 32},
+        {"name": "path", "type": "str_u16len"}
+      ]
+    },
+    {
+      "cmd": "0x2002",
+      "name": "FILE_CHUNK",
+      "payload": [
+        {"name": "file_id", "type": "u32"},
+        {"name": "offset", "type": "u32"},
+        {"name": "data", "type": "bytes_rest"}
+      ]
+    },
+    {
+      "cmd": "0x2003",
+      "name": "FILE_END",
+      "payload": [
+        {"name": "file_id", "type": "u32"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "group": "fs",
+  "cmds": [
+    {
+      "cmd": "0x1205",
+      "name": "FS_TREE_GET",
+      "payload": [
+        {"name": "path", "type": "str_u16len"},
+        {"name": "max_depth", "type": "u8"},
+        {"name": "include_size", "type": "u8"}
+      ]
+    },
+    {
+      "cmd": "0x1206",
+      "name": "FS_TREE_RSP",
+      "payload": [
+        {"name": "path", "type": "str_u16len"},
+        {"name": "tree", "type": "str_u16len"}
+      ]
+    },
+
+    {
+      "cmd": "0x1213",
+      "name": "FS_SNAP_GET",
+      "payload": [
+        {"name": "path", "type": "str_u16len"},
+        {"name": "out_path", "type": "str_u16len"},
+        {"name": "max_depth", "type": "u8"},
+        {"name": "include_size", "type": "u8"}
+      ]
+    }
+  ]
+}
