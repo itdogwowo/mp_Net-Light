@@ -1,4 +1,4 @@
-# /lib/schema_codec2.py
+# /lib/schema_codec.py
 import struct
 
 class BufferReader:

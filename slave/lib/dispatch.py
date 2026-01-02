@@ -1,5 +1,5 @@
 # /lib/dispatch.py
-from schema_codec2 import decode_payload, encode_payload
+from lib.schema_codec import decode_payload
 
 class Dispatcher:
     def __init__(self, schema_store):

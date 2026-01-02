@@ -2,10 +2,10 @@
 import os
 import ubinascii
 
-from lib.app import App
+from app import App
 from lib.proto import pack_packet
 from lib.schema_loader import cmd_str_to_int
-from lib.schema_codec2 import encode_payload
+from lib.schema_codec import encode_payload
 from lib.file_rx import sha256_digest_stream_from_file
 from lib.handlers_sys import get_machine_info
 
@@ -17,7 +17,7 @@ def make_test_file(path="/test_src.bin", size=131072):
     return path
 
 
-def print_file_head(path: str, limit=1200):
+def print_file_head(path: str, limit=2000):
     try:
         with open(path, "r") as f:
             s = f.read(limit)
@@ -36,14 +36,16 @@ def main():
     for k in info:
         print(" - %s: %s" % (k, info[k]))
 
-    print("\n[2] 初始化 App（載入 /schema，註冊 handlers）")
+    print("\n[2] 初始化 App（載入 /schema，註冊 /action handlers）")
     app = App(schema_dir="/schema")
+
+    # 離線 loopback ctx：讓 handler 可回覆給自己
     ctx = {"send_loopback": lambda pkt: app.on_rx_bytes(pkt, ctx=ctx)}
 
     # ------------------------------------------------------------
     # [3] FS_TREE（單包，人眼可讀）
     # ------------------------------------------------------------
-    print("\n[3] 取得完整文件結構（FS_TREE_GET -> FS_TREE_RSP，離線 loopback）")
+    print("\n[3] 取得完整文件結構（FS_TREE_GET -> FS_TREE_RSP）")
     CMD_FS_TREE_GET = cmd_str_to_int("0x1205")
     CMD_FS_TREE_RSP = cmd_str_to_int("0x1206")
 
@@ -53,36 +55,32 @@ def main():
         print(args.get("tree", ""))
         print("--------------")
 
+    # 注意：FS_TREE_RSP 是回覆 cmd，這裡只註冊列印用 handler
     app.disp.on(CMD_FS_TREE_RSP, h_fs_tree_rsp)
 
     tree_def = app.store.get(CMD_FS_TREE_GET)
-    if tree_def:
-        tree_payload = encode_payload(tree_def, {"path": "/", "max_depth": 10, "include_size": 1})
-        app.on_rx_bytes(pack_packet(CMD_FS_TREE_GET, tree_payload), ctx=ctx)
-    else:
-        print("ERROR: schema 未找到 FS_TREE_GET，請檢查 /schema/fs.json")
+    tree_payload = encode_payload(tree_def, {"path": "/", "max_depth": 10, "include_size": 1})
+    app.on_rx_bytes(pack_packet(CMD_FS_TREE_GET, tree_payload), ctx=ctx)
 
     # ------------------------------------------------------------
-    # [4] FS_SNAP_GET（完全統一：生成 /fs_snapshot.json → 用 FILE 三件套回傳到 /rx_snapshot.json）
+    # [4] FS_SNAP_GET：生成漂亮 JSON => /fs_snapshot.json，再用 FILE 三件套回傳到 /rx_snapshot.json
     # ------------------------------------------------------------
-    print("\n[4] 取得文件結構快照（FS_SNAP_GET -> 生成 /fs_snapshot.json -> 回傳 /rx_snapshot.json）")
+    print("\n[4] 取得文件結構快照（FS_SNAP_GET：JSON檔三件套回傳）")
     CMD_FS_SNAP_GET = cmd_str_to_int("0x1213")
-    snap_def = app.store.get(CMD_FS_SNAP_GET)
-    if not snap_def:
-        print("ERROR: schema 未找到 FS_SNAP_GET，請檢查 /schema/fs.json")
-    else:
-        snap_payload = encode_payload(snap_def, {
-            "path": "/",
-            "out_path": "/fs_snapshot.json",
-            "max_depth": 20,
-            "include_size": 1
-        })
-        app.on_rx_bytes(pack_packet(CMD_FS_SNAP_GET, snap_payload), ctx=ctx)
 
-        print("\n[4.1] /rx_snapshot.json（前 1200 字元）")
-        print("----------")
-        print_file_head("/rx_snapshot.json", limit=1200)
-        print("----------")
+    snap_def = app.store.get(CMD_FS_SNAP_GET)
+    snap_payload = encode_payload(snap_def, {
+        "path": "/",
+        "out_path": "/fs_snapshot.json",
+        "max_depth": 20,
+        "include_size": 1
+    })
+    app.on_rx_bytes(pack_packet(CMD_FS_SNAP_GET, snap_payload), ctx=ctx)
+
+    print("\n[4.1] /rx_snapshot.json（前 2000 字元）")
+    print("----------")
+    print_file_head("/rx_snapshot.json", limit=2000)
+    print("----------")
 
     # ------------------------------------------------------------
     # [5] FILE 三件套：上傳/下載 loopback 測試
@@ -107,10 +105,6 @@ def main():
     begin_def = app.store.get(CMD_FILE_BEGIN)
     chunk_def = app.store.get(CMD_FILE_CHUNK)
     end_def = app.store.get(CMD_FILE_END)
-
-    if not (begin_def and chunk_def and end_def):
-        print("ERROR: schema 未找到 FILE_BEGIN/CHUNK/END，請檢查 /schema/file.json")
-        return
 
     begin_payload = encode_payload(begin_def, {
         "file_id": file_id,

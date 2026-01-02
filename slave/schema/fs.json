@@ -18,7 +18,6 @@
         {"name": "tree", "type": "str_u16len"}
       ]
     },
-
     {
       "cmd": "0x1213",
       "name": "FS_SNAP_GET",
