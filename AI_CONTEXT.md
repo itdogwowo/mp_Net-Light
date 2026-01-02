@@ -74,7 +74,6 @@ SOF(2)  VER(1)  ADDR(2)  CMD(2)  LEN(2)  DATA(LEN)  CRC16(2)
 ```
 
 ### 3.2 解碼/編碼規則
-- 不再強制「所有 cmd 的 DATA 都以 dst_addr(u16) 開頭」
 - payload 格式完全由 schema 描述決定
 - `bytes_rest` type 用於「吃掉剩餘 bytes」（例如 FILE_CHUNK.data）
 
