@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}{{ title }} - mp_Net-Light{% endblock %}
+
+{% block content %}
+<div class="content">
+  <h2 style="color:#667eea; margin-bottom:12px;">Mapping Editor（每 slave 一份 mapping）</h2>
+
+  <div style="display:flex; gap:16px; flex-wrap:wrap;">
+    <div style="flex: 1 1 780px;">
+      <canvas id="board" style="width:100%; border:1px solid #e5e7eb; border-radius:8px; image-rendering:pixelated;"></canvas>
+      <div style="color:#666; margin-top:8px;">
+        點格子選取 → 設 pxld_id / mcu_id → 保存到 mapping_slave_{id}.json
+      </div>
+    </div>
+
+    <div style="flex: 0 0 360px;">
+      <div style="display:grid; gap:10px;">
+        <label>PXLD 檔名（media/netlight/pxld/）</label>
+        <input id="pxldName" value="show.pxld">
+
+        <label>Slave</label>
+        <select id="slaveSelect"></select>
+
+        <div style="background:#f3f4f6;padding:10px;border-radius:8px;" id="pickedInfo">-</div>
+
+        <label>pxld_id</label>
+        <input id="pxldId" type="number" value="0">
+
+        <label>mcu_id</label>
+        <input id="mcuId" type="number" value="0">
+
+        <button class="btn" id="applyBtn">套用</button>
+        <button class="btn" id="saveBtn" style="background:#111827;">保存（此 slave）</button>
+
+        <div id="msg" style="color:#666;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="{% static 'netlight/js/mapping.js' %}"></script>
+{% endblock %}

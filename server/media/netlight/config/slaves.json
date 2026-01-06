@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "slaves": [
+    {
+      "slave_id": 0,
+      "name": "slave0",
+      "ip": "192.168.1.50",
+      "mac": "AA:BB:CC:DD:EE:FF",
+
+      "w": 10,
+      "h": 10,
+
+      "default_cell": 16
+    }
+  ]
+}

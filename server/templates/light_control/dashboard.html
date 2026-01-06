@@ -1,12 +1,29 @@
-<!-- templates/light_control/dashboard.html -->
 {% extends 'base.html' %}
-
+{% load static %}
 {% block title %}{{ title }} - mp_Net-Light{% endblock %}
 
 {% block content %}
 <div class="content">
-    <h2 style="margin-bottom: 20px; color: #667eea;">🎛️ 設備控制台</h2>
-    <p style="color: #666; margin-bottom: 20px;">此頁面將在下一階段開發完成...</p>
-    <a href="/light/" class="btn">← 返回首頁</a>
+  <h2 style="color:#667eea; margin-bottom:12px;">Dashboard（PXLD v3）</h2>
+
+  <div style="display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+    <a class="btn" href="{% url 'light_control:mapping' %}">進入 Mapping Editor →</a>
+  </div>
+
+  <div id="pxldInfo" style="margin-bottom:16px; color:#333;"></div>
+
+  <table style="width:100%; border-collapse: collapse;" id="slaveTable">
+    <thead>
+      <tr>
+        <th style="padding:10px;border:1px solid #e5e7eb;">slave_id</th>
+        <th style="padding:10px;border:1px solid #e5e7eb;">pixel_count</th>
+        <th style="padding:10px;border:1px solid #e5e7eb;">data_length</th>
+        <th style="padding:10px;border:1px solid #e5e7eb;">bounds_ok</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 </div>
+
+<script type="module" src="{% static 'netlight/js/dashboard.js' %}"></script>
 {% endblock %}

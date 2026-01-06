@@ -1,0 +1,7 @@
+{
+  "slave_id": 0,
+  "map": [
+    { "x": 0, "y": 0, "pxld_id": 0, "mcu_id": 12 },
+    { "x": 1, "y": 0, "pxld_id": 1, "mcu_id": 13 }
+  ]
+}
