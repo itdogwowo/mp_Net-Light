@@ -20,7 +20,21 @@
         <input id="pxldName" value="show.pxld">
 
         <label>Slave</label>
-        <select id="slaveSelect"></select>
+        <select id="slaveSelect">
+          <option value="-1">總畫板</option>
+        </select>
+
+        <div style="display:grid; gap:10px; margin-top:12px;">
+          <div style="display:flex; gap:8px;">
+            <button class="btn" id="playBtn">▶️</button>
+            <button class="btn" id="pauseBtn">⏸️</button>
+            <button class="btn" id="stopBtn">⏹️</button>
+          </div>
+
+          <label>Frame</label>
+          <input id="frameSlider" type="range" min="0" max="0" value="0">
+          <div id="frameInfo" style="color:#666;">frame: 0</div>
+        </div>
 
         <div style="background:#f3f4f6;padding:10px;border-radius:8px;" id="pickedInfo">-</div>
 

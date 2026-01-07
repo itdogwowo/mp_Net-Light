@@ -6,6 +6,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 import json
 
+from .pxld_v3_decoder_api import PXLDv3DecoderAPI
 from .pxld_v3_decoder import PXLDv3
 from .config_store import load_json, save_json, load_mapping, save_mapping
 
@@ -26,7 +27,10 @@ def pxld_info(request):
 @require_http_methods(["GET"])
 def pxld_slaves(request):
     name = request.GET.get("name", "show.pxld")
+    print(name)
+    print(name)
     p = _pxld_path(name)
+    print(p)
     if not p.exists():
         return JsonResponse({"ok": False, "err": f"PXLD not found: {p}"}, status=404)
 
@@ -81,3 +85,29 @@ def mapping_set(request):
     slave_id = int(body["slave_id"])
     save_mapping(slave_id, body)
     return JsonResponse({"ok": True})
+
+@require_http_methods(["GET"])
+def pxld_slave_frame_rgbw(request):
+    """
+    GET:
+      /light/api/pxld/slave_frame_rgbw?name=show.pxld&frame=0&slave_id=1
+
+    Return:
+      {"ok":true, "b64":"...base64...", "frame":0, "slave_id":1}
+    """
+    name = request.GET.get("name", "show.pxld")
+    frame_id = int(request.GET.get("frame", "0"))
+    slave_id = int(request.GET.get("slave_id", "-1"))
+    if slave_id < 0:
+        return JsonResponse({"ok": False, "err": "missing slave_id"}, status=400)
+
+    p = _pxld_path(name)
+    if not p.exists():
+        return JsonResponse({"ok": False, "err": f"PXLD not found: {p}"}, status=404)
+
+    try:
+        dec = PXLDv3DecoderAPI(str(p))
+        b64 = dec.get_slave_rgbw_b64(frame_id, slave_id)
+        return JsonResponse({"ok": True, "b64": b64, "frame": frame_id, "slave_id": slave_id})
+    except Exception as e:
+        return JsonResponse({"ok": False, "err": str(e)}, status=400)

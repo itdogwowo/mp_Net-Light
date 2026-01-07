@@ -15,6 +15,7 @@ urlpatterns = [
 
     path("api/pxld/info/", api_views.pxld_info, name="pxld_info"),
     path("api/pxld/slaves/", api_views.pxld_slaves, name="pxld_slaves"),
+    path("api/pxld/slave_frame_rgbw", api_views.pxld_slave_frame_rgbw, name="pxld_slave_frame_rgbw"),
 
     path("api/config/slaves/get/", api_views.cfg_slaves_get, name="cfg_slaves_get"),
     path("api/config/slaves/set/", api_views.cfg_slaves_set, name="cfg_slaves_set"),
