@@ -35,4 +35,15 @@ def dashboard(request):
     return render(request, "light_control/dashboard.html", {"title": "Dashboard"})
 
 def mapping_editor(request):
-    return render(request, "light_control/mapping.html", {"title": "Mapping Editor"})
+    """Mapping 編輯器頁面"""
+    context = {
+        'title': 'Mapping Editor',
+    }
+    return render(request, 'light_control/mapping.html', context)
+
+def websocket_monitor(request):
+    """WebSocket 監察頁面"""
+    context = {
+        'title': 'WebSocket Monitor',
+    }
+    return render(request, 'light_control/websocket_monitor.html', context)

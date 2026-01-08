@@ -1,8 +1,8 @@
 // static/netlight/js/mapping/core.js
 
+// ==================== 工具函數 ====================
 export const keyXY = (x, y) => `${x},${y}`;
 
-// CSRF token 支援
 export function getCookie(name) {
   let val = null;
   if (document.cookie && document.cookie !== '') {
@@ -53,7 +53,7 @@ export function autoWH(pixelCount) {
   return { w, h };
 }
 
-// 全局狀態
+// ==================== 全局狀態 ====================
 export const ST = {
   cell: 12,
   grid_w: 140,
@@ -76,10 +76,9 @@ export const ST = {
   allSlavesRGBW: {},
 };
 
-// 幀緩存
 export const FRAME_CACHE = new Map();
 
-// DOM 元素引用
+// ==================== DOM 元素 ====================
 export const DOM = {
   board: null,
   ctx: null,
@@ -96,7 +95,6 @@ export const DOM = {
   frameInfo: null,
 };
 
-// 初始化 DOM 引用
 export function initDOM() {
   DOM.board = document.getElementById("board");
   DOM.ctx = DOM.board.getContext("2d");
@@ -113,7 +111,6 @@ export function initDOM() {
   DOM.frameInfo = document.getElementById("frameInfo");
 }
 
-// 訊息顯示
 export function showMessage(text, type = "info") {
   const colors = {
     success: "#059669",

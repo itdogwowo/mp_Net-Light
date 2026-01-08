@@ -304,9 +304,40 @@ def layout_get(request):
 
 @require_http_methods(["POST"])
 def layout_set(request):
-    """設置所有 slave 的佈局"""
+    """設置所有 slave 的布局"""
     body = json.loads(request.body.decode("utf-8"))
+    
+    # 保存布局文件
     save_json("layout.json", body)
+    
+    # 同時更新每個 slave 的 mapping 文件中的 ox, oy
+    if "layout" in body:
+        for layout_item in body["layout"]:
+            slave_id = layout_item["slave_id"]
+            ox = layout_item.get("ox", 0)
+            oy = layout_item.get("oy", 0)
+            
+            # 載入現有 mapping
+            data = load_mapping(slave_id)
+            if data is None:
+                # 如果沒有 mapping，創建一個基本的
+                data = {
+                    "version": 2,
+                    "slave_id": slave_id,
+                    "w": 1,
+                    "h": 1,
+                    "ox": ox,
+                    "oy": oy,
+                    "map": []
+                }
+            else:
+                # 更新現有 mapping 中的 ox, oy
+                data["ox"] = ox
+                data["oy"] = oy
+                
+            # 保存
+            save_mapping(slave_id, data)
+    
     return JsonResponse({"ok": True})
 
 def auto_arrange_layout(slaves_data, grid_width=140):
