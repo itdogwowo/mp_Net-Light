@@ -4,54 +4,76 @@
 
 {% block content %}
 <div class="content">
-  <h2 style="color:#667eea; margin-bottom:12px;">Mapping Editor（每 slave 一份 mapping）</h2>
-
+  <h2 style="color:#667eea; margin-bottom:12px;">🧩 Mapping Editor（每 slave 一份 mapping）</h2>
+  
   <div style="display:flex; gap:16px; flex-wrap:wrap;">
+    <!-- 左側：Canvas 畫板 -->
     <div style="flex: 1 1 780px;">
       <canvas id="board" style="width:100%; border:1px solid #e5e7eb; border-radius:8px; image-rendering:pixelated;"></canvas>
-      <div style="color:#666; margin-top:8px;">
-        點格子選取 → 設 pxld_id / mcu_id → 保存到 mapping_slave_{id}.json
+      <div style="color:#666; margin-top:8px; font-size:0.9rem;">
+        💡 點格子選取 → 設 pxld_id / mcu_id → 保存到 mapping_slave_{id}.json
       </div>
     </div>
 
+    <!-- 右側：控制面板 -->
     <div style="flex: 0 0 360px;">
       <div style="display:grid; gap:10px;">
-        <label>PXLD 檔名（media/netlight/pxld/）</label>
-        <input id="pxldName" value="show.pxld">
+        
+        <!-- PXLD 檔案 -->
+        <label style="font-weight:600; color:#374151;">PXLD 檔名</label>
+        <input id="pxldName" value="show.pxld" style="padding:8px; border:1px solid #d1d5db; border-radius:6px;">
 
-        <label>Slave</label>
-        <select id="slaveSelect">
+        <!-- Slave 選擇 -->
+        <label style="font-weight:600; color:#374151; margin-top:8px;">Slave 選擇</label>
+        <select id="slaveSelect" style="padding:8px; border:1px solid #d1d5db; border-radius:6px;">
           <option value="-1">總畫板</option>
         </select>
 
-        <div style="display:grid; gap:10px; margin-top:12px;">
+        <!-- 播放控制 -->
+        <div style="margin-top:12px; padding-top:12px; border-top:1px solid #e5e7eb;">
+          <label style="font-weight:600; color:#374151; margin-bottom:8px; display:block;">播放控制</label>
           <div style="display:flex; gap:8px;">
-            <button class="btn" id="playBtn">▶️</button>
-            <button class="btn" id="pauseBtn">⏸️</button>
-            <button class="btn" id="stopBtn">⏹️</button>
+            <button class="btn" id="playBtn" style="flex:1;">▶️</button>
+            <button class="btn" id="pauseBtn" style="flex:1;">⏸️</button>
+            <button class="btn" id="stopBtn" style="flex:1;">⏹️</button>
           </div>
-
-          <label>Frame</label>
-          <input id="frameSlider" type="range" min="0" max="0" value="0">
-          <div id="frameInfo" style="color:#666;">frame: 0</div>
+          
+          <label style="font-size:0.9rem; color:#6b7280; margin-top:10px; display:block;">Frame</label>
+          <input id="frameSlider" type="range" min="0" max="0" value="0" style="width:100%;">
+          <div id="frameInfo" style="color:#666; font-size:0.85rem; text-align:center;">frame: 0</div>
         </div>
 
-        <div style="background:#f3f4f6;padding:10px;border-radius:8px;" id="pickedInfo">-</div>
+        <!-- 選中格子資訊 -->
+        <div style="background:#f3f4f6; padding:12px; border-radius:8px; margin-top:12px;" id="pickedInfo">
+          點擊格子以選取
+        </div>
 
-        <label>pxld_id</label>
-        <input id="pxldId" type="number" value="0">
+        <!-- Mapping 編輯 -->
+        <label style="font-weight:600; color:#374151; margin-top:8px;">pxld_id（檔案內順序）</label>
+        <input id="pxldId" type="number" value="0" style="padding:8px; border:1px solid #d1d5db; border-radius:6px;">
 
-        <label>mcu_id</label>
-        <input id="mcuId" type="number" value="0">
+        <label style="font-weight:600; color:#374151;">mcu_led_id（實際燈序）</label>
+        <input id="mcuId" type="number" value="0" style="padding:8px; border:1px solid #d1d5db; border-radius:6px;">
 
-        <button class="btn" id="applyBtn">套用</button>
-        <button class="btn" id="saveBtn" style="background:#111827;">保存（此 slave）</button>
+        <!-- 操作按鈕 -->
+        <button class="btn" id="applyBtn" style="margin-top:8px;">✓ 套用到此格</button>
+        <button class="btn" id="saveBtn" style="background:#111827; margin-top:4px;">💾 保存（此 slave）</button>
 
-        <div id="msg" style="color:#666;"></div>
+        <!-- 訊息顯示 -->
+        <div id="msg" style="color:#059669; font-size:0.9rem; min-height:20px; margin-top:8px;"></div>
       </div>
     </div>
   </div>
 </div>
 
-<script type="module" src="{% static 'netlight/js/mapping.js' %}"></script>
+<!-- ✅ 關鍵：加入 CSRF token -->
+{% csrf_token %}
+
+<!-- 模塊化版本（主要） -->
+<!-- 直接加載單文件版本 -->
+<script src="{% static 'netlight/js/mapping-single.js' %}"></script>
+
+<!-- 可選：如果想要模塊化版本，保留這個 -->
+<!-- <script type="module" src="{% static 'netlight/js/mapping.js' %}"></script> -->
+{% endblock %}
 {% endblock %}

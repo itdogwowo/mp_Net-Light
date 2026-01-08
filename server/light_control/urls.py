@@ -15,7 +15,12 @@ urlpatterns = [
 
     path("api/pxld/info/", api_views.pxld_info, name="pxld_info"),
     path("api/pxld/slaves/", api_views.pxld_slaves, name="pxld_slaves"),
+    path("api/pxld/all_slaves_rgbw", api_views.pxld_all_slaves_rgbw, name="pxld_all_slaves_rgbw"),
     path("api/pxld/slave_frame_rgbw", api_views.pxld_slave_frame_rgbw, name="pxld_slave_frame_rgbw"),
+
+    path("api/layout/get/", api_views.layout_get, name="layout_get"),
+    path("api/layout/set/", api_views.layout_set, name="layout_set"),
+
 
     path("api/config/slaves/get/", api_views.cfg_slaves_get, name="cfg_slaves_get"),
     path("api/config/slaves/set/", api_views.cfg_slaves_set, name="cfg_slaves_set"),
@@ -24,4 +29,5 @@ urlpatterns = [
 
     path("api/mapping/get/", api_views.mapping_get, name="mapping_get"),
     path("api/mapping/set/", api_views.mapping_set, name="mapping_set"),
+    path("api/mapping/auto_arrange/", api_views.auto_arrange, name="mapping_auto_arrange"),
 ]

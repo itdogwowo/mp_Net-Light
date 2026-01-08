@@ -1,6 +1,170 @@
 {
-  "version": 1,
+  "version": 2,
   "layout": [
-    { "slave_id": 0, "ox": 0, "oy": 0 }
+    {
+      "slave_id": 0,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 1,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 2,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 3,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 4,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 5,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 6,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 7,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 8,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 9,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 10,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 11,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 12,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 13,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 14,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 15,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 16,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 17,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 18,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 19,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 20,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 21,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 22,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 23,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 24,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 25,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 26,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 27,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 28,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 29,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 30,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 31,
+      "ox": 0,
+      "oy": 0
+    },
+    {
+      "slave_id": 32,
+      "ox": 0,
+      "oy": 0
+    }
   ]
 }
