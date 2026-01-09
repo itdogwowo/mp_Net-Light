@@ -71,9 +71,8 @@
 
 <!-- 模塊化版本（主要） -->
 <!-- 直接加載單文件版本 -->
-<script src="{% static 'netlight/js/mapping-single.js' %}"></script>
+{% comment %} <script src="{% static 'netlight/js/mapping-single.js' %}"></script> {% endcomment %}
 
 <!-- 可選：如果想要模塊化版本，保留這個 -->
-<!-- <script type="module" src="{% static 'netlight/js/mapping.js' %}"></script> -->
-{% endblock %}
+<script type="module" src="{% static 'netlight/js/mapping.js' %}"></script>
 {% endblock %}

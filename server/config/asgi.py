@@ -1,5 +1,4 @@
-# config/asgi.py
-
+# config/asgi.py - 確認配置正確
 import os
 from django.core.asgi import get_asgi_application
 
@@ -24,3 +23,5 @@ application = ProtocolTypeRouter({
         )
     ),
 })
+
+print("✅ ASGI 配置完成")

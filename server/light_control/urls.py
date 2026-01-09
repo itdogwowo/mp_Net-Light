@@ -12,6 +12,7 @@ urlpatterns = [
 
     path("", views.dashboard, name="dashboard"),
     path("mapping/", views.mapping_editor, name="mapping"),
+    path("websocket-monitor/", views.websocket_monitor, name="websocket_monitor"),  # 新增
 
     path("api/pxld/info/", api_views.pxld_info, name="pxld_info"),
     path("api/pxld/slaves/", api_views.pxld_slaves, name="pxld_slaves"),

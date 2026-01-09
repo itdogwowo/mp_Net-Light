@@ -121,12 +121,20 @@ export function drawSlaveLEDsOnBoard(sid, ox, oy, w, h) {
 }
 
 export function drawSlaveRectsOnBoard() {
+  // 先繪製所有 slave 的 LED 顏色
   for (const s of ST.slaves) {
     const sid = s.slave_id;
     const layout = ST.layout[sid] || { ox: 0, oy: 0 };
     const wh = ST.wh[sid] || { w: 1, h: 1 };
     
     drawSlaveLEDsOnBoard(sid, layout.ox, layout.oy, wh.w, wh.h);
+  }
+  
+  // 再繪製邊框
+  for (const s of ST.slaves) {
+    const sid = s.slave_id;
+    const layout = ST.layout[sid] || { ox: 0, oy: 0 };
+    const wh = ST.wh[sid] || { w: 1, h: 1 };
     
     DOM.ctx.strokeStyle = "rgba(99,179,237,0.7)";
     DOM.ctx.lineWidth = 1;
