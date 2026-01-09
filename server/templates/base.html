@@ -174,10 +174,14 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body>
+
     <div class="container">
         <header>
             <h1>🌈 mp_Net-Light</h1>
             <p class="subtitle">MicroPython 網絡燈效控制系統</p>
+                <a href="{% url 'light_control:websocket_monitor' %}" class="nav-link">
+                🔌 WebSocket 監察器
+                </a>
         </header>
         
         {% block content %}{% endblock %}

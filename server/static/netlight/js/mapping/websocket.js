@@ -1,4 +1,4 @@
-// static/netlight/js/mapping/websocket.js
+// static/netlight/js/mapping/websocket.js - 修正處理總畫板數據
 import { ST, DOM, showMessage, b64ToU8, FRAME_CACHE } from './core.js';
 import { redraw } from './canvas.js';
 
@@ -11,6 +11,7 @@ export class WebSocketPlayer {
     this.totalFrames = 0;
     this.fps = 30;
     this.decoderReady = false;
+    this.allSlaveIds = [];  // 新增：儲存所有 slave ID
     this.performance = {
       frameTimes: [],
       lastFrameTime: 0,
@@ -79,13 +80,21 @@ export class WebSocketPlayer {
       case 'playback_ready':
         this.totalFrames = data.total_frames;
         this.fps = data.fps;
+        this.allSlaveIds = data.slave_ids || [];  // 新增：儲存所有 slave ID
         this.decoderReady = true;
         console.log(`播放器就緒: ${this.totalFrames} 幀, ${this.fps} FPS`);
+        console.log(`所有 Slave IDs: ${this.allSlaveIds.join(', ')}`);
         showMessage(`✅ 播放器就緒: ${this.totalFrames} 幀 @ ${this.fps} FPS`, "success");
         break;
         
       case 'frame_data':
+        // 單個 slave 的幀數據
         this.handleFrameData(data);
+        break;
+        
+      case 'frame_data_all':
+        // 總畫板模式：所有 slave 的幀數據
+        this.handleAllSlavesFrameData(data);
         break;
         
       case 'playback_started':
@@ -116,6 +125,7 @@ export class WebSocketPlayer {
   }
   
   handleFrameData(data) {
+    // 單個 slave 模式
     this.updatePerformanceStats();
     
     this.currentFrame = data.frame;
@@ -129,13 +139,35 @@ export class WebSocketPlayer {
     const slaveId = data.slave_id;
     const rgbwBytes = b64ToU8(data.rgbw_b64);
     
-    if (slaveId === -1) {
-      ST.allSlavesRGBW[0] = rgbwBytes;
-    } else {
-      ST.rgbw[slaveId] = rgbwBytes;
+    ST.rgbw[slaveId] = rgbwBytes;
+    FRAME_CACHE.set(`${slaveId}_${data.frame}`, rgbwBytes);
+    
+    redraw();
+  }
+  
+  handleAllSlavesFrameData(data) {
+    // 總畫板模式：處理所有 slave 的數據
+    this.updatePerformanceStats();
+    
+    this.currentFrame = data.frame;
+    ST.frame = data.frame;
+    
+    if (DOM.frameSlider) DOM.frameSlider.value = String(data.frame);
+    if (DOM.frameInfo) {
+      DOM.frameInfo.textContent = `frame: ${data.frame} (${this.performance.avgFps.toFixed(1)} fps)`;
     }
     
-    FRAME_CACHE.set(`${slaveId}_${data.frame}`, rgbwBytes);
+    // 處理每個 slave 的數據
+    if (data.slaves && Array.isArray(data.slaves)) {
+      for (const slaveData of data.slaves) {
+        const sid = slaveData.slave_id;
+        const rgbwBytes = b64ToU8(slaveData.rgbw_b64);
+        
+        ST.allSlavesRGBW[sid] = rgbwBytes;
+        FRAME_CACHE.set(`${sid}_${data.frame}`, rgbwBytes);
+      }
+    }
+    
     redraw();
   }
   
@@ -224,8 +256,6 @@ export class WebSocketPlayer {
       type: 'playback_seek',
       frame: frame
     }));
-    
-    console.log(`跳轉到幀 ${frame}`);
   }
   
   getFrame(frame, slaveId = -1) {
@@ -236,5 +266,13 @@ export class WebSocketPlayer {
       frame: frame,
       slave_id: slaveId
     }));
+  }
+  
+  getPerformanceStats() {
+    return {
+      fps: this.performance.avgFps.toFixed(1),
+      latency: this.performance.latency.toFixed(1),
+      frameCount: this.performance.frameTimes.length
+    };
   }
 }
