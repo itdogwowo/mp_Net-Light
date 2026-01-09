@@ -4,106 +4,205 @@
 {% block title %}{{ title }} - mp_Net-Light{% endblock %}
 
 {% block content %}
-<div class="content" style="max-width: 1200px; margin: 0 auto;">
-  <h2 style="color:#667eea; margin-bottom:20px;">🔌 WebSocket 監察器</h2>
+<div class="content" style="max-width: 1600px; margin: 0 auto;">
+  <h2 style="color:#667eea; margin-bottom:20px;">🔌 WebSocket 監察器（廣播房間模式）</h2>
   
-  <div style="display: grid; gap: 16px;">
+  <div style="display: grid; grid-template-columns: 1fr 1fr 400px; gap: 16px;">
     
-    <!-- 連接控制 -->
-    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
-      <h3 style="margin-top: 0;">連接控制</h3>
+    <!-- 左側：連接和控制 -->
+    <div style="display: grid; gap: 16px;">
       
-      <div style="display: grid; gap: 12px;">
-        <div>
-          <label style="font-weight: 600;">WebSocket URL:</label>
-          <input id="wsUrl" type="text" 
-                 value="ws://{{ request.get_host }}/ws/light/playback/" 
-                 style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
-        </div>
+      <!-- 連接控制 -->
+      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+        <h3 style="margin-top: 0;">連接控制</h3>
         
-        <div style="display: flex; gap: 8px;">
-          <button id="connectBtn" class="btn" style="flex: 1;">🔗 連接</button>
-          <button id="disconnectBtn" class="btn" style="flex: 1; background: #dc2626;">🔌 斷開</button>
-        </div>
-        
-        <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: white; border-radius: 6px;">
-          <span style="font-weight: 600;">狀態:</span>
-          <span id="connectionStatus" style="color: #dc2626;">❌ 未連接</span>
+        <div style="display: grid; gap: 12px;">
+          <div>
+            <label style="font-weight: 600;">連接模式:</label>
+            <select id="connectionMode" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+              <option value="monitor">🔍 監察模式（只接收，不發送控制）</option>
+              <option value="playback">🎮 播放模式（可控制播放）</option>
+            </select>
+          </div>
+          
+          <div>
+            <label style="font-weight: 600;">WebSocket URL:</label>
+            <input id="wsUrl" type="text" 
+                   value="ws://{{ request.get_host }}/ws/light/monitor/" 
+                   style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;" readonly>
+          </div>
+          
+          <div style="display: flex; gap: 8px;">
+            <button id="connectBtn" class="btn" style="flex: 1;">🔗 連接</button>
+            <button id="disconnectBtn" class="btn" style="flex: 1; background: #dc2626;">🔌 斷開</button>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: white; border-radius: 6px;">
+            <span style="font-weight: 600;">狀態:</span>
+            <span id="connectionStatus" style="color: #dc2626;">❌ 未連接</span>
+          </div>
         </div>
       </div>
-    </div>
-    
-    <!-- 發送測試訊息 -->
-    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
-      <h3 style="margin-top: 0;">發送測試訊息</h3>
       
-      <div style="display: grid; gap: 12px;">
-        <div>
-          <label style="font-weight: 600;">訊息類型:</label>
-          <select id="messageType" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
-            <option value="playback_init">playback_init - 初始化播放器</option>
-            <option value="playback_play">playback_play - 開始播放</option>
-            <option value="playback_pause">playback_pause - 暫停</option>
-            <option value="playback_stop">playback_stop - 停止</option>
-            <option value="playback_seek">playback_seek - 跳轉幀</option>
-            <option value="playback_get_frame">playback_get_frame - 獲取單幀</option>
-            <option value="custom">custom - 自定義 JSON</option>
-          </select>
-        </div>
+      <!-- 發送測試訊息 -->
+      <div id="sendPanel" style="background: #f3f4f6; padding: 16px; border-radius: 8px; opacity: 0.5;">
+        <h3 style="margin-top: 0;">發送測試訊息（播放模式專用）</h3>
         
-        <div>
-          <label style="font-weight: 600;">訊息內容（JSON）:</label>
-          <textarea id="messageContent" rows="6" 
-                    style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace;">
+        <div style="display: grid; gap: 12px;">
+          <div>
+            <label style="font-weight: 600;">訊息類型:</label>
+            <select id="messageType" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+              <option value="playback_init">playback_init - 初始化播放器</option>
+              <option value="playback_play">playback_play - 開始播放</option>
+              <option value="playback_pause">playback_pause - 暫停</option>
+              <option value="playback_stop">playback_stop - 停止</option>
+              <option value="playback_seek">playback_seek - 跳轉幀</option>
+              <option value="playback_get_frame">playback_get_frame - 獲取單幀</option>
+            </select>
+          </div>
+          
+          <div>
+            <label style="font-weight: 600;">訊息內容（JSON）:</label>
+            <textarea id="messageContent" rows="6" 
+                      style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace; font-size: 12px;">
 {
   "type": "playback_init",
   "filename": "show.pxld",
   "slave_id": -1
 }
-          </textarea>
+            </textarea>
+          </div>
+          
+          <button id="sendBtn" class="btn" disabled>📤 發送訊息</button>
         </div>
+      </div>
+      
+      <!-- 統計信息 -->
+      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+        <h3 style="margin-top: 0;">📊 統計信息</h3>
         
-        <button id="sendBtn" class="btn">📤 發送訊息</button>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+          <div style="background: white; padding: 12px; border-radius: 6px;">
+            <div style="color: #6b7280; font-size: 0.9rem;">接收訊息</div>
+            <div id="statReceived" style="font-size: 1.5rem; font-weight: 600; color: #059669;">0</div>
+          </div>
+          
+          <div style="background: white; padding: 12px; border-radius: 6px;">
+            <div style="color: #6b7280; font-size: 0.9rem;">發送訊息</div>
+            <div id="statSent" style="font-size: 1.5rem; font-weight: 600; color: #2563eb;">0</div>
+          </div>
+          
+          <div style="background: white; padding: 12px; border-radius: 6px;">
+            <div style="color: #6b7280; font-size: 0.9rem;">frame_data</div>
+            <div id="statFrameData" style="font-size: 1.5rem; font-weight: 600; color: #8b5cf6;">0</div>
+          </div>
+          
+          <div style="background: white; padding: 12px; border-radius: 6px;">
+            <div style="color: #6b7280; font-size: 0.9rem;">錯誤次數</div>
+            <div id="statErrors" style="font-size: 1.5rem; font-weight: 600; color: #dc2626;">0</div>
+          </div>
+          
+          <div style="background: white; padding: 12px; border-radius: 6px;">
+            <div style="color: #6b7280; font-size: 0.9rem;">連接時長</div>
+            <div id="statUptime" style="font-size: 1.5rem; font-weight: 600; color: #d97706;">0s</div>
+          </div>
+          
+          <div style="background: white; padding: 12px; border-radius: 6px;">
+            <div style="color: #6b7280; font-size: 0.9rem;">實時 FPS</div>
+            <div id="statFps" style="font-size: 1.5rem; font-weight: 600; color: #8b5cf6;">--</div>
+          </div>
+        </div>
       </div>
     </div>
     
-    <!-- 訊息記錄 -->
-    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <h3 style="margin: 0;">📝 訊息記錄</h3>
-        <button id="clearLogBtn" class="btn" style="padding: 6px 12px; background: #6b7280;">清除</button>
+    <!-- 中間：訊息記錄 -->
+    <div style="display: grid; gap: 16px;">
+      
+      <!-- 訊息過濾 -->
+      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+        <h3 style="margin-top: 0;">🔍 訊息過濾</h3>
+        
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="filterConnection" checked>
+            <span style="font-size: 0.9rem;">連接訊息</span>
+          </label>
+          
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="filterClientMsg" checked>
+            <span style="font-size: 0.9rem;">客戶端訊息</span>
+          </label>
+          
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="filterFrameData">
+            <span style="font-size: 0.9rem;">frame_data（單）</span>
+          </label>
+          
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="filterFrameDataAll" checked>
+            <span style="font-size: 0.9rem;">frame_data_all（總）</span>
+          </label>
+          
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="filterPlayback" checked>
+            <span style="font-size: 0.9rem;">播放控制</span>
+          </label>
+          
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="filterErrors" checked>
+            <span style="font-size: 0.9rem;">錯誤訊息</span>
+          </label>
+          
+          <label style="display: flex; align-items: center; gap: 8px; grid-column: 1 / -1;">
+            <input type="checkbox" id="autoScroll" checked>
+            <span style="font-size: 0.9rem;">自動滾動到底部</span>
+          </label>
+          
+          <label style="display: flex; align-items: center; gap: 8px; grid-column: 1 / -1;">
+            <input type="checkbox" id="showDetails" checked>
+            <span style="font-size: 0.9rem;">顯示詳細數據（點擊展開）</span>
+          </label>
+        </div>
       </div>
       
-      <div id="messageLog" 
-           style="background: #1f2937; color: #e5e7eb; padding: 12px; border-radius: 6px; 
-                  height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px;">
-        <div style="color: #9ca3af;">等待連接...</div>
+      <!-- 訊息記錄 -->
+      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; flex: 1;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h3 style="margin: 0;">📝 訊息記錄（廣播房間）</h3>
+          <div style="display: flex; gap: 8px;">
+            <button id="pauseLogBtn" class="btn" style="padding: 6px 12px; background: #f59e0b;">⏸️ 暫停</button>
+            <button id="clearLogBtn" class="btn" style="padding: 6px 12px; background: #6b7280;">🗑️ 清除</button>
+          </div>
+        </div>
+        
+        <div id="messageLog" 
+             style="background: #1f2937; color: #e5e7eb; padding: 12px; border-radius: 6px; 
+                    height: 700px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.6;">
+          <div style="color: #9ca3af;">等待連接...</div>
+        </div>
       </div>
     </div>
     
-    <!-- 統計信息 -->
-    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
-      <h3 style="margin-top: 0;">📊 統計信息</h3>
+    <!-- 右側：幀數據詳情 -->
+    <div style="display: grid; gap: 16px;">
       
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
-        <div style="background: white; padding: 12px; border-radius: 6px;">
-          <div style="color: #6b7280; font-size: 0.9rem;">接收訊息</div>
-          <div id="statReceived" style="font-size: 1.5rem; font-weight: 600; color: #059669;">0</div>
-        </div>
+      <!-- 當前幀信息 -->
+      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+        <h3 style="margin-top: 0;">🎬 當前幀信息</h3>
         
-        <div style="background: white; padding: 12px; border-radius: 6px;">
-          <div style="color: #6b7280; font-size: 0.9rem;">發送訊息</div>
-          <div id="statSent" style="font-size: 1.5rem; font-weight: 600; color: #2563eb;">0</div>
+        <div id="currentFrameInfo" style="background: white; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 12px;">
+          <div style="color: #6b7280;">等待幀數據...</div>
         </div>
+      </div>
+      
+      <!-- Slave 數據詳情 -->
+      <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; flex: 1;">
+        <h3 style="margin-top: 0;">📦 Slave 數據詳情</h3>
         
-        <div style="background: white; padding: 12px; border-radius: 6px;">
-          <div style="color: #6b7280; font-size: 0.9rem;">錯誤次數</div>
-          <div id="statErrors" style="font-size: 1.5rem; font-weight: 600; color: #dc2626;">0</div>
-        </div>
-        
-        <div style="background: white; padding: 12px; border-radius: 6px;">
-          <div style="color: #6b7280; font-size: 0.9rem;">連接時長</div>
-          <div id="statUptime" style="font-size: 1.5rem; font-weight: 600; color: #d97706;">0s</div>
+        <div id="slaveDetails" 
+             style="background: white; padding: 12px; border-radius: 6px; 
+                    height: 600px; overflow-y: auto; font-family: monospace; font-size: 11px;">
+          <div style="color: #6b7280;">選擇一個 slave 查看詳情...</div>
         </div>
       </div>
     </div>
@@ -112,61 +211,300 @@
 </div>
 
 <script>
-// WebSocket 監察器
+// WebSocket 監察器 - 詳細數據查看版本
 (function() {
   'use strict';
   
   let ws = null;
   let connected = false;
+  let mode = 'monitor';
+  let logPaused = false;
+  let lastFrameData = null;  // 儲存最新的幀數據
   let stats = {
     received: 0,
     sent: 0,
     errors: 0,
-    connectTime: null
+    frameData: 0,
+    connectTime: null,
+    lastFrameTime: 0,
+    frameTimes: [],
+    clients: new Set()
   };
   
   // DOM 元素
   const wsUrlEl = document.getElementById('wsUrl');
+  const connectionModeEl = document.getElementById('connectionMode');
   const connectBtn = document.getElementById('connectBtn');
   const disconnectBtn = document.getElementById('disconnectBtn');
   const statusEl = document.getElementById('connectionStatus');
   const messageTypeEl = document.getElementById('messageType');
   const messageContentEl = document.getElementById('messageContent');
   const sendBtn = document.getElementById('sendBtn');
+  const sendPanel = document.getElementById('sendPanel');
   const messageLog = document.getElementById('messageLog');
   const clearLogBtn = document.getElementById('clearLogBtn');
+  const pauseLogBtn = document.getElementById('pauseLogBtn');
+  const currentFrameInfo = document.getElementById('currentFrameInfo');
+  const slaveDetails = document.getElementById('slaveDetails');
+  
+  // 過濾器
+  const filterConnection = document.getElementById('filterConnection');
+  const filterClientMsg = document.getElementById('filterClientMsg');
+  const filterFrameData = document.getElementById('filterFrameData');
+  const filterFrameDataAll = document.getElementById('filterFrameDataAll');
+  const filterPlayback = document.getElementById('filterPlayback');
+  const filterErrors = document.getElementById('filterErrors');
+  const autoScroll = document.getElementById('autoScroll');
+  const showDetails = document.getElementById('showDetails');
   
   // 統計元素
   const statReceived = document.getElementById('statReceived');
   const statSent = document.getElementById('statSent');
+  const statFrameData = document.getElementById('statFrameData');
   const statErrors = document.getElementById('statErrors');
   const statUptime = document.getElementById('statUptime');
+  const statFps = document.getElementById('statFps');
   
-  // 日誌函數
-  function log(message, type = 'info') {
-    const timestamp = new Date().toLocaleTimeString();
+  // Base64 解碼函數
+  function b64ToU8(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  
+  // 顯示當前幀信息
+  function displayCurrentFrame(data) {
+    lastFrameData = data;
+    
+    let html = '<div style="display: grid; gap: 8px;">';
+    html += `<div><strong>幀號:</strong> ${data.frame}</div>`;
+    html += `<div><strong>時間:</strong> ${new Date(data.timestamp).toLocaleTimeString()}</div>`;
+    html += `<div><strong>來源:</strong> ${data.device_id || 'unknown'}</div>`;
+    
+    if (data.slaves) {
+      html += `<div><strong>Slaves:</strong> ${data.slaves.length} 個</div>`;
+      html += '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb;">';
+      html += '<div style="font-weight: 600; margin-bottom: 4px;">點擊 Slave 查看詳情:</div>';
+      
+      for (const slave of data.slaves) {
+        const rgbwSize = slave.rgbw_b64.length;
+        const pixelCount = Math.floor(rgbwSize * 3 / 4 / 4); // base64 -> bytes -> pixels
+        
+        html += `
+          <button onclick="viewSlaveDetail(${slave.slave_id})" 
+                  style="display: block; width: 100%; padding: 6px; margin: 2px 0; 
+                         background: #e5e7eb; border: 1px solid #d1d5db; border-radius: 4px; 
+                         cursor: pointer; text-align: left; font-family: monospace; font-size: 11px;">
+            Slave ${slave.slave_id}: ${pixelCount} LEDs, ${rgbwSize} chars
+          </button>
+        `;
+      }
+      html += '</div>';
+    }
+    
+    html += '</div>';
+    currentFrameInfo.innerHTML = html;
+  }
+  
+  // 查看 Slave 詳細數據
+  window.viewSlaveDetail = function(slaveId) {
+    if (!lastFrameData || !lastFrameData.slaves) return;
+    
+    const slave = lastFrameData.slaves.find(s => s.slave_id === slaveId);
+    if (!slave) return;
+    
+    const rgbwBytes = b64ToU8(slave.rgbw_b64);
+    const pixelCount = rgbwBytes.length / 4;
+    
+    let html = `<div style="padding: 8px;">`;
+    html += `<h4 style="margin: 0 0 12px 0; color: #667eea;">Slave ${slaveId} 詳細數據</h4>`;
+    html += `<div style="margin-bottom: 12px;">`;
+    html += `<div><strong>總像素數:</strong> ${pixelCount}</div>`;
+    html += `<div><strong>數據大小:</strong> ${rgbwBytes.length} bytes</div>`;
+    html += `</div>`;
+    
+    // 顯示前 50 個像素的數據
+    html += `<div style="margin-bottom: 8px; font-weight: 600;">前 50 個像素的 RGBW 值:</div>`;
+    html += `<div style="max-height: 500px; overflow-y: auto; background: #f9fafb; padding: 8px; border-radius: 4px;">`;
+    
+    const displayCount = Math.min(50, pixelCount);
+    for (let i = 0; i < displayCount; i++) {
+      const offset = i * 4;
+      const r = rgbwBytes[offset];
+      const g = rgbwBytes[offset + 1];
+      const b = rgbwBytes[offset + 2];
+      const w = rgbwBytes[offset + 3];
+      
+      // 顯示顏色預覽
+      const rgbColor = `rgb(${r},${g},${b})`;
+      const brightness = r === 0 && g === 0 && b === 0 && w > 0 ? w : Math.max(r, g, b);
+      const textColor = brightness > 128 ? '#000' : '#fff';
+      
+      html += `
+        <div style="display: flex; align-items: center; gap: 8px; margin: 2px 0; padding: 4px; 
+                    background: ${i % 2 === 0 ? '#fff' : '#f3f4f6'}; border-radius: 2px;">
+          <div style="width: 30px; text-align: right; color: #6b7280;">${i}:</div>
+          <div style="width: 20px; height: 20px; background: ${rgbColor}; border: 1px solid #d1d5db; border-radius: 2px;"></div>
+          <div style="flex: 1;">
+            R:<span style="color: #ef4444;">${String(r).padStart(3, ' ')}</span>
+            G:<span style="color: #10b981;">${String(g).padStart(3, ' ')}</span>
+            B:<span style="color: #3b82f6;">${String(b).padStart(3, ' ')}</span>
+            W:<span style="color: #f59e0b;">${String(w).padStart(3, ' ')}</span>
+          </div>
+        </div>
+      `;
+    }
+    
+    if (pixelCount > 50) {
+      html += `<div style="color: #6b7280; text-align: center; margin-top: 8px;">... 還有 ${pixelCount - 50} 個像素</div>`;
+    }
+    
+    html += `</div></div>`;
+    slaveDetails.innerHTML = html;
+  };
+  
+  // 日誌函數（帶詳細信息）
+  function log(message, type = 'info', data = null) {
+    if (logPaused) return;
+    
+    // 過濾檢查
+    const filterMap = {
+      'connection': filterConnection,
+      'disconnection': filterConnection,
+      'client_message': filterClientMsg,
+      'frame_data': filterFrameData,
+      'frame_data_all': filterFrameDataAll,
+      'playback_started': filterPlayback,
+      'playback_paused': filterPlayback,
+      'playback_stopped': filterPlayback,
+      'playback_ready': filterPlayback,
+      'error': filterErrors,
+      'playback_error': filterErrors,
+    };
+    
+    if (data && data.type && filterMap[data.type] && !filterMap[data.type].checked) {
+      return;
+    }
+    
+    const timestamp = new Date().toLocaleTimeString() + '.' + String(Date.now() % 1000).padStart(3, '0');
     const colors = {
       info: '#9ca3af',
       success: '#10b981',
       error: '#ef4444',
       warning: '#f59e0b',
       sent: '#3b82f6',
-      received: '#8b5cf6'
+      received: '#8b5cf6',
+      connection: '#10b981',
+      client_message: '#3b82f6',
+      frame_data: '#06b6d4',
+      frame_data_all: '#a855f7',
+      playback: '#f59e0b'
     };
     
     const logEntry = document.createElement('div');
-    logEntry.style.marginBottom = '4px';
-    logEntry.style.color = colors[type] || colors.info;
-    logEntry.innerHTML = `<span style="color: #6b7280;">[${timestamp}]</span> ${message}`;
+    logEntry.style.marginBottom = '6px';
+    logEntry.style.borderLeft = `3px solid ${colors[type] || colors.info}`;
+    logEntry.style.paddingLeft = '8px';
+    logEntry.style.paddingTop = '2px';
+    logEntry.style.paddingBottom = '2px';
+    logEntry.style.cursor = 'pointer';
     
+    let content = `<span style="color: #6b7280;">[${timestamp}]</span> <span style="color: ${colors[type]}; font-weight: 600;">${message}</span>`;
+    
+    // 如果有數據，顯示摘要
+    if (data) {
+      // 更新當前幀信息
+      if (data.type === 'frame_data_all') {
+        displayCurrentFrame(data);
+      }
+      
+      // 記錄客戶端
+      if (data.device_id) {
+        stats.clients.add(data.device_id);
+      }
+      
+      if (data.type === 'frame_data') {
+        const pixelCount = Math.floor(data.rgbw_b64.length * 3 / 4 / 4);
+        content += `<div style="color: #6b7280; font-size: 0.85em; margin-left: 20px;">幀: ${data.frame}, Slave: ${data.slave_id}, LEDs: ${pixelCount}, 來源: ${data.device_id || 'unknown'}</div>`;
+      } else if (data.type === 'frame_data_all') {
+        let totalPixels = 0;
+        let totalDataSize = 0;
+        
+        for (const slave of data.slaves) {
+          const pixelCount = Math.floor(slave.rgbw_b64.length * 3 / 4 / 4);
+          totalPixels += pixelCount;
+          totalDataSize += slave.rgbw_b64.length;
+        }
+        
+        content += `<div style="color: #6b7280; font-size: 0.85em; margin-left: 20px;">`;
+        content += `幀: ${data.frame}, Slaves: ${data.slaves.length} 個, 總 LEDs: ${totalPixels}, 總數據: ${totalDataSize} chars, 來源: ${data.device_id || 'unknown'}`;
+        content += `</div>`;
+        
+        // 添加詳細信息（可展開）
+        if (showDetails.checked) {
+          const detailId = `detail_${Date.now()}_${Math.random()}`;
+          content += `<div id="${detailId}" style="display: none; margin-left: 20px; margin-top: 4px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 0.9em;">`;
+          
+          for (const slave of data.slaves) {
+            const pixelCount = Math.floor(slave.rgbw_b64.length * 3 / 4 / 4);
+            const rgbwBytes = b64ToU8(slave.rgbw_b64);
+            
+            // 計算平均亮度
+            let totalBrightness = 0;
+            for (let i = 0; i < Math.min(pixelCount, 10); i++) {
+              const offset = i * 4;
+              totalBrightness += Math.max(rgbwBytes[offset], rgbwBytes[offset+1], rgbwBytes[offset+2], rgbwBytes[offset+3]);
+            }
+            const avgBrightness = Math.floor(totalBrightness / Math.min(pixelCount, 10));
+            
+            content += `<div style="margin: 2px 0;">Slave ${slave.slave_id}: ${pixelCount} LEDs, 平均亮度: ${avgBrightness}</div>`;
+          }
+          
+          content += `</div>`;
+          
+          // 點擊展開/收起
+          logEntry.addEventListener('click', () => {
+            const detailEl = document.getElementById(detailId);
+            if (detailEl) {
+              detailEl.style.display = detailEl.style.display === 'none' ? 'block' : 'none';
+            }
+          });
+        }
+        
+      } else if (data.type === 'client_message') {
+        content += `<div style="color: #3b82f6; font-size: 0.85em; margin-left: 20px;">客戶端 ${data.device_id} 發送: ${data.data.type}</div>`;
+      } else if (data.type === 'playback_ready') {
+        content += `<div style="color: #6b7280; font-size: 0.85em; margin-left: 20px;">FPS: ${data.fps}, 總幀數: ${data.total_frames}, Slaves: ${data.total_slaves}, Slave IDs: [${data.slave_ids.join(', ')}]</div>`;
+      } else {
+        const summary = { ...data };
+        delete summary.rgbw_b64;
+        if (summary.slaves) {
+          summary.slaves = `[${summary.slaves.length} slaves]`;
+        }
+        content += `<div style="color: #6b7280; font-size: 0.85em; margin-left: 20px;"><pre style="margin: 0; max-height: 100px; overflow: auto;">${JSON.stringify(summary, null, 2)}</pre></div>`;
+      }
+    }
+    
+    logEntry.innerHTML = content;
     messageLog.appendChild(logEntry);
-    messageLog.scrollTop = messageLog.scrollHeight;
+    
+    // 自動滾動
+    if (autoScroll.checked && !logPaused) {
+      messageLog.scrollTop = messageLog.scrollHeight;
+    }
+    
+    // 限制日誌條目數量
+    while (messageLog.children.length > 1000) {
+      messageLog.removeChild(messageLog.firstChild);
+    }
   }
   
   // 更新統計
   function updateStats() {
     statReceived.textContent = stats.received;
     statSent.textContent = stats.sent;
+    statFrameData.textContent = stats.frameData;
     statErrors.textContent = stats.errors;
     
     if (stats.connectTime) {
@@ -175,13 +513,38 @@
     } else {
       statUptime.textContent = '0s';
     }
+    
+    // 計算 FPS
+    if (stats.frameTimes.length > 0) {
+      const avgFrameTime = stats.frameTimes.reduce((a, b) => a + b) / stats.frameTimes.length;
+      const fps = 1000 / avgFrameTime;
+      statFps.textContent = fps.toFixed(1);
+      statFps.style.color = fps >= 35 ? '#10b981' : fps >= 20 ? '#f59e0b' : '#ef4444';
+    }
   }
+  
+  // 連接模式變更
+  connectionModeEl.addEventListener('change', () => {
+    mode = connectionModeEl.value;
+    
+    if (mode === 'monitor') {
+      wsUrlEl.value = `ws://{{ request.get_host }}/ws/light/monitor/`;
+      sendPanel.style.opacity = '0.5';
+      sendBtn.disabled = true;
+    } else {
+      wsUrlEl.value = `ws://{{ request.get_host }}/ws/light/playback/`;
+      sendPanel.style.opacity = '1';
+      sendBtn.disabled = false;
+    }
+    
+    log(`模式切換為: ${mode}`, 'info');
+  });
   
   // 連接 WebSocket
   function connect() {
     const url = wsUrlEl.value;
     
-    log(`嘗試連接到: ${url}`, 'info');
+    log(`嘗試連接到: ${url} (模式: ${mode})`, 'info');
     
     try {
       ws = new WebSocket(url);
@@ -189,9 +552,9 @@
       ws.onopen = () => {
         connected = true;
         stats.connectTime = Date.now();
-        statusEl.textContent = '✅ 已連接';
+        statusEl.textContent = `✅ 已連接 (${mode})`;
         statusEl.style.color = '#059669';
-        log('WebSocket 連接成功', 'success');
+        log(`WebSocket 連接成功 (${mode} 模式)`, 'success');
         updateStats();
       };
       
@@ -200,9 +563,44 @@
         
         try {
           const data = JSON.parse(event.data);
-          log(`⬇️ 接收: ${JSON.stringify(data, null, 2)}`, 'received');
+          const msgType = data.type;
+          
+          // 更新統計
+          if (msgType === 'frame_data' || msgType === 'frame_data_all') {
+            stats.frameData++;
+            
+            // 更新 FPS 統計
+            const now = performance.now();
+            if (stats.lastFrameTime > 0) {
+              const frameTime = now - stats.lastFrameTime;
+              stats.frameTimes.push(frameTime);
+              if (stats.frameTimes.length > 60) {
+                stats.frameTimes.shift();
+              }
+            }
+            stats.lastFrameTime = now;
+          }
+          
+          // 記錄訊息
+          const typeMap = {
+            'connection': 'connection',
+            'disconnection': 'connection',
+            'client_message': 'client_message',
+            'frame_data': 'frame_data',
+            'frame_data_all': 'frame_data_all',
+            'playback_started': 'playback',
+            'playback_paused': 'playback',
+            'playback_stopped': 'playback',
+            'playback_ready': 'playback',
+            'error': 'error',
+            'playback_error': 'error',
+          };
+          
+          const logType = typeMap[msgType] || 'received';
+          log(`⬇️ ${msgType}`, logType, data);
+          
         } catch (error) {
-          log(`⬇️ 接收 (非 JSON): ${event.data}`, 'received');
+          log(`⬇️ 接收 (非 JSON): ${event.data.substring(0, 100)}...`, 'received');
         }
         
         updateStats();
@@ -211,6 +609,7 @@
       ws.onclose = (event) => {
         connected = false;
         stats.connectTime = null;
+        stats.frameTimes = [];
         statusEl.textContent = '❌ 未連接';
         statusEl.style.color = '#dc2626';
         log(`WebSocket 連接關閉 (code: ${event.code}, reason: ${event.reason || '無'})`, 'warning');
@@ -219,7 +618,7 @@
       
       ws.onerror = (error) => {
         stats.errors++;
-        log(`WebSocket 錯誤: ${error.message || '未知錯誤'}`, 'error');
+        log(`WebSocket 錯誤`, 'error');
         updateStats();
       };
       
@@ -247,6 +646,11 @@
       return;
     }
     
+    if (mode === 'monitor') {
+      log('監察模式不能發送控制訊息', 'warning');
+      return;
+    }
+    
     try {
       const content = messageContentEl.value;
       const data = JSON.parse(content);
@@ -254,7 +658,7 @@
       ws.send(JSON.stringify(data));
       stats.sent++;
       
-      log(`⬆️ 發送: ${JSON.stringify(data, null, 2)}`, 'sent');
+      log(`⬆️ 發送: ${data.type}`, 'sent', data);
       updateStats();
       
     } catch (error) {
@@ -267,6 +671,24 @@
   // 清除日誌
   function clearLog() {
     messageLog.innerHTML = '<div style="color: #9ca3af;">日誌已清除</div>';
+    currentFrameInfo.innerHTML = '<div style="color: #6b7280;">等待幀數據...</div>';
+    slaveDetails.innerHTML = '<div style="color: #6b7280;">選擇一個 slave 查看詳情...</div>';
+    stats.received = 0;
+    stats.sent = 0;
+    stats.frameData = 0;
+    stats.errors = 0;
+    stats.frameTimes = [];
+    stats.clients.clear();
+    lastFrameData = null;
+    updateStats();
+  }
+  
+  // 暫停/恢復日誌
+  function toggleLogPause() {
+    logPaused = !logPaused;
+    pauseLogBtn.textContent = logPaused ? '▶️ 恢復' : '⏸️ 暫停';
+    pauseLogBtn.style.background = logPaused ? '#10b981' : '#f59e0b';
+    log(logPaused ? '日誌已暫停' : '日誌已恢復', 'info');
   }
   
   // 訊息類型變更時更新範例內容
@@ -274,34 +696,12 @@
     const type = messageTypeEl.value;
     
     const examples = {
-      playback_init: {
-        type: 'playback_init',
-        filename: 'show.pxld',
-        slave_id: -1
-      },
-      playback_play: {
-        type: 'playback_play',
-        frame: 0
-      },
-      playback_pause: {
-        type: 'playback_pause'
-      },
-      playback_stop: {
-        type: 'playback_stop'
-      },
-      playback_seek: {
-        type: 'playback_seek',
-        frame: 10
-      },
-      playback_get_frame: {
-        type: 'playback_get_frame',
-        frame: 0,
-        slave_id: 0
-      },
-      custom: {
-        type: 'custom',
-        message: 'your message here'
-      }
+      playback_init: { type: 'playback_init', filename: 'show.pxld', slave_id: -1 },
+      playback_play: { type: 'playback_play', frame: 0 },
+      playback_pause: { type: 'playback_pause' },
+      playback_stop: { type: 'playback_stop' },
+      playback_seek: { type: 'playback_seek', frame: 100 },
+      playback_get_frame: { type: 'playback_get_frame', frame: 0, slave_id: 0 }
     };
     
     if (examples[type]) {
@@ -314,15 +714,65 @@
   disconnectBtn.addEventListener('click', disconnect);
   sendBtn.addEventListener('click', sendMessage);
   clearLogBtn.addEventListener('click', clearLog);
+  pauseLogBtn.addEventListener('click', toggleLogPause);
+  
+  // Ctrl+Enter 發送
+  messageContentEl.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+      sendMessage();
+    }
+  });
   
   // 定時更新運行時間
-  setInterval(updateStats, 1000);
+  setInterval(updateStats, 500);
   
   // 頁面卸載時關閉連接
   window.addEventListener('beforeunload', () => {
     if (ws) ws.close();
   });
   
+  // 自動連接到監察模式
+  setTimeout(() => {
+    if (!connected) {
+      log('自動連接到監察模式...', 'info');
+      connect();
+    }
+  }, 500);
+  
 })();
 </script>
+
+<style>
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #667eea;
+  color: white;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.btn:hover:not(:disabled) {
+  background: #5568d3;
+  transform: translateY(-1px);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+pre {
+  background: rgba(0,0,0,0.2);
+  padding: 4px 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+</style>
 {% endblock %}
