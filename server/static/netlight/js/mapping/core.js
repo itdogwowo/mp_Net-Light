@@ -128,3 +128,70 @@ export function showMessage(text, type = "info") {
     }
   }, 3000);
 }
+
+// ==================== Monitor 專用工具 ====================
+
+/**
+ * 格式化時間戳(包含毫秒)
+ */
+export function formatTimestamp(date = new Date()) {
+  const time = date.toLocaleTimeString();
+  const ms = String(date.getMilliseconds()).padStart(3, '0');
+  return `${time}.${ms}`;
+}
+
+/**
+ * 計算 Base64 字符串解碼後的像素數量
+ * @param {string} b64 - Base64 編碼的 RGBW 數據
+ * @returns {number} - 像素數量
+ */
+export function calcPixelCount(b64) {
+  return Math.floor(b64.length * 3 / 4 / 4); // base64 -> bytes -> RGBW pixels
+}
+
+/**
+ * 計算平均亮度
+ * @param {Uint8Array} rgbwBytes - RGBW 字節數組
+ * @param {number} sampleCount - 取樣數量
+ * @returns {number} - 平均亮度 (0-255)
+ */
+export function calcAvgBrightness(rgbwBytes, sampleCount = 10) {
+  const pixelCount = rgbwBytes.length / 4;
+  const samples = Math.min(pixelCount, sampleCount);
+  let totalBrightness = 0;
+  
+  for (let i = 0; i < samples; i++) {
+    const offset = i * 4;
+    const maxChannel = Math.max(
+      rgbwBytes[offset],     // R
+      rgbwBytes[offset + 1], // G
+      rgbwBytes[offset + 2], // B
+      rgbwBytes[offset + 3]  // W
+    );
+    totalBrightness += maxChannel;
+  }
+  
+  return Math.floor(totalBrightness / samples);
+}
+
+/**
+ * 生成唯一 ID
+ */
+export function generateUniqueId() {
+  return `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// ==================== 顏色常量 (Monitor 日誌用) ====================
+export const LOG_COLORS = {
+  info: '#9ca3af',
+  success: '#10b981',
+  error: '#ef4444',
+  warning: '#f59e0b',
+  sent: '#3b82f6',
+  received: '#8b5cf6',
+  connection: '#10b981',
+  client_message: '#3b82f6',
+  frame_data: '#06b6d4',
+  frame_data_all: '#a855f7',
+  playback: '#f59e0b'
+};

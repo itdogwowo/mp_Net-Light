@@ -14,6 +14,20 @@ class LightControlConsumer(AsyncWebsocketConsumer):
     1. 播放模式（playback）：執行播放並廣播到房間
     2. 監察模式（monitor）：只接收廣播，不發送控制訊息
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.decoder = None
+        self.playing = False
+        self.current_frame = 0
+        self.total_frames = 0
+        self.fps = 40
+        self.playback_task = None
+        self.device_id = None
+        
+        # 🔥 新增:立即停止標記
+        self.should_stop = False
+        self.frame_lock = asyncio.Lock()
     
     async def connect(self):
         """客戶端連接"""
@@ -241,47 +255,80 @@ class LightControlConsumer(AsyncWebsocketConsumer):
         })
     
     async def playback_loop(self):
-        """播放循環"""
-        frame_time = 1.0 / self.fps
+        """播放循環 - 優化版本"""
+        frame_time = 1.0 / self.fps  # 40fps = 0.025s = 25ms
+        
+        # 🔥 性能監測
+        frame_count = 0
+        start_time = asyncio.get_event_loop().time()
+        skipped_frames = 0
         
         try:
+            # 🔥 重置停止標記
+            self.should_stop = False
+            
             while self.playing and self.current_frame < self.total_frames:
-                start_time = asyncio.get_event_loop().time()
+                loop_start = asyncio.get_event_loop().time()
                 
-                # 發送當前幀（廣播）
-                await self.send_frame_data(self.current_frame)
+                # 🔥 檢查是否需要立即停止
+                if self.should_stop:
+                    print(f"[Playback] 檢測到停止標記,立即退出循環")
+                    break
+                
+                # 發送當前幀(使用鎖保護)
+                async with self.frame_lock:
+                    if self.should_stop:  # 再次檢查
+                        break
+                    await self.send_frame_data(self.current_frame)
                 
                 # 更新幀號
                 self.current_frame += 1
                 if self.current_frame >= self.total_frames:
                     self.current_frame = 0
                 
-                # 計算等待時間
-                elapsed = asyncio.get_event_loop().time() - start_time
-                sleep_time = max(0, frame_time - elapsed)
+                # 🔥 智能幀率控制
+                elapsed = asyncio.get_event_loop().time() - loop_start
+                sleep_time = frame_time - elapsed
                 
                 if sleep_time > 0:
+                    # 正常等待
                     await asyncio.sleep(sleep_time)
+                elif sleep_time < -frame_time:
+                    # 🔥 處理嚴重延遲:跳幀
+                    skip_count = int(abs(sleep_time) / frame_time)
+                    self.current_frame = min(
+                        self.current_frame + skip_count,
+                        self.total_frames - 1
+                    )
+                    skipped_frames += skip_count
+                    print(f"[Playback] ⚠️ 跳過 {skip_count} 幀(處理延遲)")
+                
+                # 🔥 每秒報告一次性能
+                frame_count += 1
+                if frame_count % self.fps == 0:
+                    actual_time = asyncio.get_event_loop().time() - start_time
+                    actual_fps = frame_count / actual_time
+                    print(f"[Playback] 📊 實際 FPS: {actual_fps:.1f}, 跳幀: {skipped_frames}")
         
         except asyncio.CancelledError:
-            print("[Playback] 播放任務被取消")
+            print(f"[Playback] 播放任務被取消(正常流程)")
+            raise  # 🔥 重要:重新拋出以正確處理取消
         except Exception as e:
-            print(f"[Playback] 播放循環錯誤: {e}")
+            print(f"[Playback] ❌ 播放循環錯誤: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print(f"[Playback] 播放循環結束")
     
     async def pause_playback(self):
-        """暫停播放"""
-        self.playing = False
-        await self.broadcast_to_room({
-            'type': 'playback_paused',
-            'frame': self.current_frame,
-            'device_id': self.device_id,
-        })
-    
-    async def stop_playback(self):
-        """停止播放"""
-        self.playing = False
-        self.current_frame = 0
+        """暫停播放 - 立即響應版本"""
+        print(f"[Playback] 收到暫停指令,當前幀:{self.current_frame}")
         
+        # 🔥 關鍵:立即設置標記
+        self.should_stop = True
+        self.playing = False
+        
+        # 取消播放任務
         if self.playback_task:
             self.playback_task.cancel()
             try:
@@ -290,10 +337,41 @@ class LightControlConsumer(AsyncWebsocketConsumer):
                 pass
             self.playback_task = None
         
+        # 🔥 立即廣播暫停狀態(在發送幀數據之前)
+        await self.broadcast_to_room({
+            'type': 'playback_paused',
+            'frame': self.current_frame,
+            'device_id': self.device_id,
+        })
+        
+        print(f"[Playback] ✅ 已暫停於第 {self.current_frame} 幀")
+    
+    async def stop_playback(self):
+        """停止播放 - 立即響應版本"""
+        print(f"[Playback] 收到停止指令,當前幀:{self.current_frame}")
+        
+        # 🔥 立即設置標記
+        self.should_stop = True
+        self.playing = False
+        self.current_frame = 0
+        
+        # 取消播放任務
+        if self.playback_task:
+            self.playback_task.cancel()
+            try:
+                await self.playback_task
+            except asyncio.CancelledError:
+                pass
+            self.playback_task = None
+        
+        # 🔥 立即廣播停止狀態
         await self.broadcast_to_room({
             'type': 'playback_stopped',
             'device_id': self.device_id,
         })
+        
+        print(f"[Playback] ✅ 已停止播放")
+        
     
     async def seek_frame(self, data):
         """跳轉到指定幀"""
@@ -312,6 +390,10 @@ class LightControlConsumer(AsyncWebsocketConsumer):
         發送幀數據（廣播到房間）
         如果 slave_id == -1，發送所有 slave 的數據（總畫板模式）
         """
+
+        if self.should_stop or not self.playing:
+            return
+        
         if not self.decoder:
             return
         
