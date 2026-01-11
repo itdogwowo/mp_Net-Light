@@ -1,4 +1,4 @@
-# config/asgi.py - 確認配置正確
+# config/asgi.py
 import os
 from django.core.asgi import get_asgi_application
 
@@ -14,6 +14,13 @@ from channels.auth import AuthMiddlewareStack
 from channels.security.websocket import AllowedHostsOriginValidator
 from light_control.routing import websocket_urlpatterns
 
+# 🔥 新增:導入並啟動設備發現服務
+from slave_controller.device_discovery import discovery_service
+
+print("[ASGI] 正在啟動設備發現服務...")
+discovery_service.start()
+print("[ASGI] 設備發現服務已啟動")
+
 # 配置 ASGI application
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
@@ -23,5 +30,3 @@ application = ProtocolTypeRouter({
         )
     ),
 })
-
-print("✅ ASGI 配置完成")

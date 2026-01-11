@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     # 本地應用
     'api',
     'light_control',
+    'slave_controller',
 ]
 
 MIDDLEWARE = [

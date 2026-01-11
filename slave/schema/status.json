@@ -4,16 +4,30 @@
     {
       "cmd": "0x1101",
       "name": "STATUS_GET",
-      "payload": []
+      "payload": [
+        {"name": "query_type", "type": "u8"}
+      ]
     },
     {
       "cmd": "0x1102",
       "name": "STATUS_RSP",
       "payload": [
-        {"name": "uptime_ms", "type": "u32"},
-        {"name": "fs_total", "type": "u32"},
-        {"name": "fs_free", "type": "u32"},
-        {"name": "mem_free", "type": "u32"}
+        {"name": "status_json", "type": "str_u16len"}
+      ]
+    },
+    {
+      "cmd": "0x1103",
+      "name": "STATUS_UPDATE",
+      "payload": [
+        {"name": "config_json", "type": "str_u16len"}
+      ]
+    },
+    {
+      "cmd": "0x1104",
+      "name": "STATUS_UPDATE_ACK",
+      "payload": [
+        {"name": "success", "type": "u8"},
+        {"name": "message", "type": "str_u16len"}
       ]
     }
   ]

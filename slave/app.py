@@ -14,22 +14,20 @@ class App:
     def __init__(self, schema_dir="/schema"):
         self.store = SchemaStore()
         self.store.load_dir(schema_dir)
-
         self.disp = Dispatcher(self.store)
         self.parser = StreamParser(max_len=4096, accept_addr=None)
-
-        # shared modules (action handlers 會用到)
         self.file_rx = FileRx()
-
-        # register all actions
+        
         register_all(self)
-
+    
     def on_rx_bytes(self, data: bytes, ctx=None):
-        """
-        任意總線餵入 bytes（TCP/UART/檔案/loopback）
-        """
+        """任意總線餵入 bytes"""
         if ctx is None:
             ctx = {}
+        
+        # 🔥 關鍵修改: 傳入 app 到 ctx
+        ctx["app"] = self
+        
         self.parser.feed(data)
         for ver, addr, cmd, payload in self.parser.pop():
             self.disp.dispatch(cmd, payload, ctx)
