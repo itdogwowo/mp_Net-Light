@@ -5,6 +5,7 @@ import time
 import json
 from datetime import datetime
 import ipaddress
+from django.conf import settings
 
 class DeviceDiscovery:
     def __init__(self, broadcast_port=9000, listen_port=9001):
@@ -19,6 +20,10 @@ class DeviceDiscovery:
         self.broadcast_addr = None
         self.netmask = None
         self._detect_network()
+
+        self.ws_port = getattr(settings, 'WEBSOCKET_PORT', 8000)
+        print(f"[Discovery] 配置:")
+        print(f"  WebSocket Port: {self.ws_port}")
     
     def _detect_network(self):
         """自動檢測本機 IP 和廣播地址"""
@@ -130,7 +135,8 @@ class DeviceDiscovery:
             message = json.dumps({
                 "cmd": "DISCOVER",
                 "server_ip": self.local_ip,
-                "ws_url": f"ws://{self.local_ip}:8001/ws/slave/",  # 🔥 告訴 ESP WebSocket 地址
+                # 🔥 使用正確的 port
+                "ws_url": f"ws://{self.local_ip}:{self.ws_port}/ws/slave/",
                 "timestamp": datetime.now().isoformat()
             })
             
@@ -141,11 +147,12 @@ class DeviceDiscovery:
             
             sock.close()
             
-            print(f"[Discovery] 📡 已發送發現廣播到 {self.broadcast_addr}:{self.broadcast_port}")
+            print(f"[Discovery] 📡 已發送發現廣播")
+            print(f"[Discovery] 📡 WebSocket URL: ws://{self.local_ip}:{self.ws_port}/ws/slave/")
+            
             return {"ok": True, "message": "發現廣播已發送"}
             
         except Exception as e:
-            print(f"[Discovery] ❌ 發現廣播失敗: {e}")
             return {"ok": False, "err": str(e)}
     
     def _listen_loop(self):

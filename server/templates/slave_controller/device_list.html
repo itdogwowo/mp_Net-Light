@@ -4,42 +4,45 @@
 {% block title %}{{ title }} - mp_Net-Light{% endblock %}
 
 {% block content %}
-<div style="padding: 20px; max-width: 1200px; margin: 0 auto;">
+<div style="padding: 20px; max-width: 1400px; margin: 0 auto;">
     <h1 style="color: #fff; margin-bottom: 20px;">
-        🎛️ Slave Controller - 設備列表
+        🎛️ Slave Controller - 設備管理
     </h1>
 
     <!-- 控制面板 -->
     <div style="background: #1f2937; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-        <!-- 🔥 發現設備按鈕 -->
-        <button id="discoverBtn" style="
-            background: #059669;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            margin-right: 10px;
-        ">
-            📡 發現設備
-        </button>
-        
-        <button id="refreshBtn" style="
-            background: #1e40af;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-        ">
-            🔄 刷新列表
-        </button>
-        
-        <span id="deviceCount" style="color: #9ca3af; margin-left: 20px;">
-            未掃描
-        </span>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <!-- 發現設備按鈕 -->
+            <button id="discoverBtn" style="
+                background: #059669;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+            ">
+                📡 發現設備
+            </button>
+            
+            <!-- 刷新列表按鈕 -->
+            <button id="refreshBtn" style="
+                background: #1e40af;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+            ">
+                🔄 刷新列表
+            </button>
+            
+            <!-- 設備計數 -->
+            <span id="deviceCount" style="color: #9ca3af; margin-left: 10px;">
+                未掃描
+            </span>
+        </div>
     </div>
 
     <!-- 設備列表 -->
@@ -47,53 +50,74 @@
         background: #1f2937;
         border-radius: 8px;
         padding: 20px;
+        min-height: 200px;
     ">
-        <p style="color: #6b7280;">點擊 "發現設備" 開始掃描...</p>
+        <p style="color: #6b7280; text-align: center;">
+            點擊 "📡 發現設備" 開始掃描...
+        </p>
     </div>
 </div>
 
-<!-- 🔥 文件上傳對話框 -->
-<div id="uploadDialog" style="
+<!-- 🔥 狀態查看對話框 -->
+<div id="statusDialog" style="
     display: none;
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
     background: #1f2937;
-    border: 1px solid #374151;
+    border: 2px solid #374151;
     border-radius: 8px;
     padding: 20px;
-    min-width: 400px;
+    min-width: 600px;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
     z-index: 1000;
 ">
-    <h3 style="color: #f3f4f6; margin-top: 0;">📤 上傳文件到 Slave <span id="uploadSlaveId"></span></h3>
-    
-    <div style="margin-bottom: 15px;">
-        <label style="color: #9ca3af; display: block; margin-bottom: 5px;">選擇文件:</label>
-        <input type="file" id="fileInput" style="
-            background: #111827;
-            color: #f3f4f6;
-            padding: 8px;
-            border: 1px solid #374151;
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3 style="color: #f3f4f6; margin: 0;">
+            📊 Slave Status - <span id="statusSlaveId"></span>
+        </h3>
+        <button id="closeStatusBtn" style="
+            background: #374151;
+            color: white;
+            border: none;
+            padding: 5px 10px;
             border-radius: 4px;
-            width: 100%;
+            cursor: pointer;
         ">
+            ✖
+        </button>
     </div>
     
-    <div style="margin-bottom: 15px;">
-        <label style="color: #9ca3af; display: block; margin-bottom: 5px;">目標路徑:</label>
-        <input type="text" id="targetPath" value="/uploaded_file.bin" style="
-            background: #111827;
-            color: #f3f4f6;
-            padding: 8px;
-            border: 1px solid #374151;
-            border-radius: 4px;
-            width: 100%;
-        ">
-    </div>
+    <!-- 狀態數據顯示 -->
+    <pre id="statusContent" style="
+        background: #111827;
+        color: #f3f4f6;
+        padding: 15px;
+        border-radius: 4px;
+        overflow-x: auto;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.5;
+    ">等待數據...</pre>
     
-    <div style="display: flex; gap: 10px;">
-        <button id="uploadBtn" style="
+    <!-- 操作按鈕 -->
+    <div style="margin-top: 15px; display: flex; gap: 10px;">
+        <button id="downloadStatusBtn" style="
+            flex: 1;
+            background: #059669;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        ">
+            💾 下載為文件
+        </button>
+        
+        <button id="copyStatusBtn" style="
             flex: 1;
             background: #1e40af;
             color: white;
@@ -102,7 +126,59 @@
             border-radius: 4px;
             cursor: pointer;
         ">
-            📤 開始上傳
+            📋 複製到剪貼板
+        </button>
+    </div>
+</div>
+
+<!-- 🔥 上傳配置對話框 -->
+<div id="uploadDialog" style="
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #1f2937;
+    border: 2px solid #374151;
+    border-radius: 8px;
+    padding: 20px;
+    min-width: 600px;
+    max-width: 800px;
+    z-index: 1000;
+">
+    <h3 style="color: #f3f4f6; margin-top: 0;">
+        📤 上傳配置到 Slave <span id="uploadSlaveId"></span>
+    </h3>
+    
+    <div style="margin-bottom: 15px;">
+        <label style="color: #9ca3af; display: block; margin-bottom: 5px;">
+            編輯 system_status.json:
+        </label>
+        <textarea id="configEditor" style="
+            width: 100%;
+            height: 300px;
+            background: #111827;
+            color: #f3f4f6;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 13px;
+            resize: vertical;
+        "></textarea>
+    </div>
+    
+    <div style="display: flex; gap: 10px;">
+        <button id="uploadBtn" style="
+            flex: 1;
+            background: #d97706;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        ">
+            📤 上傳並覆蓋
         </button>
         
         <button id="cancelUploadBtn" style="
@@ -119,20 +195,12 @@
     </div>
     
     <div id="uploadProgress" style="margin-top: 15px; color: #9ca3af; display: none;">
-        <div style="background: #111827; height: 20px; border-radius: 4px; overflow: hidden;">
-            <div id="uploadProgressBar" style="
-                background: #059669;
-                height: 100%;
-                width: 0%;
-                transition: width 0.3s;
-            "></div>
-        </div>
-        <p id="uploadStatus" style="margin-top: 5px; font-size: 12px;"></p>
+        <p id="uploadStatus"></p>
     </div>
 </div>
 
 <!-- 背景遮罩 -->
-<div id="uploadOverlay" style="
+<div id="overlay" style="
     display: none;
     position: fixed;
     top: 0;
@@ -144,9 +212,140 @@
 "></div>
 
 <script>
+// ==================== 全局變量 ====================
 let currentSlaveId = null;
+let currentStatusData = null;
 
-// 🔥 發現設備按鈕
+// ==================== 工具函數 ====================
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function showOverlay() {
+    document.getElementById('overlay').style.display = 'block';
+}
+
+function hideOverlay() {
+    document.getElementById('overlay').style.display = 'none';
+}
+
+// ==================== 設備列表功能 ====================
+async function loadDevices() {
+    try {
+        const response = await fetch('/slave/api/devices/');
+        const data = await response.json();
+        
+        if (data.ok) {
+            displayDevices(data.devices, data.count);
+        }
+    } catch (error) {
+        console.error('載入設備失敗:', error);
+        document.getElementById('deviceList').innerHTML = `
+            <p style="color: #dc2626; text-align: center;">❌ 載入失敗: ${error.message}</p>
+        `;
+    }
+}
+
+function displayDevices(devices, count) {
+    const deviceListEl = document.getElementById('deviceList');
+    const deviceCountEl = document.getElementById('deviceCount');
+    
+    deviceCountEl.textContent = `共發現 ${count} 個設備`;
+    
+    if (count === 0) {
+        deviceListEl.innerHTML = `
+            <p style="color: #6b7280; text-align: center;">
+                📡 未發現任何設備<br>
+                <small>請確保 ESP32-P4 已連接到相同網段並啟動 UDP 響應器</small>
+            </p>
+        `;
+        return;
+    }
+    
+    // 生成設備卡片
+    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 15px;">';
+    
+    for (const [slaveId, device] of Object.entries(devices)) {
+        const statusColor = device.ws_connected ? '#059669' : '#6b7280';
+        const statusText = device.ws_connected ? '已連接' : device.status;
+        
+        html += `
+            <div style="
+                background: #111827;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                padding: 15px;
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h3 style="color: #f3f4f6; margin: 0; font-size: 14px;">
+                        🔌 Slave
+                    </h3>
+                    <span style="
+                        background: ${statusColor};
+                        color: white;
+                        padding: 3px 8px;
+                        border-radius: 4px;
+                        font-size: 12px;
+                    ">
+                        ${statusText}
+                    </span>
+                </div>
+                
+                <div style="color: #9ca3af; font-size: 13px; line-height: 1.8; margin-bottom: 15px;">
+                    <div style="font-family: monospace; color: #60a5fa; font-size: 15px; margin-bottom: 5px;">
+                        📟 ${slaveId}
+                    </div>
+                    <div>📍 IP: <code style="color: #60a5fa;">${device.ip}</code></div>
+                    <div>💡 像素數: <code>${device.pixel_count}</code></div>
+                    <div>🔧 硬體版本: <code>${device.hw_version}</code></div>
+                    <div>🕐 最後上線: <code style="font-size: 11px;">${new Date(device.last_seen).toLocaleString()}</code></div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <button onclick="getStatus('${slaveId}')" style="
+                        background: #059669;
+                        color: white;
+                        border: none;
+                        padding: 8px;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 12px;
+                    ">
+                        📥 查看 Status
+                    </button>
+                    
+                    <button onclick="updateStatus('${slaveId}')" style="
+                        background: #d97706;
+                        color: white;
+                        border: none;
+                        padding: 8px;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 12px;
+                    ">
+                        📤 更新 Status
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    deviceListEl.innerHTML = html;
+}
+
+// ==================== 設備發現 ====================
 document.getElementById('discoverBtn').addEventListener('click', async () => {
     const btn = document.getElementById('discoverBtn');
     btn.disabled = true;
@@ -163,7 +362,6 @@ document.getElementById('discoverBtn').addEventListener('click', async () => {
         const data = await response.json();
         
         if (data.ok) {
-            document.getElementById('deviceCount').textContent = '等待設備回應...';
             // 等待 2 秒讓設備回應
             setTimeout(() => {
                 loadDevices();
@@ -182,231 +380,234 @@ document.getElementById('discoverBtn').addEventListener('click', async () => {
     }
 });
 
-// 刷新列表按鈕
+// 刷新按鈕
 document.getElementById('refreshBtn').addEventListener('click', loadDevices);
 
-async function loadDevices() {
-    try {
-        const response = await fetch('/slave/api/devices/');
-        const data = await response.json();
-        
-        if (data.ok) {
-            displayDevices(data.devices, data.count);
-        }
-    } catch (error) {
-        console.error('載入設備失敗:', error);
-        document.getElementById('deviceList').innerHTML = `
-            <p style="color: #dc2626;">❌ 載入失敗: ${error.message}</p>
-        `;
-    }
-}
-
-function displayDevices(devices, count) {
-    const deviceListEl = document.getElementById('deviceList');
-    const deviceCountEl = document.getElementById('deviceCount');
+// ==================== 查看 Status ====================
+async function getStatus(slaveId) {
+    currentSlaveId = slaveId;
     
-    deviceCountEl.textContent = `共發現 ${count} 個設備`;
-    
-    if (count === 0) {
-        deviceListEl.innerHTML = `
-            <p style="color: #6b7280;">
-                📡 未發現任何設備<br>
-                <small>請確保 ESP32-P4 已連接到相同網段並啟動 UDP 響應器</small>
-            </p>
-        `;
-        return;
-    }
-    
-    // 生成設備卡片
-    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px;">';
-    
-    for (const [slaveId, device] of Object.entries(devices)) {
-        const statusColor = device.ws_connected ? '#059669' : '#d97706';
-        const statusText = device.ws_connected ? 'online' : device.status;
-        
-        html += `
-            <div style="
-                background: #111827;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                padding: 15px;
-            ">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <h3 style="color: #f3f4f6; margin: 0;">
-                        Slave ${slaveId}
-                    </h3>
-                    <span style="
-                        background: ${statusColor};
-                        color: white;
-                        padding: 3px 8px;
-                        border-radius: 4px;
-                        font-size: 12px;
-                    ">
-                        ${statusText}
-                    </span>
-                </div>
-                
-                <div style="color: #9ca3af; font-size: 14px; line-height: 1.6;">
-                    <div>📍 IP: <code style="color: #60a5fa;">${device.ip}</code></div>
-                    <div>💡 像素數: <code>${device.pixel_count}</code></div>
-                    <div>🔧 硬體版本: <code>${device.hw_version}</code></div>
-                    <div>🕐 最後上線: <code style="font-size: 11px;">${new Date(device.last_seen).toLocaleString()}</code></div>
-                </div>
-                
-                <div style="margin-top: 15px; display: flex; gap: 8px;">
-                    <button onclick="connectDevice('${slaveId}')" style="
-                        flex: 1;
-                        background: ${device.ws_connected ? '#374151' : '#1e40af'};
-                        color: white;
-                        border: none;
-                        padding: 8px;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 13px;
-                    " ${device.ws_connected ? 'disabled' : ''}>
-                        ${device.ws_connected ? '✅ 已連接' : '🔗 連接'}
-                    </button>
-                    
-                    <button onclick="uploadFile('${slaveId}')" style="
-                        flex: 1;
-                        background: #059669;
-                        color: white;
-                        border: none;
-                        padding: 8px;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 13px;
-                    ">
-                        📤 上傳
-                    </button>
-                </div>
-            </div>
-        `;
-    }
-    
-    html += '</div>';
-    deviceListEl.innerHTML = html;
-}
-
-// 🔥 連接設備功能
-async function connectDevice(slaveId) {
-    if (!confirm(`確定要連接 Slave ${slaveId} 到 WebSocket 嗎?`)) return;
+    // 顯示對話框
+    document.getElementById('statusSlaveId').textContent = slaveId;
+    document.getElementById('statusContent').textContent = '⏳ 正在獲取數據...';
+    document.getElementById('statusDialog').style.display = 'block';
+    showOverlay();
     
     try {
-        const response = await fetch('/slave/api/device/connect/', {
+        const response = await fetch('/slave/api/slave/status/get/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRFToken': getCookie('csrftoken')
             },
             body: JSON.stringify({
-                slave_id: slaveId
+                slave_id: slaveId,
+                query_type: 2  // 混合模式:配置 + 實時數據
             })
         });
         
         const data = await response.json();
         
         if (data.ok) {
-            alert(`✅ 已發送連接指令到 Slave ${slaveId}`);
-            // 刷新設備列表
-            setTimeout(loadDevices, 1000);
+            // 等待 ESP32 回應(通過 WebSocket)
+            setTimeout(() => {
+                // 這裡應該通過 WebSocket 接收 STATUS_RSP
+                // 暫時顯示提示
+                document.getElementById('statusContent').textContent = 
+                    '✅ 已發送請求\n\n' +
+                    '⏳ 等待 ESP32 回應...\n\n' +
+                    '(需要實現 WebSocket 接收 STATUS_RSP)';
+            }, 500);
         } else {
-            alert(`❌ 連接失敗: ${data.err}`);
+            document.getElementById('statusContent').textContent = `❌ 請求失敗: ${data.err}`;
         }
     } catch (error) {
-        alert(`❌ 連接失敗: ${error.message}`);
+        document.getElementById('statusContent').textContent = `❌ 請求失敗: ${error.message}`;
     }
 }
 
-// 🔥 上傳文件功能
-function uploadFile(slaveId) {
+// ==================== 更新 Status ====================
+async function updateStatus(slaveId) {
     currentSlaveId = slaveId;
+    
+    // 先獲取當前配置
     document.getElementById('uploadSlaveId').textContent = slaveId;
+    document.getElementById('configEditor').value = '⏳ 正在載入當前配置...';
     document.getElementById('uploadDialog').style.display = 'block';
-    document.getElementById('uploadOverlay').style.display = 'block';
+    showOverlay();
+    
+    try {
+        // 先發送 STATUS_GET 獲取當前配置
+        const response = await fetch('/slave/api/slave/status/get/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                slave_id: slaveId,
+                query_type: 0  // 只獲取配置
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            // 顯示默認配置供編輯
+            const defaultConfig = {
+                "server_ip": "10.10.1.27",
+                "server_port": 8001,
+                "auto_connect": true,
+                "pixel_count": 400
+            };
+            
+            document.getElementById('configEditor').value = JSON.stringify(defaultConfig, null, 2);
+        } else {
+            alert(`獲取配置失敗: ${data.err}`);
+            closeUploadDialog();
+        }
+    } catch (error) {
+        alert(`獲取配置失敗: ${error.message}`);
+        closeUploadDialog();
+    }
 }
 
-// 上傳按鈕事件
-document.getElementById('uploadBtn').addEventListener('click', async () => {
-    const fileInput = document.getElementById('fileInput');
-    const targetPath = document.getElementById('targetPath').value;
-    
-    if (!fileInput.files.length) {
-        alert('請選擇文件');
-        return;
-    }
-    
-    const file = fileInput.files[0];
-    const reader = new FileReader();
-    
-    reader.onload = async (e) => {
-        const arrayBuffer = e.target.result;
-        const bytes = new Uint8Array(arrayBuffer);
-        
-        // 顯示進度條
-        document.getElementById('uploadProgress').style.display = 'block';
-        
-        try {
-            const response = await fetch('/slave/api/file/upload/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCookie('csrftoken')
-                },
-                body: JSON.stringify({
-                    slave_id: currentSlaveId,
-                    filename: targetPath,
-                    data: Array.from(bytes)
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.ok) {
-                document.getElementById('uploadStatus').textContent = '✅ 上傳成功';
-                setTimeout(() => {
-                    closeUploadDialog();
-                }, 1500);
-            } else {
-                document.getElementById('uploadStatus').textContent = `❌ 上傳失敗: ${data.err}`;
-            }
-        } catch (error) {
-            document.getElementById('uploadStatus').textContent = `❌ 上傳失敗: ${error.message}`;
-        }
-    };
-    
-    reader.readAsArrayBuffer(file);
-});
-
-// 取消按鈕
-document.getElementById('cancelUploadBtn').addEventListener('click', closeUploadDialog);
-document.getElementById('uploadOverlay').addEventListener('click', closeUploadDialog);
+// ==================== 對話框控制 ====================
+function closeStatusDialog() {
+    document.getElementById('statusDialog').style.display = 'none';
+    hideOverlay();
+}
 
 function closeUploadDialog() {
     document.getElementById('uploadDialog').style.display = 'none';
-    document.getElementById('uploadOverlay').style.display = 'none';
-    document.getElementById('uploadProgress').style.display = 'none';
-    document.getElementById('fileInput').value = '';
+    hideOverlay();
 }
 
-function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
+// 關閉按鈕事件
+document.getElementById('closeStatusBtn').addEventListener('click', closeStatusDialog);
+document.getElementById('cancelUploadBtn').addEventListener('click', closeUploadDialog);
+document.getElementById('overlay').addEventListener('click', () => {
+    closeStatusDialog();
+    closeUploadDialog();
+});
+
+// ==================== 上傳按鈕 ====================
+document.getElementById('uploadBtn').addEventListener('click', async () => {
+    const configText = document.getElementById('configEditor').value;
+    
+    try {
+        // 驗證 JSON 格式
+        const config = JSON.parse(configText);
+        
+        document.getElementById('uploadProgress').style.display = 'block';
+        document.getElementById('uploadStatus').textContent = '⏳ 正在上傳...';
+        
+        const response = await fetch('/slave/api/slave/status/update/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                slave_id: currentSlaveId,
+                config: config
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            document.getElementById('uploadStatus').textContent = '✅ 上傳成功!等待 ESP32 確認...';
+            
+            setTimeout(() => {
+                closeUploadDialog();
+            }, 2000);
+        } else {
+            document.getElementById('uploadStatus').textContent = `❌ 上傳失敗: ${data.err}`;
+        }
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            document.getElementById('uploadStatus').textContent = `❌ JSON 格式錯誤: ${error.message}`;
+        } else {
+            document.getElementById('uploadStatus').textContent = `❌ 上傳失敗: ${error.message}`;
         }
     }
-    return cookieValue;
-}
+});
 
-// 頁面載入時執行一次
+// ==================== 狀態數據操作 ====================
+document.getElementById('downloadStatusBtn').addEventListener('click', () => {
+    const content = document.getElementById('statusContent').textContent;
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `slave_${currentSlaveId}_status.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+});
+
+document.getElementById('copyStatusBtn').addEventListener('click', async () => {
+    const content = document.getElementById('statusContent').textContent;
+    try {
+        await navigator.clipboard.writeText(content);
+        alert('✅ 已複製到剪貼板');
+    } catch (error) {
+        alert(`❌ 複製失敗: ${error.message}`);
+    }
+});
+
+// ==================== 頁面初始化 ====================
 document.addEventListener('DOMContentLoaded', () => {
-    loadDevices();
+    console.log('📄 Slave Controller 頁面已載入');
+    
+    // 不自動刷新,等待用戶手動點擊"發現設備"
 });
 </script>
+
+<style>
+/* 按鈕 hover 效果 */
+button:hover:not(:disabled) {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 滾動條樣式 */
+#statusDialog::-webkit-scrollbar,
+#configEditor::-webkit-scrollbar {
+    width: 8px;
+}
+
+#statusDialog::-webkit-scrollbar-track,
+#configEditor::-webkit-scrollbar-track {
+    background: #111827;
+}
+
+#statusDialog::-webkit-scrollbar-thumb,
+#configEditor::-webkit-scrollbar-thumb {
+    background: #374151;
+    border-radius: 4px;
+}
+
+#statusDialog::-webkit-scrollbar-thumb:hover,
+#configEditor::-webkit-scrollbar-thumb:hover {
+    background: #4b5563;
+}
+
+/* 代碼區域樣式 */
+code {
+    background: #111827;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+}
+</style>
 {% endblock %}

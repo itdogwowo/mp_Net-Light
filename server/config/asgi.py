@@ -1,4 +1,4 @@
-# config/asgi.py
+# config/asgi.py (完整修正版)
 import os
 from django.core.asgi import get_asgi_application
 
@@ -11,22 +11,30 @@ django_asgi_app = get_asgi_application()
 # 然後導入 channels 相關模塊
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
-from channels.security.websocket import AllowedHostsOriginValidator
-from light_control.routing import websocket_urlpatterns
 
-# 🔥 新增:導入並啟動設備發現服務
+# 🔥 導入所有 WebSocket 路由
+from light_control.routing import websocket_urlpatterns as light_ws
+from slave_controller.routing import websocket_urlpatterns as slave_ws
+
+# 🔥 合併路由
+all_websocket_patterns = light_ws + slave_ws
+
+# 🔥 啟動設備發現服務
 from slave_controller.device_discovery import discovery_service
-
 print("[ASGI] 正在啟動設備發現服務...")
 discovery_service.start()
 print("[ASGI] 設備發現服務已啟動")
 
-# 配置 ASGI application
+# 🔥 打印所有 WebSocket 路由
+print("\n所有 WebSocket 路由:")
+for pattern in all_websocket_patterns:
+    print(f"  - {pattern.pattern}")
+print()
+
+# 🔥 配置 ASGI application (使用 all_websocket_patterns)
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AllowedHostsOriginValidator(
-        AuthMiddlewareStack(
-            URLRouter(websocket_urlpatterns)
-        )
+    "websocket": AuthMiddlewareStack(
+        URLRouter(all_websocket_patterns)  # 🔥 關鍵:使用合併後的路由
     ),
 })
