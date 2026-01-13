@@ -9,6 +9,9 @@ import asyncio
 from channels.layers import get_channel_layer
 from .device_discovery import discovery_service
 
+from asgiref.sync import async_to_sync
+import struct
+
 
 def pack_cmd_packet(cmd, payload, addr=0, ver=3):
     """
@@ -168,3 +171,219 @@ def api_file_upload(request):
 def api_file_download(request):
     # TODO: 實現通過 WebSocket 下載
     return JsonResponse({"ok": False, "err": "尚未實現"})
+
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def api_stream_start(request):
+    """
+    啟動燈效串流
+    POST /slave/api/stream/start/
+    Body: {"fps": 40, "pixel_count": 400}
+    """
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        fps = data.get('fps', 40)
+        pixel_count = data.get('pixel_count', 400)
+        
+        print(f"[API] STREAM_START: fps={fps}, pixels={pixel_count}")
+        
+        # 🔥 構造 STREAM_START 封包
+        from lib.proto import pack_packet
+        import struct
+        
+        CMD_STREAM_START = 0x3002
+        payload = struct.pack('<BH', fps, pixel_count)
+        packet = pack_packet(CMD_STREAM_START, payload)
+        
+        # 🔥 廣播到所有 Slave
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "all_slaves",
+            {
+                "type": "send_cmd",
+                "packet": packet
+            }
+        )
+        
+        return JsonResponse({
+            "ok": True,
+            "message": f"STREAM_START 已廣播 (fps={fps}, pixels={pixel_count})"
+        })
+        
+    except Exception as e:
+        print(f"[API] 錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            "ok": False,
+            "err": str(e)
+        }, status=500)
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def api_stream_stop(request):
+    """
+    停止燈效串流
+    POST /slave/api/stream/stop/
+    """
+    try:
+        print(f"[API] STREAM_STOP")
+        
+        # 🔥 構造 STREAM_STOP 封包
+        from lib.proto import pack_packet
+        
+        CMD_STREAM_STOP = 0x3003
+        packet = pack_packet(CMD_STREAM_STOP, b"")
+        
+        # 🔥 廣播到所有 Slave
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "all_slaves",
+            {
+                "type": "send_cmd",
+                "packet": packet
+            }
+        )
+        
+        return JsonResponse({
+            "ok": True,
+            "message": "STREAM_STOP 已廣播"
+        })
+        
+    except Exception as e:
+        print(f"[API] 錯誤: {e}")
+        return JsonResponse({
+            "ok": False,
+            "err": str(e)
+        }, status=500)
+    
+@require_http_methods(["POST"])
+@csrf_exempt
+def api_schema_download(request):
+    """
+    觸發從 Slave 下載 schema 文件
+    POST /slave/api/schema/download/
+    Body: {
+        "slave_id": "30EDA0EA4EC8",
+        "schema_name": "status"  # 可選: status/file/fs/stream
+    }
+    """
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        slave_id = data.get('slave_id')
+        schema_name = data.get('schema_name', 'status')  # 默認下載 status
+        
+        print(f"[API] 請求下載 schema: {slave_id}/{schema_name}")
+        
+        # 檢查設備是否在線
+        device = discovery_service.get_device(slave_id)
+        if not device:
+            return JsonResponse({
+                "ok": False,
+                "err": f"設備未找到: {slave_id}"
+            }, status=404)
+        
+        # 🔥 構造 FS_SNAP_GET 指令 (請求 /schema/{schema_name}.json)
+        CMD_FS_SNAP_GET = 0x1213
+        
+        # 構造 payload
+        # FS_SNAP_GET: path(str_u16len) + out_path(str_u16len) + max_depth(u8) + include_size(u8)
+        src_path = f"/schema/{schema_name}.json"
+        out_path = f"/tx_{schema_name}.json"
+        
+        # 編碼 str_u16len
+        def encode_str_u16len(s):
+            s_bytes = s.encode('utf-8')
+            return struct.pack('<H', len(s_bytes)) + s_bytes
+        
+        payload = (
+            encode_str_u16len(src_path) +
+            encode_str_u16len(out_path) +
+            struct.pack('<BB', 1, 0)  # max_depth=1, include_size=0
+        )
+        
+        packet = pack_cmd_packet(CMD_FS_SNAP_GET, payload)
+        
+        # 🔥 通過 WebSocket 發送到 Slave
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"slave_{slave_id}",
+            {
+                "type": "send_cmd",
+                "packet": packet
+            }
+        )
+        
+        print(f"[API] ✅ 已發送 FS_SNAP_GET 到 {slave_id}")
+        
+        return JsonResponse({
+            "ok": True,
+            "message": f"Schema 下載請求已發送 ({schema_name})",
+            "schema_name": schema_name,
+            "slave_id": slave_id
+        })
+        
+    except Exception as e:
+        print(f"[API] 錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            "ok": False,
+            "err": str(e)
+        }, status=500)
+
+
+@require_http_methods(["GET"])
+def api_schema_list(request, slave_id):
+    """
+    列出 Slave 已下載的 schema 文件
+    GET /slave/api/schema/list/<slave_id>/
+    """
+    try:
+        from pathlib import Path
+        from django.conf import settings
+        
+        schema_dir = Path(settings.MEDIA_ROOT) / "schemas" / slave_id
+        
+        if not schema_dir.exists():
+            return JsonResponse({
+                "ok": True,
+                "schemas": [],
+                "message": f"未找到 {slave_id} 的 schema"
+            })
+        
+        schemas = []
+        for file_path in schema_dir.glob("*.json"):
+            try:
+                import json as json_lib
+                with open(file_path, 'r') as f:
+                    content = json_lib.load(f)
+                
+                schemas.append({
+                    "name": file_path.stem,
+                    "group": content.get("group", "unknown"),
+                    "cmd_count": len(content.get("cmds", [])),
+                    "size": file_path.stat().st_size
+                })
+            except Exception as e:
+                print(f"[API] 解析 {file_path} 失敗: {e}")
+        
+        return JsonResponse({
+            "ok": True,
+            "schemas": schemas,
+            "count": len(schemas)
+        })
+        
+    except Exception as e:
+        print(f"[API] 錯誤: {e}")
+        return JsonResponse({
+            "ok": False,
+            "err": str(e)
+        }, status=500)

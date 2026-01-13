@@ -1,4 +1,4 @@
-# websocket_client.py - WebSocket 客戶端(CMD 協議版)
+# websocket_client.py - WebSocket 客戶端(CMD 協議版 - 修正版)
 import socket
 import json
 import struct
@@ -22,7 +22,7 @@ class WebSocketClient:
         self.url = url
         
         try:
-            # 解析 URL: ws://10.10.1.27:8001/ws/slave/30:ED:AB:C1:23:45
+            # 解析 URL: ws://10.10.1.27:8000/ws/slave/30EDA0EA4EC8
             if not url.startswith('ws://'):
                 print("[WebSocket] 錯誤: 只支援 ws://")
                 return False
@@ -148,18 +148,12 @@ class WebSocketClient:
         處理二進位消息 - CMD 協議封包
         交給 StreamParser 解析
         """
-        # 🔥 關鍵:使用您的 proto.StreamParser
+        # 🔥 關鍵:使用 StreamParser
         self.parser.feed(data)
         
-        # 彈出所有完整封包
-        while True:
-            result = self.parser.pop()
-            if result is None:
-                break
-            
-            ver, addr, cmd, payload = result
-            
-            print("[WebSocket] 收到 CMD: 0x{:04X}, LEN: {}".format(cmd, len(payload)))
+        # 🔥 修正: pop() 是生成器,需要用 for 循環迭代
+        for ver, addr, cmd, payload in self.parser.pop():
+            print("[WebSocket] 📥 收到 CMD: 0x{:04X}, LEN: {}".format(cmd, len(payload)))
             
             # 🔥 交給 dispatcher 處理
             ctx = {
@@ -205,6 +199,6 @@ class WebSocketClient:
         # 發送
         try:
             self.sock.send(bytes(frame))
-            print("[WebSocket] 已發送 CMD: {} bytes".format(len(packet)))
+            print("[WebSocket] 📤 已發送 CMD: {} bytes".format(len(packet)))
         except Exception as e:
             print("[WebSocket] 發送失敗: {}".format(e))

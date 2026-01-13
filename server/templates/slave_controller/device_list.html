@@ -1,613 +1,581 @@
-{% extends 'base.html' %}
-{% load static %}
-
-{% block title %}{{ title }} - mp_Net-Light{% endblock %}
-
-{% block content %}
-<div style="padding: 20px; max-width: 1400px; margin: 0 auto;">
-    <h1 style="color: #fff; margin-bottom: 20px;">
-        🎛️ Slave Controller - 設備管理
-    </h1>
-
-    <!-- 控制面板 -->
-    <div style="background: #1f2937; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-            <!-- 發現設備按鈕 -->
-            <button id="discoverBtn" style="
-                background: #059669;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 6px;
-                cursor: pointer;
-                font-size: 14px;
-            ">
-                📡 發現設備
+<!-- slave_controller/templates/slave_controller/device_list.html -->
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slave Controller - 設備管理</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #666;
+        }
+        
+        .controls {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+        }
+        
+        .device-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .device-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+        
+        .device-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+        }
+        
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .device-id {
+            font-size: 16px;
+            font-weight: 700;
+            color: #333;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-discovered {
+            background: #ffc107;
+            color: #856404;
+        }
+        
+        .status-online {
+            background: #28a745;
+            color: white;
+        }
+        
+        .status-offline {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .device-info {
+            margin-bottom: 15px;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        
+        .info-label {
+            color: #666;
+            font-size: 13px;
+        }
+        
+        .info-value {
+            color: #333;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        
+        .device-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 15px;
+        }
+        
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 12px;
+            flex: 1;
+        }
+        
+        .stats {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        .stats h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .stats-number {
+            font-size: 48px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .empty-state {
+            background: white;
+            border-radius: 12px;
+            padding: 60px 20px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .empty-state h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .empty-state p {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 18px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎛️ Slave Controller</h1>
+            <p>設備發現與管理系統</p>
+        </div>
+        
+        <!-- Controls -->
+        <div class="controls">
+            <button class="btn btn-primary" onclick="discoverDevices()">
+                <span>📡</span>
+                <span>發現設備</span>
             </button>
-            
-            <!-- 刷新列表按鈕 -->
-            <button id="refreshBtn" style="
-                background: #1e40af;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 6px;
-                cursor: pointer;
-                font-size: 14px;
-            ">
-                🔄 刷新列表
+            <button class="btn btn-secondary" onclick="refreshDevices()">
+                <span>🔄</span>
+                <span>刷新列表</span>
             </button>
-            
-            <!-- 設備計數 -->
-            <span id="deviceCount" style="color: #9ca3af; margin-left: 10px;">
-                未掃描
-            </span>
+            <button class="btn btn-success" onclick="startStreamTest()">
+                <span>▶️</span>
+                <span>測試 Streaming</span>
+            </button>
+            <button class="btn btn-secondary" onclick="stopStreamTest()">
+                <span>⏹️</span>
+                <span>停止 Streaming</span>
+            </button>
+        </div>
+        
+        <!-- Device Grid -->
+        <div id="deviceContainer">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>正在載入設備列表...</p>
+            </div>
         </div>
     </div>
 
-    <!-- 設備列表 -->
-    <div id="deviceList" style="
-        background: #1f2937;
-        border-radius: 8px;
-        padding: 20px;
-        min-height: 200px;
-    ">
-        <p style="color: #6b7280; text-align: center;">
-            點擊 "📡 發現設備" 開始掃描...
-        </p>
-    </div>
-</div>
-
-<!-- 🔥 狀態查看對話框 -->
-<div id="statusDialog" style="
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: #1f2937;
-    border: 2px solid #374151;
-    border-radius: 8px;
-    padding: 20px;
-    min-width: 600px;
-    max-width: 800px;
-    max-height: 80vh;
-    overflow-y: auto;
-    z-index: 1000;
-">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <h3 style="color: #f3f4f6; margin: 0;">
-            📊 Slave Status - <span id="statusSlaveId"></span>
-        </h3>
-        <button id="closeStatusBtn" style="
-            background: #374151;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-        ">
-            ✖
-        </button>
-    </div>
-    
-    <!-- 狀態數據顯示 -->
-    <pre id="statusContent" style="
-        background: #111827;
-        color: #f3f4f6;
-        padding: 15px;
-        border-radius: 4px;
-        overflow-x: auto;
-        font-family: monospace;
-        font-size: 13px;
-        line-height: 1.5;
-    ">等待數據...</pre>
-    
-    <!-- 操作按鈕 -->
-    <div style="margin-top: 15px; display: flex; gap: 10px;">
-        <button id="downloadStatusBtn" style="
-            flex: 1;
-            background: #059669;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 4px;
-            cursor: pointer;
-        ">
-            💾 下載為文件
-        </button>
+    <script>
+        let devices = {};
+        let autoRefreshInterval = null;
         
-        <button id="copyStatusBtn" style="
-            flex: 1;
-            background: #1e40af;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 4px;
-            cursor: pointer;
-        ">
-            📋 複製到剪貼板
-        </button>
-    </div>
-</div>
-
-<!-- 🔥 上傳配置對話框 -->
-<div id="uploadDialog" style="
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: #1f2937;
-    border: 2px solid #374151;
-    border-radius: 8px;
-    padding: 20px;
-    min-width: 600px;
-    max-width: 800px;
-    z-index: 1000;
-">
-    <h3 style="color: #f3f4f6; margin-top: 0;">
-        📤 上傳配置到 Slave <span id="uploadSlaveId"></span>
-    </h3>
-    
-    <div style="margin-bottom: 15px;">
-        <label style="color: #9ca3af; display: block; margin-bottom: 5px;">
-            編輯 system_status.json:
-        </label>
-        <textarea id="configEditor" style="
-            width: 100%;
-            height: 300px;
-            background: #111827;
-            color: #f3f4f6;
-            border: 1px solid #374151;
-            border-radius: 4px;
-            padding: 10px;
-            font-family: monospace;
-            font-size: 13px;
-            resize: vertical;
-        "></textarea>
-    </div>
-    
-    <div style="display: flex; gap: 10px;">
-        <button id="uploadBtn" style="
-            flex: 1;
-            background: #d97706;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 4px;
-            cursor: pointer;
-        ">
-            📤 上傳並覆蓋
-        </button>
+        // 頁面載入時初始化
+        window.onload = function() {
+            refreshDevices();
+            // 啟動自動刷新 (每 3 秒)
+            autoRefreshInterval = setInterval(refreshDevices, 3000);
+        };
         
-        <button id="cancelUploadBtn" style="
-            flex: 1;
-            background: #374151;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 4px;
-            cursor: pointer;
-        ">
-            ❌ 取消
-        </button>
-    </div>
-    
-    <div id="uploadProgress" style="margin-top: 15px; color: #9ca3af; display: none;">
-        <p id="uploadStatus"></p>
-    </div>
-</div>
-
-<!-- 背景遮罩 -->
-<div id="overlay" style="
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.7);
-    z-index: 999;
-"></div>
-
-<script>
-// ==================== 全局變量 ====================
-let currentSlaveId = null;
-let currentStatusData = null;
-
-// ==================== 工具函數 ====================
-function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
+        // 發現設備
+        async function discoverDevices() {
+            try {
+                const response = await fetch('/slave/api/discover/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.ok) {
+                    console.log('✅ 發現廣播已發送');
+                    // 等待 1 秒後刷新列表
+                    setTimeout(refreshDevices, 1000);
+                } else {
+                    console.error('❌ 發現失敗:', result.err);
+                    alert('發現失敗: ' + result.err);
+                }
+            } catch (error) {
+                console.error('❌ 請求錯誤:', error);
+                alert('請求錯誤: ' + error.message);
             }
         }
-    }
-    return cookieValue;
-}
-
-function showOverlay() {
-    document.getElementById('overlay').style.display = 'block';
-}
-
-function hideOverlay() {
-    document.getElementById('overlay').style.display = 'none';
-}
-
-// ==================== 設備列表功能 ====================
-async function loadDevices() {
-    try {
-        const response = await fetch('/slave/api/devices/');
-        const data = await response.json();
         
-        if (data.ok) {
-            displayDevices(data.devices, data.count);
-        }
-    } catch (error) {
-        console.error('載入設備失敗:', error);
-        document.getElementById('deviceList').innerHTML = `
-            <p style="color: #dc2626; text-align: center;">❌ 載入失敗: ${error.message}</p>
-        `;
-    }
-}
-
-function displayDevices(devices, count) {
-    const deviceListEl = document.getElementById('deviceList');
-    const deviceCountEl = document.getElementById('deviceCount');
-    
-    deviceCountEl.textContent = `共發現 ${count} 個設備`;
-    
-    if (count === 0) {
-        deviceListEl.innerHTML = `
-            <p style="color: #6b7280; text-align: center;">
-                📡 未發現任何設備<br>
-                <small>請確保 ESP32-P4 已連接到相同網段並啟動 UDP 響應器</small>
-            </p>
-        `;
-        return;
-    }
-    
-    // 生成設備卡片
-    let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 15px;">';
-    
-    for (const [slaveId, device] of Object.entries(devices)) {
-        const statusColor = device.ws_connected ? '#059669' : '#6b7280';
-        const statusText = device.ws_connected ? '已連接' : device.status;
-        
-        html += `
-            <div style="
-                background: #111827;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                padding: 15px;
-            ">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <h3 style="color: #f3f4f6; margin: 0; font-size: 14px;">
-                        🔌 Slave
-                    </h3>
-                    <span style="
-                        background: ${statusColor};
-                        color: white;
-                        padding: 3px 8px;
-                        border-radius: 4px;
-                        font-size: 12px;
-                    ">
-                        ${statusText}
-                    </span>
-                </div>
+        // 刷新設備列表
+        async function refreshDevices() {
+            try {
+                const response = await fetch('/slave/api/devices/');
+                const result = await response.json();
                 
-                <div style="color: #9ca3af; font-size: 13px; line-height: 1.8; margin-bottom: 15px;">
-                    <div style="font-family: monospace; color: #60a5fa; font-size: 15px; margin-bottom: 5px;">
-                        📟 ${slaveId}
+                if (result.ok) {
+                    devices = result.devices;
+                    renderDevices();
+                }
+            } catch (error) {
+                console.error('❌ 刷新失敗:', error);
+            }
+        }
+        
+        // 渲染設備列表
+        function renderDevices() {
+            const container = document.getElementById('deviceContainer');
+            const deviceCount = Object.keys(devices).length;
+            
+            if (deviceCount === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <h3>📭 未發現任何設備</h3>
+                        <p>請點擊「發現設備」按鈕開始搜尋</p>
+                        <button class="btn btn-primary" onclick="discoverDevices()">
+                            📡 發現設備
+                        </button>
                     </div>
-                    <div>📍 IP: <code style="color: #60a5fa;">${device.ip}</code></div>
-                    <div>💡 像素數: <code>${device.pixel_count}</code></div>
-                    <div>🔧 硬體版本: <code>${device.hw_version}</code></div>
-                    <div>🕐 最後上線: <code style="font-size: 11px;">${new Date(device.last_seen).toLocaleString()}</code></div>
-                </div>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <button onclick="getStatus('${slaveId}')" style="
-                        background: #059669;
-                        color: white;
-                        border: none;
-                        padding: 8px;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 12px;
-                    ">
-                        📥 查看 Status
-                    </button>
-                    
-                    <button onclick="updateStatus('${slaveId}')" style="
-                        background: #d97706;
-                        color: white;
-                        border: none;
-                        padding: 8px;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 12px;
-                    ">
-                        📤 更新 Status
-                    </button>
-                </div>
-            </div>
-        `;
-    }
-    
-    html += '</div>';
-    deviceListEl.innerHTML = html;
-}
-
-// ==================== 設備發現 ====================
-document.getElementById('discoverBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('discoverBtn');
-    btn.disabled = true;
-    btn.textContent = '🔍 掃描中...';
-    
-    try {
-        const response = await fetch('/slave/api/discover/', {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': getCookie('csrftoken')
+                `;
+                return;
             }
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            // 等待 2 秒讓設備回應
-            setTimeout(() => {
-                loadDevices();
-                btn.disabled = false;
-                btn.textContent = '📡 發現設備';
-            }, 2000);
-        } else {
-            alert(`發現失敗: ${data.err}`);
-            btn.disabled = false;
-            btn.textContent = '📡 發現設備';
-        }
-    } catch (error) {
-        alert(`發現失敗: ${error.message}`);
-        btn.disabled = false;
-        btn.textContent = '📡 發現設備';
-    }
-});
-
-// 刷新按鈕
-document.getElementById('refreshBtn').addEventListener('click', loadDevices);
-
-// ==================== 查看 Status ====================
-async function getStatus(slaveId) {
-    currentSlaveId = slaveId;
-    
-    // 顯示對話框
-    document.getElementById('statusSlaveId').textContent = slaveId;
-    document.getElementById('statusContent').textContent = '⏳ 正在獲取數據...';
-    document.getElementById('statusDialog').style.display = 'block';
-    showOverlay();
-    
-    try {
-        const response = await fetch('/slave/api/slave/status/get/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCookie('csrftoken')
-            },
-            body: JSON.stringify({
-                slave_id: slaveId,
-                query_type: 2  // 混合模式:配置 + 實時數據
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            // 等待 ESP32 回應(通過 WebSocket)
-            setTimeout(() => {
-                // 這裡應該通過 WebSocket 接收 STATUS_RSP
-                // 暫時顯示提示
-                document.getElementById('statusContent').textContent = 
-                    '✅ 已發送請求\n\n' +
-                    '⏳ 等待 ESP32 回應...\n\n' +
-                    '(需要實現 WebSocket 接收 STATUS_RSP)';
-            }, 500);
-        } else {
-            document.getElementById('statusContent').textContent = `❌ 請求失敗: ${data.err}`;
-        }
-    } catch (error) {
-        document.getElementById('statusContent').textContent = `❌ 請求失敗: ${error.message}`;
-    }
-}
-
-// ==================== 更新 Status ====================
-async function updateStatus(slaveId) {
-    currentSlaveId = slaveId;
-    
-    // 先獲取當前配置
-    document.getElementById('uploadSlaveId').textContent = slaveId;
-    document.getElementById('configEditor').value = '⏳ 正在載入當前配置...';
-    document.getElementById('uploadDialog').style.display = 'block';
-    showOverlay();
-    
-    try {
-        // 先發送 STATUS_GET 獲取當前配置
-        const response = await fetch('/slave/api/slave/status/get/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCookie('csrftoken')
-            },
-            body: JSON.stringify({
-                slave_id: slaveId,
-                query_type: 0  // 只獲取配置
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            // 顯示默認配置供編輯
-            const defaultConfig = {
-                "server_ip": "10.10.1.27",
-                "server_port": 8001,
-                "auto_connect": true,
-                "pixel_count": 400
-            };
             
-            document.getElementById('configEditor').value = JSON.stringify(defaultConfig, null, 2);
-        } else {
-            alert(`獲取配置失敗: ${data.err}`);
-            closeUploadDialog();
-        }
-    } catch (error) {
-        alert(`獲取配置失敗: ${error.message}`);
-        closeUploadDialog();
-    }
-}
-
-// ==================== 對話框控制 ====================
-function closeStatusDialog() {
-    document.getElementById('statusDialog').style.display = 'none';
-    hideOverlay();
-}
-
-function closeUploadDialog() {
-    document.getElementById('uploadDialog').style.display = 'none';
-    hideOverlay();
-}
-
-// 關閉按鈕事件
-document.getElementById('closeStatusBtn').addEventListener('click', closeStatusDialog);
-document.getElementById('cancelUploadBtn').addEventListener('click', closeUploadDialog);
-document.getElementById('overlay').addEventListener('click', () => {
-    closeStatusDialog();
-    closeUploadDialog();
-});
-
-// ==================== 上傳按鈕 ====================
-document.getElementById('uploadBtn').addEventListener('click', async () => {
-    const configText = document.getElementById('configEditor').value;
-    
-    try {
-        // 驗證 JSON 格式
-        const config = JSON.parse(configText);
-        
-        document.getElementById('uploadProgress').style.display = 'block';
-        document.getElementById('uploadStatus').textContent = '⏳ 正在上傳...';
-        
-        const response = await fetch('/slave/api/slave/status/update/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCookie('csrftoken')
-            },
-            body: JSON.stringify({
-                slave_id: currentSlaveId,
-                config: config
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            document.getElementById('uploadStatus').textContent = '✅ 上傳成功!等待 ESP32 確認...';
+            let html = '<div class="device-grid">';
             
-            setTimeout(() => {
-                closeUploadDialog();
-            }, 2000);
-        } else {
-            document.getElementById('uploadStatus').textContent = `❌ 上傳失敗: ${data.err}`;
+            for (const [slaveId, device] of Object.entries(devices)) {
+                const statusClass = device.ws_connected ? 'status-online' : 
+                                  device.status === 'discovered' ? 'status-discovered' : 'status-offline';
+                const statusText = device.ws_connected ? 'Online' : 
+                                 device.status === 'discovered' ? 'Discovered' : 'Offline';
+                
+                html += `
+                    <div class="device-card">
+                        <div class="device-header">
+                            <div class="device-id">${slaveId}</div>
+                            <div class="status-badge ${statusClass}">${statusText}</div>
+                        </div>
+                        
+                        <div class="device-info">
+                            <div class="info-row">
+                                <span class="info-label">IP 地址</span>
+                                <span class="info-value">${device.ip}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">像素數量</span>
+                                <span class="info-value">${device.pixel_count || 0}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">硬體版本</span>
+                                <span class="info-value">${device.hw_version || 'N/A'}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">最後發現</span>
+                                <span class="info-value">${formatTime(device.last_seen)}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="device-actions">
+                            <button class="btn btn-primary btn-small" onclick="getStatus('${slaveId}')">
+                                📊 查詢狀態
+                            </button>
+                            <button class="btn btn-secondary btn-small" onclick="downloadSchema('${slaveId}')">
+                                📥 下載 Schema
+                            </button>
+                            <button class="btn btn-secondary btn-small" onclick="viewSchemas('${slaveId}')" style="flex: 0.5;">
+                                📋
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            
+            // 添加統計信息
+            html += `
+                <div class="stats">
+                    <h3>設備統計</h3>
+                    <div class="stats-number">${deviceCount}</div>
+                    <p style="color: #666;">已發現設備</p>
+                </div>
+            `;
+            
+            container.innerHTML = html;
         }
-    } catch (error) {
-        if (error instanceof SyntaxError) {
-            document.getElementById('uploadStatus').textContent = `❌ JSON 格式錯誤: ${error.message}`;
-        } else {
-            document.getElementById('uploadStatus').textContent = `❌ 上傳失敗: ${error.message}`;
+        
+        // 格式化時間
+        function formatTime(isoString) {
+            if (!isoString) return 'N/A';
+            const date = new Date(isoString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffSec = Math.floor(diffMs / 1000);
+            
+            if (diffSec < 60) return `${diffSec} 秒前`;
+            if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分鐘前`;
+            return date.toLocaleTimeString('zh-TW');
         }
-    }
-});
+        
+        // 查詢設備狀態
+        async function getStatus(slaveId) {
+            try {
+                const response = await fetch('/slave/api/slave/status/get/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        slave_id: slaveId,
+                        query_type: 2  // 混合模式
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.ok) {
+                    console.log('✅ STATUS_GET 已發送:', slaveId);
+                    alert('STATUS_GET 指令已發送,請查看控制台日誌');
+                } else {
+                    alert('失敗: ' + result.err);
+                }
+            } catch (error) {
+                console.error('❌ 錯誤:', error);
+                alert('請求錯誤: ' + error.message);
+            }
+        }
+        
+        // 下載 Schema
+        async function downloadSchema(slaveId) {
+            try {
+                // 顯示選擇對話框
+                const schemaName = prompt(
+                    '請輸入要下載的 schema 名稱:\n(可選: status, file, fs, stream)',
+                    'status'
+                );
+                
+                if (!schemaName) {
+                    return;
+                }
+                
+                console.log(`開始下載 schema: ${slaveId}/${schemaName}`);
+                
+                const response = await fetch('/slave/api/schema/download/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        slave_id: slaveId,
+                        schema_name: schemaName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.ok) {
+                    console.log('✅ Schema 下載請求已發送:', result);
+                    alert(`Schema 下載請求已發送!\n\n設備: ${slaveId}\nSchema: ${schemaName}\n\n請等待約 2-5 秒後查看列表`);
+                    
+                    // 2 秒後刷新設備列表
+                    setTimeout(refreshDevices, 2000);
+                } else {
+                    alert('下載失敗: ' + result.err);
+                }
+            } catch (error) {
+                console.error('❌ 錯誤:', error);
+                alert('請求錯誤: ' + error.message);
+            }
+        }
 
-// ==================== 狀態數據操作 ====================
-document.getElementById('downloadStatusBtn').addEventListener('click', () => {
-    const content = document.getElementById('statusContent').textContent;
-    const blob = new Blob([content], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `slave_${currentSlaveId}_status.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-});
-
-document.getElementById('copyStatusBtn').addEventListener('click', async () => {
-    const content = document.getElementById('statusContent').textContent;
-    try {
-        await navigator.clipboard.writeText(content);
-        alert('✅ 已複製到剪貼板');
-    } catch (error) {
-        alert(`❌ 複製失敗: ${error.message}`);
-    }
-});
-
-// ==================== 頁面初始化 ====================
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('📄 Slave Controller 頁面已載入');
-    
-    // 不自動刷新,等待用戶手動點擊"發現設備"
-});
-</script>
-
-<style>
-/* 按鈕 hover 效果 */
-button:hover:not(:disabled) {
-    opacity: 0.9;
-    transform: translateY(-1px);
-}
-
-button:active:not(:disabled) {
-    transform: translateY(0);
-}
-
-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-/* 滾動條樣式 */
-#statusDialog::-webkit-scrollbar,
-#configEditor::-webkit-scrollbar {
-    width: 8px;
-}
-
-#statusDialog::-webkit-scrollbar-track,
-#configEditor::-webkit-scrollbar-track {
-    background: #111827;
-}
-
-#statusDialog::-webkit-scrollbar-thumb,
-#configEditor::-webkit-scrollbar-thumb {
-    background: #374151;
-    border-radius: 4px;
-}
-
-#statusDialog::-webkit-scrollbar-thumb:hover,
-#configEditor::-webkit-scrollbar-thumb:hover {
-    background: #4b5563;
-}
-
-/* 代碼區域樣式 */
-code {
-    background: #111827;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-family: 'Courier New', monospace;
-}
-</style>
-{% endblock %}
+        async function viewSchemas(slaveId) {
+            try {
+                const response = await fetch(`/slave/api/schema/list/${slaveId}/`);
+                const result = await response.json();
+                
+                if (result.ok) {
+                    if (result.schemas.length === 0) {
+                        alert(`設備 ${slaveId} 未下載任何 schema\n\n請先點擊「下載 Schema」按鈕`);
+                        return;
+                    }
+                    
+                    let msg = `設備 ${slaveId} 已下載 Schema:\n\n`;
+                    result.schemas.forEach((s, i) => {
+                        msg += `${i + 1}. ${s.name}.json\n`;
+                        msg += `   組別: ${s.group}\n`;
+                        msg += `   CMD 數量: ${s.cmd_count}\n`;
+                        msg += `   文件大小: ${s.size} bytes\n\n`;
+                    });
+                    
+                    alert(msg);
+                } else {
+                    alert('查詢失敗: ' + result.err);
+                }
+            } catch (error) {
+                console.error('❌ 錯誤:', error);
+                alert('請求錯誤: ' + error.message);
+            }
+        }
+        
+        // 測試 Streaming (簡單計數)
+        let streamTestInterval = null;
+        let frameCounter = 0;
+        
+        function startStreamTest() {
+            if (streamTestInterval) {
+                alert('Streaming 測試已在運行中');
+                return;
+            }
+            
+            frameCounter = 0;
+            
+            // 模擬每秒發送一次計數
+            streamTestInterval = setInterval(() => {
+                frameCounter++;
+                console.log(`📡 Broadcasting frame: ${frameCounter}`);
+                
+                // TODO: 實際發送到所有 Slave
+                // 當前只是模擬打印
+                
+            }, 1000);
+            
+            console.log('▶️ Streaming 測試已啟動');
+            alert('Streaming 測試已啟動 (查看控制台)');
+        }
+        
+        function stopStreamTest() {
+            if (streamTestInterval) {
+                clearInterval(streamTestInterval);
+                streamTestInterval = null;
+                console.log(`⏹️ Streaming 測試已停止 (總幀數: ${frameCounter})`);
+                alert(`Streaming 測試已停止\n總發送幀數: ${frameCounter}`);
+            } else {
+                alert('Streaming 測試未運行');
+            }
+        }
+        
+        // 頁面卸載時清理
+        window.onbeforeunload = function() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            if (streamTestInterval) {
+                clearInterval(streamTestInterval);
+            }
+        };
+    </script>
+</body>
+</html>

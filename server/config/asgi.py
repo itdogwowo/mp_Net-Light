@@ -2,17 +2,13 @@
 import os
 from django.core.asgi import get_asgi_application
 
-# 必須在導入其他模塊之前設置環境變量
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
-
-# 先初始化 Django ASGI application
 django_asgi_app = get_asgi_application()
 
-# 然後導入 channels 相關模塊
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 
-# 🔥 導入所有 WebSocket 路由
+# 🔥 只導入一次,使用別名
 from light_control.routing import websocket_urlpatterns as light_ws
 from slave_controller.routing import websocket_urlpatterns as slave_ws
 
@@ -25,16 +21,16 @@ print("[ASGI] 正在啟動設備發現服務...")
 discovery_service.start()
 print("[ASGI] 設備發現服務已啟動")
 
-# 🔥 打印所有 WebSocket 路由
+# 🔥 打印所有路由
 print("\n所有 WebSocket 路由:")
 for pattern in all_websocket_patterns:
     print(f"  - {pattern.pattern}")
 print()
 
-# 🔥 配置 ASGI application (使用 all_websocket_patterns)
+# 🔥 配置 ASGI application
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": AuthMiddlewareStack(
-        URLRouter(all_websocket_patterns)  # 🔥 關鍵:使用合併後的路由
+        URLRouter(all_websocket_patterns)  # 🔥 使用合併後的路由
     ),
 })
