@@ -29,6 +29,7 @@ class DiscoveryResponder:
                 uid_bytes[3], uid_bytes[4], uid_bytes[5]
             )
 
+#         self.slave_id = "0x{:02X}{:02X}".format(uid_bytes[0], uid_bytes[1])
         
         self.device_info = {
             "slave_id": self.slave_id,
