@@ -12,7 +12,7 @@ class APA102:
     修正結束幀長度問題，支援超長燈帶
     """
     
-    def __init__(self, num_leds, spi_id=1, sck_pin=22, mosi_pin=23, baudrate=8000000):
+    def __init__(self, num_leds, spi_id=1, sck_pin=8, mosi_pin=7, baudrate=8_000_000):
         """
         初始化APA102驅動 (長燈帶修正版)
         
@@ -29,8 +29,8 @@ class APA102:
         self.spi = machine.SPI(
             spi_id,
             baudrate=baudrate,
-            polarity=0,      # APA102使用模式0
-            phase=0,
+            polarity=1,      # APA102使用模式0
+            phase=1,
             sck=machine.Pin(sck_pin),
             mosi=machine.Pin(mosi_pin),
             miso=None        # APA102不需要MISO
@@ -47,6 +47,7 @@ class APA102:
         # 方法2: 固定較長的結束幀
         end_frame_len = max(4, (num_leds + 7) // 8)  # 更保守的計算
         self.end_frame = bytearray([0xFF] * end_frame_len)
+        self.end_frame = bytearray([0xFF] * 4)
         
         # 或者使用固定長度結束幀（對於長燈帶更可靠）
         # self.end_frame = bytearray([0xFF] * 64)  # 固定64位元組結束幀
@@ -240,7 +241,7 @@ def diagnose_apa102(num_leds=5):
     print("=" * 50)
     
     # 初始化APA102
-    leds = APA102(num_leds, spi_id=1, sck_pin=22, mosi_pin=23)
+    leds = APA102(num_leds, spi_id=1, sck_pin=3, mosi_pin=2)
     
     try:
         # 測試1: 驗證緩衝區
@@ -369,7 +370,7 @@ class APA102DynamicEndFrame(APA102):
     根據實際需要動態調整結束幀長度
     """
     
-    def __init__(self, num_leds, spi_id=1, sck_pin=22, mosi_pin=23, baudrate=8000000):
+    def __init__(self, num_leds, spi_id=1, sck_pin=8, mosi_pin=7, baudrate=8000000):
         super().__init__(num_leds, spi_id, sck_pin, mosi_pin, baudrate)
         
         # 動態結束幀：先使用短結束幀，根據需要調整
@@ -407,9 +408,9 @@ class APA102DynamicEndFrame(APA102):
             self.adjust_end_frame(visible_leds)
         
         # 正常顯示
-        self.spi.write(self.start_frame)
-        self.spi.write(self.led_buffer)
-        self.spi.write(self.end_frame)
+#         self.spi.write(self.start_frame)
+        self.spi.write(self.start_frame + self.led_buffer + self.end_frame)
+#         self.spi.write(self.end_frame)
 
 
 # 主程式入口
@@ -434,7 +435,7 @@ if __name__ == "__main__":
         fixed_example_usage()
     elif choice == "3":
         # 使用動態結束幀版本
-        num_leds = 5
+        num_leds = 190
         leds = APA102DynamicEndFrame(num_leds)
         
         # 測試不同數量的LED
