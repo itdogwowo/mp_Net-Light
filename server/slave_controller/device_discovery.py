@@ -73,6 +73,63 @@ class DeviceDiscovery:
             print(f"[Discovery] ⚠️ 網絡檢測失敗: {e},使用備用方案")
             self._fallback_broadcast_calc()
     
+
+    def update_device_status(self, slave_id, status, ws_connected=False):
+        """更新設備狀態"""
+        with self.lock:
+            if slave_id in self.devices:
+                self.devices[slave_id]["status"] = status
+                self.devices[slave_id]["ws_connected"] = ws_connected
+                self.devices[slave_id]["last_seen"] = datetime.now().isoformat()
+                print(f"[Discovery] 🔄 設備狀態更新: {slave_id} → {status}")
+
+    def update_heartbeat(self, slave_id, heartbeat_data):
+        """🔥 更新設備心跳數據"""
+        with self.lock:
+            if slave_id in self.devices:
+                self.devices[slave_id].update({
+                    "last_heartbeat": datetime.now().isoformat(),
+                    "uptime_ms": heartbeat_data.get("uptime_ms", 0),
+                    "mem_free": heartbeat_data.get("mem_free", 0),
+                    "ws_connected": heartbeat_data.get("ws_connected", False),
+                    "status": "online"
+                })
+                print(f"[Discovery] 💓 心跳更新: {slave_id}")
+
+    def check_offline_devices(self):
+        """🔥 檢查離線設備 (超過 30 秒未心跳)"""
+        from datetime import datetime, timedelta
+        
+        with self.lock:
+            now = datetime.now()
+            for slave_id, device in self.devices.items():
+                last_hb = device.get("last_heartbeat")
+                
+                # 如果有心跳記錄
+                if last_hb:
+                    try:
+                        last_time = datetime.fromisoformat(last_hb)
+                        if (now - last_time).total_seconds() > 30:
+                            if device["status"] != "offline":
+                                device["status"] = "offline"
+                                device["ws_connected"] = False
+                                print(f"[Discovery] ⚠️ 設備離線 (心跳超時): {slave_id}")
+                    except Exception as e:
+                        print(f"[Discovery] ⚠️ 解析心跳時間失敗: {slave_id} => {e}")
+                
+                # 如果從未收到心跳,但 last_seen 超過 60 秒
+                elif device.get("last_seen"):
+                    try:
+                        last_seen_time = datetime.fromisoformat(device["last_seen"])
+                        if (now - last_seen_time).total_seconds() > 60:
+                            if device["status"] != "offline":
+                                device["status"] = "offline"
+                                device["ws_connected"] = False
+                                print(f"[Discovery] ⚠️ 設備離線 (發現超時): {slave_id}")
+                    except Exception as e:
+                        print(f"[Discovery] ⚠️ 解析 last_seen 失敗: {slave_id} => {e}")
+                        
+
     def _fallback_broadcast_calc(self):
         """備用方案:根據 IP 段猜測廣播地址"""
         if not self.local_ip:
