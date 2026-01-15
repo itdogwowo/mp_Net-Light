@@ -241,11 +241,14 @@ def network_mode():
     print("  - 支援自動重連 (斷線後每 30 秒嘗試)")
     print("  - 按 Ctrl+C 退出")
     print("-" * 60)
-    
+    temp = True
     try:
         last_heartbeat = time.ticks_ms()
         last_reconnect_attempt = time.ticks_ms()
+        last_Stream = time.ticks_ms()
         reconnect_interval = 30000  # 30 秒嘗試重連一次
+        
+        _Stream = 0
         
         while True:
             now = time.ticks_ms()
@@ -281,13 +284,24 @@ def network_mode():
             from action.stream_actions import is_streaming
             
             if is_streaming():
+                
+                if not temp:
+                    print("[Main] 🎨 Stream 激活中")
+                
+                    temp = True
                 # Stream 激活時的邏輯
-                # print("[Main] 🎨 Stream 激活中")
-                pass
+                _Stream = time.ticks_ms()
+                if time.ticks_diff(_Stream, last_heartbeat) => 25:
+                    last_heartbeat = _Stream
+                    
+                
+                    _Stream = _Stream+1
             else:
                 # Stream 未激活
-                # print("[Main] 💤 Stream 未激活")
-                pass
+                if temp:
+                    print("[Main] 💤 Stream 未激活")
+                    _Stream = 0
+                    temp = False
             
             # 控制循環頻率 (10ms)
             time_gap = time.ticks_diff(time.ticks_ms(), now)
@@ -301,6 +315,7 @@ def network_mode():
         if ws_client:
             ws_client.disconnect()
         print("[Main] 程序退出")
+
 
 # ==================== 主入口 ====================
 def main():
