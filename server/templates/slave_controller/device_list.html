@@ -288,6 +288,7 @@
         let devices = {};
         let autoRefreshInterval = null;
         
+        
         // 頁面載入時初始化
         window.onload = function() {
             refreshDevices();
@@ -534,36 +535,76 @@
         let streamTestInterval = null;
         let frameCounter = 0;
         
-        function startStreamTest() {
+        async function startStreamTest() {
             if (streamTestInterval) {
                 alert('Streaming 測試已在運行中');
                 return;
             }
             
-            frameCounter = 0;
-            
-            // 模擬每秒發送一次計數
-            streamTestInterval = setInterval(() => {
-                frameCounter++;
-                console.log(`📡 Broadcasting frame: ${frameCounter}`);
+            // 🔥 發送 STREAM_START 到 Server
+            try {
+                const response = await fetch('/slave/api/stream/start/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        fps: 40,
+                        pixel_count: 400
+                    })
+                });
                 
-                // TODO: 實際發送到所有 Slave
-                // 當前只是模擬打印
+                const result = await response.json();
                 
-            }, 1000);
-            
-            console.log('▶️ Streaming 測試已啟動');
-            alert('Streaming 測試已啟動 (查看控制台)');
+                if (result.ok) {
+                    console.log('✅ STREAM_START 已發送');
+                    alert('Streaming 測試已啟動');
+                    
+                    // 開始模擬幀計數
+                    frameCounter = 0;
+                    streamTestInterval = setInterval(() => {
+                        frameCounter++;
+                        console.log(`📡 Frame: ${frameCounter}`);
+                    }, 1000 / 40);  // 40 fps
+                } else {
+                    alert('啟動失敗: ' + result.err);
+                }
+            } catch (error) {
+                console.error('❌ 請求錯誤:', error);
+                alert('請求錯誤: ' + error.message);
+            }
         }
         
-        function stopStreamTest() {
-            if (streamTestInterval) {
-                clearInterval(streamTestInterval);
-                streamTestInterval = null;
-                console.log(`⏹️ Streaming 測試已停止 (總幀數: ${frameCounter})`);
-                alert(`Streaming 測試已停止\n總發送幀數: ${frameCounter}`);
-            } else {
+        async function stopStreamTest() {
+            if (!streamTestInterval) {
                 alert('Streaming 測試未運行');
+                return;
+            }
+            
+            // 🔥 發送 STREAM_STOP 到 Server
+            try {
+                const response = await fetch('/slave/api/stream/stop/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.ok) {
+                    console.log(`⏹️ STREAM_STOP 已發送 (總幀數: ${frameCounter})`);
+                    alert(`Streaming 測試已停止\n總發送幀數: ${frameCounter}`);
+                    
+                    // 停止計數
+                    clearInterval(streamTestInterval);
+                    streamTestInterval = null;
+                } else {
+                    alert('停止失敗: ' + result.err);
+                }
+            } catch (error) {
+                console.error('❌ 請求錯誤:', error);
+                alert('請求錯誤: ' + error.message);
             }
         }
         

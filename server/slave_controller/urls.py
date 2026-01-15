@@ -31,4 +31,5 @@ urlpatterns = [
     # 文件傳輸
     path('api/file/upload/', views.api_file_upload, name='api_file_upload'),
     path('api/file/download/', views.api_file_download, name='api_file_download'),
+
 ]

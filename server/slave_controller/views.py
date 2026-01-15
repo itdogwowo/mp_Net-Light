@@ -28,19 +28,16 @@ def pack_cmd_packet(cmd, payload, addr=0, ver=3):
     打包 CMD 封包 (使用真實 CRC16)
     格式: SOF(2) VER(1) ADDR(2) CMD(2) LEN(2) DATA CRC16(2)
     """
-    import struct
-    
     sof = b'NL'
     ver_byte = bytes([ver])
     addr_bytes = struct.pack('<H', addr)
     cmd_bytes = struct.pack('<H', cmd)
     len_bytes = struct.pack('<H', len(payload))
     
-    # 🔥 計算真實 CRC16 (與 ESP32 一致)
-    # CRC 覆蓋: VER + ADDR + CMD + LEN + DATA
+    # 🔥 計算真實 CRC16
     crc_data = ver_byte + addr_bytes + cmd_bytes + len_bytes + payload
-    crc16 = crc16_ccitt(crc_data)  # 🔥 調用 CRC16 函數
-    crc_bytes = struct.pack('<H', crc16)
+    crc = crc16_ccitt(crc_data)
+    crc_bytes = struct.pack('<H', crc)
     
     packet = sof + ver_byte + addr_bytes + cmd_bytes + len_bytes + payload + crc_bytes
     return packet
@@ -330,44 +327,52 @@ def api_slave_update_status(request):
 
 # ==================== 燈效串流 API ====================
 
-@csrf_exempt
 @require_http_methods(["POST"])
+@csrf_exempt
 def api_stream_start(request):
     """
     啟動燈效串流
     POST /slave/api/stream/start/
-    Body: {
-        "slave_id": "30EDA0EA4EC8",  # 可選
-        "fps": 40,
-        "pixel_count": 400
-    }
+    Body: {"fps": 40, "pixel_count": 400}
     """
     try:
         data = json.loads(request.body.decode('utf-8'))
-        slave_id = data.get('slave_id')
         fps = data.get('fps', 40)
         pixel_count = data.get('pixel_count', 400)
         
         print(f"[API] STREAM_START: fps={fps}, pixels={pixel_count}")
         
-        # 構造 STREAM_START 封包
-        CMD_STREAM_START = 0x3002
-        payload = struct.pack('<BH', fps, pixel_count)
+        # 🔥 載入 schema 並編碼
+        from .protocol.schema_loader import SchemaStore
+        from .protocol.schema_codec import encode_payload
+        
+        schema_store = SchemaStore()
+        schema_dir = os.path.join(settings.BASE_DIR, 'schema')
+        schema_store.load_dir(schema_dir)
+        
+        CMD_STREAM_START = 0x3001
+        cmd_def = schema_store.get(CMD_STREAM_START)
+        
+        payload = encode_payload(cmd_def, {
+            "fps": fps,
+            "pixel_count": pixel_count
+        })
+        
         packet = pack_cmd_packet(CMD_STREAM_START, payload)
         
-        # 發送
-        if slave_id:
-            send_to_slave(slave_id, packet)
-            message = f"STREAM_START 已發送到 {slave_id}"
-        else:
-            broadcast_to_all_slaves(packet)
-            message = "STREAM_START 已廣播到所有設備"
+        # 🔥 廣播到所有 Slave
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "all_slaves",
+            {
+                "type": "send_cmd",
+                "packet": packet
+            }
+        )
         
         return JsonResponse({
             "ok": True,
-            "message": message,
-            "fps": fps,
-            "pixel_count": pixel_count
+            "message": f"STREAM_START 已廣播 (fps={fps}, pixels={pixel_count})"
         })
         
     except Exception as e:
@@ -379,35 +384,32 @@ def api_stream_start(request):
             "err": str(e)
         }, status=500)
 
-@csrf_exempt
 @require_http_methods(["POST"])
+@csrf_exempt
 def api_stream_stop(request):
     """
     停止燈效串流
     POST /slave/api/stream/stop/
-    Body: {"slave_id": "30EDA0EA4EC8"}  # 可選
     """
     try:
-        data = json.loads(request.body.decode('utf-8'))
-        slave_id = data.get('slave_id')
-        
         print(f"[API] STREAM_STOP")
         
-        # 構造 STREAM_STOP 封包
-        CMD_STREAM_STOP = 0x3003
+        CMD_STREAM_STOP = 0x3002
         packet = pack_cmd_packet(CMD_STREAM_STOP, b"")
         
-        # 發送
-        if slave_id:
-            send_to_slave(slave_id, packet)
-            message = f"STREAM_STOP 已發送到 {slave_id}"
-        else:
-            broadcast_to_all_slaves(packet)
-            message = "STREAM_STOP 已廣播到所有設備"
+        # 廣播到所有 Slave
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "all_slaves",
+            {
+                "type": "send_cmd",
+                "packet": packet
+            }
+        )
         
         return JsonResponse({
             "ok": True,
-            "message": message
+            "message": "STREAM_STOP 已廣播"
         })
         
     except Exception as e:

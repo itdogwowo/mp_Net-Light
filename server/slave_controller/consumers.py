@@ -1,9 +1,52 @@
 # slave_controller/consumers.py (修復版 + 調試日誌)
-import asyncio
+import asyncio, json
 import struct
 from channels.generic.websocket import AsyncWebsocketConsumer
 from datetime import datetime
 from .device_discovery import discovery_service
+
+class AdminConsumer(AsyncWebsocketConsumer):
+    """管理後台 WebSocket Consumer - 接收設備狀態更新"""
+    
+    async def connect(self):
+        """管理員連接"""
+        # 加入管理員房間
+        await self.channel_layer.group_add(
+            'admin_room',
+            self.channel_name
+        )
+        
+        await self.accept()
+        print("[AdminWS] ✅ 管理員 WebSocket 已連接")
+        
+        # 🔥 連接後立即發送當前設備列表
+        from .device_discovery import discovery_service
+        devices = discovery_service.get_devices()
+        
+        await self.send(text_data=json.dumps({
+            "type": "device_list",
+            "devices": devices
+        }))
+    
+    async def disconnect(self, close_code):
+        """管理員斷開"""
+        await self.channel_layer.group_discard(
+            'admin_room',
+            self.channel_name
+        )
+        print(f"[AdminWS] 管理員已斷開 (code: {close_code})")
+    
+    async def device_status_update(self, event):
+        """🔥 接收設備狀態更新並推送到前端"""
+        await self.send(text_data=json.dumps({
+            "type": "device_status",
+            "slave_id": event.get("slave_id"),
+            "status": event.get("status"),
+            "ws_connected": event.get("ws_connected"),
+            "timestamp": event.get("timestamp")
+        }))
+
+
 
 class SlaveConsumer(AsyncWebsocketConsumer):
     """Slave WebSocket Consumer - 處理 CMD 二進位協議 (修復版)"""
@@ -13,55 +56,54 @@ class SlaveConsumer(AsyncWebsocketConsumer):
         self.slave_id = self.scope['url_route']['kwargs'].get('slave_id')
         self.room_group_name = f'slave_{self.slave_id}'
         
-        # 🔥 初始化 StreamParser
         from .protocol.proto import StreamParser
         self.parser = StreamParser(max_len=65536)
         
-        print("=" * 50)
-        print(f"[SlaveWS] Slave {self.slave_id} 嘗試連接")
-        
-        # 加入房間組
-        await self.channel_layer.group_add(
-            self.room_group_name,
-            self.channel_name
-        )
-        
-        # 🔥 加入全局 all_slaves 組
-        await self.channel_layer.group_add(
-            'all_slaves',
-            self.channel_name
-        )
-        
-        # 接受連接
+        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+        await self.channel_layer.group_add('all_slaves', self.channel_name)
         await self.accept()
         
-        # 🔥 更新設備狀態
         discovery_service.update_device_status(
             self.slave_id, "online", ws_connected=True
         )
         
         print(f"[SlaveWS] ✅ {self.slave_id} 已連接")
-        print("=" * 50)
+        
+        # 🔥 通知管理員
+        await self.channel_layer.group_send(
+            'admin_room',
+            {
+                'type': 'device_status_update',
+                'slave_id': self.slave_id,
+                'status': 'online',
+                'ws_connected': True,
+                'timestamp': datetime.now().isoformat()
+            }
+        )
     
     async def disconnect(self, close_code):
         """Slave 斷開"""
-        print(f"[SlaveWS] {self.slave_id} WebSocket 已斷開 (code: {close_code})")
-        
-        # 🔥 更新設備狀態
         discovery_service.update_device_status(
             self.slave_id, "offline", ws_connected=False
         )
         
-        # 離開房間組
-        await self.channel_layer.group_discard(
-            self.room_group_name,
-            self.channel_name
-        )
+        await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+        await self.channel_layer.group_discard('all_slaves', self.channel_name)
         
-        await self.channel_layer.group_discard(
-            'all_slaves',
-            self.channel_name
+        print(f"[SlaveWS] ❌ {self.slave_id} 已斷開")
+        
+        # 🔥 通知管理員
+        await self.channel_layer.group_send(
+            'admin_room',
+            {
+                'type': 'device_status_update',
+                'slave_id': self.slave_id,
+                'status': 'offline',
+                'ws_connected': False,
+                'timestamp': datetime.now().isoformat()
+            }
         )
+    
     
     async def receive(self, text_data=None, bytes_data=None):
         """🔥 接收消息 (修復版 + 調試日誌)"""
