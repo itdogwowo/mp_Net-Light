@@ -1,0 +1,64 @@
+<!-- file: templates/components/topbar.html -->
+<header class="topbar" id="topbar">
+    <div class="topbar-container">
+        <!-- 左側區域 -->
+        <div class="topbar-left">
+            <!-- 側邊欄切換按鈕 -->
+            <button class="sidebar-toggle-btn" id="sidebarToggle" aria-label="切換側邊欄">
+                <i class="bi bi-list"></i>
+            </button>
+            
+            <!-- Logo -->
+            <a href="/" class="logo">
+                <i class="bi bi-cpu-fill"></i>
+                <span class="logo-text">IT</span>
+            </a>
+        </div>
+        
+        <!-- 右側工具欄 -->
+        <div class="topbar-right">
+            <!-- 搜索框 (可選) -->
+            <div class="search-box" style="display: none;">
+                <i class="bi bi-search"></i>
+                <input type="text" placeholder="搜索..." class="search-input">
+            </div>
+            
+            <!-- 通知按鈕 -->
+            <button class="topbar-icon-btn" title="通知" onclick="app.showNotification('您有3條新消息', 'info')">
+                <i class="bi bi-bell"></i>
+                <span class="badge">3</span>
+            </button>
+            
+            <!-- 主題切換按鈕 -->
+            <button class="topbar-icon-btn" id="themeToggle" title="切換主題">
+                <i class="bi bi-moon-stars-fill theme-icon"></i>
+            </button>
+            
+            <!-- 用戶菜單 -->
+            <div class="user-menu">
+                <button class="user-avatar-btn" id="userMenuToggle">
+                    <img src="https://ui-avatars.com/api/?name={{ request.user.username|default:'Admin' }}&background=38bdf8&color=fff" alt="用戶頭像">
+                    <span class="user-name">{{ request.user.username|default:'Admin' }}</span>
+                    <i class="bi bi-chevron-down"></i>
+                </button>
+                
+                <!-- 下拉菜單 -->
+                <div class="dropdown-menu" id="userMenuDropdown">
+                    <a href="/profile" class="dropdown-item">
+                        <i class="bi bi-person"></i> 個人資料
+                    </a>
+                    <a href="/settings" class="dropdown-item">
+                        <i class="bi bi-gear"></i> 設置
+                    </a>
+                    <a href="/help" class="dropdown-item">
+                        <i class="bi bi-question-circle"></i> 幫助中心
+                    </a>
+                    <hr class="dropdown-divider">
+                    <a href="/logout" class="dropdown-item text-danger">
+                        <i class="bi bi-box-arrow-right"></i> 登出
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</header>

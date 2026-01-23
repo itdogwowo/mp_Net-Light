@@ -1,3 +1,5 @@
 /server/venv
 *.pyc
 *.pxld
+server1/venv
+server1

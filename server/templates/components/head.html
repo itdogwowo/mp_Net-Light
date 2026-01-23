@@ -1,0 +1,27 @@
+{% load static %}
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>{% block title %}IT Portal{% endblock %} | TVB Corporate IT</title>
+
+<!-- Favicon -->
+<link rel="shortcut icon" href="{% static 'images/favicon.ico' %}">
+
+<!-- CSS 變量與基礎樣式 -->
+<link rel="stylesheet" href="{% static 'css/base/variables.css' %}">
+<link rel="stylesheet" href="{% static 'css/base/reset.css' %}">
+<link rel="stylesheet" href="{% static 'css/base/layout.css' %}">
+
+<!-- 組件樣式 -->
+<link rel="stylesheet" href="{% static 'css/components/topbar.css' %}">
+<link rel="stylesheet" href="{% static 'css/components/sidebar.css' %}">
+<link rel="stylesheet" href="{% static 'css/components/table.css' %}">
+<link rel="stylesheet" href="{% static 'css/components/buttons.css' %}">
+
+<!-- 主題樣式 -->
+<link rel="stylesheet" href="{% static 'css/themes/light.css' %}" id="theme-light">
+<link rel="stylesheet" href="{% static 'css/themes/dark.css' %}" id="theme-dark" disabled>
+
+<!-- 圖標庫 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">

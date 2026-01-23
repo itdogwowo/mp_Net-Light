@@ -1,90 +1,81 @@
-# /lib/schema_codec.py
 import struct
 
-class BufferReader:
-    def __init__(self, data: bytes):
-        self.data = data if data else b""
-        self.pos = 0
+class SchemaCodec:
+    @staticmethod
+    def decode(cmd_def: dict, payload: bytes) -> dict:
+        """穩定版解碼：優化內存開銷"""
+        pos = 0
+        payload_len = len(payload)
+        out = {"_name": cmd_def.get("name"), "_cmd": cmd_def.get("cmd")}
+        
+        for f in cmd_def.get("payload", []):
+            t, name = f["type"], f["name"]
+            if pos >= payload_len and t != "bytes_rest":
+                break
 
-    def remaining(self): return len(self.data) - self.pos
-    def read(self, n):
-        if self.pos + n > len(self.data):
-            raise ValueError("UNDERFLOW")
-        b = self.data[self.pos:self.pos+n]
-        self.pos += n
-        return b
-    def take_all(self):
-        b = self.data[self.pos:]
-        self.pos = len(self.data)
-        return b
+            try:
+                # 使用 memoryview 能避免在大數據塊(Buffer)傳輸時產生不必要的拷貝
+                if t == "u8":
+                    out[name] = int(payload[pos]); pos += 1
+                elif t == "u16":
+                    out[name] = struct.unpack_from("<H", payload, pos)[0]; pos += 2
+                elif t == "u32":
+                    out[name] = struct.unpack_from("<I", payload, pos)[0]; pos += 4
+                elif t == "str_u16len":
+                    ln = struct.unpack_from("<H", payload, pos)[0]; pos += 2
+                    out[name] = bytes(payload[pos : pos + ln]).decode("utf-8"); pos += ln
+                elif t == "bytes_fixed":
+                    flen = int(f["len"])
+                    # 這裡必須拷貝一份，因為 Parser 的 Buffer 是會變動的
+                    out[name] = bytes(payload[pos : pos + flen]); pos += flen
+                elif t == "bytes_rest":
+                    # 🚀 [修正] 提取剩下的所有數據到 data
+                    out[name] = bytes(payload[pos:])
+                    pos = payload_len
+            except Exception as e:
+                print(f"❌ [Codec] Decode field '{name}' error: {e}")
+                break
+        return out
 
-    def u8(self): return self.read(1)[0]
-    def u16(self):
-        v = struct.unpack_from("<H", self.data, self.pos)[0]; self.pos += 2; return v
-    def u32(self):
-        v = struct.unpack_from("<I", self.data, self.pos)[0]; self.pos += 4; return v
-    def i16(self):
-        v = struct.unpack_from("<h", self.data, self.pos)[0]; self.pos += 2; return v
-    def i32(self):
-        v = struct.unpack_from("<i", self.data, self.pos)[0]; self.pos += 4; return v
-
-    def str_u16len(self):
-        ln = self.u16()
-        b = self.read(ln)
-        return b.decode("utf-8")
-
-class BufferWriter:
-    def __init__(self):
-        self.parts = []
-    def put(self, b: bytes):
-        if b:
-            self.parts.append(b)
-    def u8(self, v): self.parts.append(bytes((int(v) & 0xFF,)))
-    def u16(self, v): self.parts.append(struct.pack("<H", int(v) & 0xFFFF))
-    def u32(self, v): self.parts.append(struct.pack("<I", int(v) & 0xFFFFFFFF))
-    def i16(self, v): self.parts.append(struct.pack("<h", int(v)))
-    def i32(self, v): self.parts.append(struct.pack("<i", int(v)))
-    def str_u16len(self, s):
-        b = (s if isinstance(s, str) else str(s)).encode("utf-8")
-        self.u16(len(b)); self.put(b)
-    def bytes_fixed(self, b, ln):
-        if b is None: b = b""
-        if len(b) != ln:
-            raise ValueError("bytes_fixed mismatch")
-        self.put(b)
-    def build(self): return b"".join(self.parts)
-
-def decode_payload(cmd_def: dict, payload: bytes) -> dict:
-    r = BufferReader(payload)
-    out = {"_name": cmd_def.get("name"), "_cmd": cmd_def.get("cmd")}
-    for f in cmd_def.get("payload", []):
-        t = f["type"]; name = f["name"]
-        if t == "u8": out[name] = r.u8()
-        elif t == "u16": out[name] = r.u16()
-        elif t == "u32": out[name] = r.u32()
-        elif t == "i16": out[name] = r.i16()
-        elif t == "i32": out[name] = r.i32()
-        elif t == "str_u16len": out[name] = r.str_u16len()
-        elif t == "bytes_fixed": out[name] = r.read(int(f["len"]))
-        elif t == "bytes_rest": out[name] = r.take_all()
-        else:
-            raise ValueError("Unsupported type:%s" % t)
-    out["_remain"] = r.remaining()
-    return out
-
-def encode_payload(cmd_def: dict, obj: dict) -> bytes:
-    w = BufferWriter()
-    for f in cmd_def.get("payload", []):
-        t = f["type"]; name = f["name"]
-        val = obj.get(name)
-        if t == "u8": w.u8(val or 0)
-        elif t == "u16": w.u16(val or 0)
-        elif t == "u32": w.u32(val or 0)
-        elif t == "i16": w.i16(val or 0)
-        elif t == "i32": w.i32(val or 0)
-        elif t == "str_u16len": w.str_u16len(val or "")
-        elif t == "bytes_fixed": w.bytes_fixed(val, int(f["len"]))
-        elif t == "bytes_rest": w.put(val or b"")
-        else:
-            raise ValueError("Unsupported type:%s" % t)
-    return w.build()
+    @staticmethod
+    def encode(cmd_def: dict, obj: dict) -> bytes:
+        """嚴格按照 Schema 順序編碼：修復 bytes_rest 錯誤"""
+        buf = bytearray()
+        
+        for f in cmd_def.get("payload", []):
+            t, name = f["type"], f["name"]
+            val = obj.get(name)
+            
+            try:
+                if t == "u8":
+                    buf.append(int(val or 0) & 0xFF)
+                elif t == "u16":
+                    buf.extend(struct.pack("<H", int(val or 0)))
+                elif t == "u32":
+                    buf.extend(struct.pack("<I", int(val or 0)))
+                elif t == "i16":
+                    buf.extend(struct.pack("<h", int(val or 0)))
+                elif t == "i32":
+                    buf.extend(struct.pack("<i", int(val or 0)))
+                elif t == "str_u16len":
+                    s = str(val or "").encode("utf-8")
+                    buf.extend(struct.pack("<H", len(s)))
+                    buf.extend(s)
+                elif t == "bytes_fixed":
+                    flen = int(f["len"])
+                    b = val if val is not None else b"\x00" * flen
+                    if len(b) > flen: b = b[:flen]
+                    if len(b) < flen: b = b + b"\x00" * (flen - len(b))
+                    buf.extend(b)
+                elif t == "bytes_rest":
+                    # 🚀 [修正] 原本這裡寫成了 decode 的邏輯，現在修復為正確的編碼
+                    if val is not None:
+                        if isinstance(val, (bytes, bytearray, memoryview)):
+                            buf.extend(val)
+                        else:
+                            # 如果傳入的是 list (如 [1, 2, 3])
+                            buf.extend(bytes(val))
+            except Exception as e:
+                print(f"❌ [Codec] Encode field '{name}' failed: {e}")
+                
+        return bytes(buf)

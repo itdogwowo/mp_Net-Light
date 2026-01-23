@@ -1,0 +1,1120 @@
+{% extends "layouts/base.html" %}
+{% load static %}
+
+{% block title %}組件示例{% endblock %}
+
+{% block breadcrumb_items %}
+<li class="breadcrumb-item"><a href="/dashboard">儀表板</a></li>
+<li class="breadcrumb-item active">組件示例</li>
+{% endblock %}
+
+{% block page_title %}UI 組件示例{% endblock %}
+{% block page_subtitle %}所有可用的UI組件和佈局示例{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-primary" onclick="app.showNotification('這是一個成功提示', 'success')">
+    <i class="bi bi-check-circle"></i> 測試通知
+</button>
+<button class="btn btn-outline">
+    <i class="bi bi-download"></i> 導出文檔
+</button>
+{% endblock %}
+
+{% block content %}
+
+<!-- ==================== 1. 按鈕組件 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-cursor"></i> 按鈕組件
+        </h2>
+        <p class="section-desc">各種樣式和大小的按鈕</p>
+    </div>
+    
+    <div class="component-card">
+        <h3 class="card-subtitle">基礎按鈕</h3>
+        <div class="component-demo">
+            <button class="btn btn-primary">主要按鈕</button>
+            <button class="btn btn-success">成功按鈕</button>
+            <button class="btn btn-warning">警告按鈕</button>
+            <button class="btn btn-danger">危險按鈕</button>
+            <button class="btn btn-outline">輪廓按鈕</button>
+            <button class="btn btn-text">文字按鈕</button>
+            <button class="btn btn-primary" disabled>禁用按鈕</button>
+        </div>
+    </div>
+
+    <div class="component-card">
+        <h3 class="card-subtitle">按鈕尺寸</h3>
+        <div class="component-demo">
+            <button class="btn btn-primary btn-sm">小型按鈕</button>
+            <button class="btn btn-primary">默認按鈕</button>
+            <button class="btn btn-primary btn-lg">大型按鈕</button>
+        </div>
+    </div>
+
+    <div class="component-card">
+        <h3 class="card-subtitle">圖標按鈕</h3>
+        <div class="component-demo">
+            <button class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> 添加
+            </button>
+            <button class="btn btn-success">
+                <i class="bi bi-check"></i> 確認
+            </button>
+            <button class="btn btn-danger">
+                <i class="bi bi-trash"></i> 刪除
+            </button>
+            <button class="btn btn-icon btn-primary">
+                <i class="bi bi-search"></i>
+            </button>
+            <button class="btn btn-icon btn-outline">
+                <i class="bi bi-gear"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="component-card">
+        <h3 class="card-subtitle">按鈕組</h3>
+        <div class="component-demo">
+            <div class="btn-group">
+                <button class="btn btn-outline-primary">左</button>
+                <button class="btn btn-outline-primary">中</button>
+                <button class="btn btn-outline-primary">右</button>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ==================== 2. 卡片佈局 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-layout-three-columns"></i> 卡片佈局
+        </h2>
+        <p class="section-desc">統計卡片和數據展示</p>
+    </div>
+
+    <!-- 統計卡片網格 -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon bg-primary">
+                <i class="bi bi-hdd-network"></i>
+            </div>
+            <div class="stat-content">
+                <div class="stat-value">128</div>
+                <div class="stat-label">在線設備</div>
+                <div class="stat-trend up">
+                    <i class="bi bi-arrow-up"></i> +12%
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon bg-success">
+                <i class="bi bi-check-circle"></i>
+            </div>
+            <div class="stat-content">
+                <div class="stat-value">95%</div>
+                <div class="stat-label">系統健康度</div>
+                <div class="stat-trend up">
+                    <i class="bi bi-arrow-up"></i> +3%
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon bg-warning">
+                <i class="bi bi-exclamation-triangle"></i>
+            </div>
+            <div class="stat-content">
+                <div class="stat-value">3</div>
+                <div class="stat-label">待處理警告</div>
+                <div class="stat-trend down">
+                    <i class="bi bi-arrow-down"></i> -5
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon bg-info">
+                <i class="bi bi-clock-history"></i>
+            </div>
+            <div class="stat-content">
+                <div class="stat-value">12</div>
+                <div class="stat-label">運行中任務</div>
+                <div class="stat-trend neutral">
+                    <i class="bi bi-dash"></i> 0
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 內容卡片 -->
+    <div class="card-grid">
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">
+                    <i class="bi bi-graph-up"></i> 性能趨勢
+                </h3>
+                <button class="btn btn-sm btn-icon btn-text">
+                    <i class="bi bi-three-dots-vertical"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                <p>這裡可以放置圖表或其他內容</p>
+                <div class="chart-placeholder">
+                    <i class="bi bi-bar-chart-line"></i>
+                    <span>圖表區域</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">
+                    <i class="bi bi-bell"></i> 最新通知
+                </h3>
+                <button class="btn btn-sm btn-text">查看全部</button>
+            </div>
+            <div class="card-body">
+                <div class="notification-list">
+                    <div class="notification-item">
+                        <i class="bi bi-info-circle text-primary"></i>
+                        <div class="notification-content">
+                            <div class="notification-title">系統更新</div>
+                            <div class="notification-time">2分鐘前</div>
+                        </div>
+                    </div>
+                    <div class="notification-item">
+                        <i class="bi bi-check-circle text-success"></i>
+                        <div class="notification-content">
+                            <div class="notification-title">任務完成</div>
+                            <div class="notification-time">10分鐘前</div>
+                        </div>
+                    </div>
+                    <div class="notification-item">
+                        <i class="bi bi-exclamation-triangle text-warning"></i>
+                        <div class="notification-content">
+                            <div class="notification-title">警告提示</div>
+                            <div class="notification-time">1小時前</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ==================== 3. 終端機組件 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-terminal"></i> 終端機組件
+        </h2>
+        <p class="section-desc">命令行風格的日誌顯示</p>
+    </div>
+
+    <div class="terminal-mini" id="exampleTerminal">
+        <div class="terminal-line terminal-success">[SUCCESS] System initialized successfully</div>
+        <div class="terminal-line">[INFO] Loading configuration files...</div>
+        <div class="terminal-line">[INFO] Connecting to database...</div>
+        <div class="terminal-line terminal-success">[SUCCESS] Database connection established</div>
+        <div class="terminal-line">[INFO] Starting web server on port 9000...</div>
+        <div class="terminal-line terminal-warning">[WARNING] High memory usage detected (85%)</div>
+        <div class="terminal-line">[INFO] Monitoring 128 devices...</div>
+        <div class="terminal-line terminal-error">[ERROR] Failed to connect to device 192.168.1.50</div>
+        <div class="terminal-line">[INFO] Retrying connection...</div>
+        <div class="terminal-line terminal-success">[SUCCESS] Connection restored</div>
+    </div>
+
+    <div class="component-demo">
+        <button class="btn btn-primary" onclick="addTerminalLine('success', 'Operation completed successfully')">
+            <i class="bi bi-plus"></i> 添加成功日誌
+        </button>
+        <button class="btn btn-warning" onclick="addTerminalLine('warning', 'Warning: Resource usage high')">
+            <i class="bi bi-plus"></i> 添加警告日誌
+        </button>
+        <button class="btn btn-danger" onclick="addTerminalLine('error', 'Error: Connection failed')">
+            <i class="bi bi-plus"></i> 添加錯誤日誌
+        </button>
+        <button class="btn btn-outline" onclick="clearTerminal()">
+            <i class="bi bi-x-circle"></i> 清空終端
+        </button>
+    </div>
+</section>
+
+<!-- ==================== 4. 表格組件 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-table"></i> 數據表格
+        </h2>
+        <p class="section-desc">交互式數據表格展示</p>
+    </div>
+
+    <div class="table-container">
+        <div class="table-header">
+            <h3 class="table-title">設備狀態列表</h3>
+            <div class="table-actions">
+                <button class="btn btn-sm btn-outline-custom">
+                    <i class="bi bi-funnel"></i> 篩選
+                </button>
+                <button class="btn btn-sm btn-outline-custom">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
+                <button class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-circle"></i> 添加
+                </button>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th class="sortable">設備ID <i class="bi bi-chevron-expand"></i></th>
+                    <th class="sortable">IP地址</th>
+                    <th class="sortable">CPU負載</th>
+                    <th class="sortable">內存使用</th>
+                    <th>狀態</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>SRV-001</strong></td>
+                    <td>192.168.1.10</td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar success" style="width: 25%"></div>
+                        </div>
+                        <small>25%</small>
+                    </td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar success" style="width: 60%"></div>
+                        </div>
+                        <small>60%</small>
+                    </td>
+                    <td>
+                        <span class="status-badge success">
+                            <i class="bi bi-check-circle"></i> 正常
+                        </span>
+                    </td>
+                    <td class="table-actions-cell">
+                        <button class="table-icon-btn" title="查看">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="table-icon-btn" title="編輯">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="table-icon-btn danger" title="刪除">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                <tr>
+                    <td><strong>SRV-002</strong></td>
+                    <td>192.168.1.11</td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar warning" style="width: 88%"></div>
+                        </div>
+                        <small>88%</small>
+                    </td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar warning" style="width: 75%"></div>
+                        </div>
+                        <small>75%</small>
+                    </td>
+                    <td>
+                        <span class="status-badge warning">
+                            <i class="bi bi-exclamation-triangle"></i> 高負載
+                        </span>
+                    </td>
+                    <td class="table-actions-cell">
+                        <button class="table-icon-btn" title="查看">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="table-icon-btn" title="編輯">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="table-icon-btn danger" title="刪除">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                <tr>
+                    <td><strong>SRV-003</strong></td>
+                    <td>192.168.1.12</td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar danger" style="width: 95%"></div>
+                        </div>
+                        <small>95%</small>
+                    </td>
+                    <td>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar danger" style="width: 92%"></div>
+                        </div>
+                        <small>92%</small>
+                    </td>
+                    <td>
+                        <span class="status-badge danger">
+                            <i class="bi bi-x-circle"></i> 故障
+                        </span>
+                    </td>
+                    <td class="table-actions-cell">
+                        <button class="table-icon-btn" title="查看">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="table-icon-btn" title="編輯">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="table-icon-btn danger" title="刪除">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                <tr>
+                    <td><strong>SRV-004</strong></td>
+                    <td>192.168.1.13</td>
+                    <td>
+                        <div class="spinner"></div>
+                        <small>檢測中...</small>
+                    </td>
+                    <td>
+                        <div class="spinner"></div>
+                        <small>檢測中...</small>
+                    </td>
+                    <td>
+                        <span class="status-badge info">
+                            <i class="bi bi-arrow-clockwise"></i> 連接中
+                        </span>
+                    </td>
+                    <td class="table-actions-cell">
+                        <button class="table-icon-btn" title="查看">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="table-icon-btn" title="編輯">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="table-icon-btn danger" title="刪除">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- ==================== 5. 表單組件 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-input-cursor"></i> 表單組件
+        </h2>
+        <p class="section-desc">各種表單輸入元素</p>
+    </div>
+
+    <div class="component-card">
+        <form class="form-example">
+            <div class="form-grid">
+                <!-- 文本輸入 -->
+                <div class="form-group">
+                    <label class="form-label" for="deviceName">
+                        設備名稱 <span class="required">*</span>
+                    </label>
+                    <input type="text" id="deviceName" class="form-input" placeholder="請輸入設備名稱">
+                </div>
+
+                <!-- 選擇框 -->
+                <div class="form-group">
+                    <label class="form-label" for="deviceType">設備類型</label>
+                    <select id="deviceType" class="form-select">
+                        <option value="">請選擇</option>
+                        <option value="router">路由器</option>
+                        <option value="switch">交換機</option>
+                        <option value="server">服務器</option>
+                    </select>
+                </div>
+
+                <!-- IP地址 -->
+                <div class="form-group">
+                    <label class="form-label" for="ipAddress">IP地址</label>
+                    <input type="text" id="ipAddress" class="form-input" placeholder="192.168.1.1">
+                </div>
+
+                <!-- 端口 -->
+                <div class="form-group">
+                    <label class="form-label" for="port">端口</label>
+                    <input type="number" id="port" class="form-input" value="22">
+                </div>
+            </div>
+
+            <!-- 文本域 -->
+            <div class="form-group">
+                <label class="form-label" for="description">描述</label>
+                <textarea id="description" class="form-textarea" rows="3" placeholder="請輸入描述信息"></textarea>
+            </div>
+
+            <!-- 複選框 -->
+            <div class="form-group">
+                <div class="form-checkbox">
+                    <input type="checkbox" id="enableMonitoring" checked>
+                    <label for="enableMonitoring">啟用監控</label>
+                </div>
+                <div class="form-checkbox">
+                    <input type="checkbox" id="enableAlert">
+                    <label for="enableAlert">啟用告警</label>
+                </div>
+            </div>
+
+            <!-- 單選框 -->
+            <div class="form-group">
+                <label class="form-label">優先級</label>
+                <div class="form-radio-group">
+                    <div class="form-radio">
+                        <input type="radio" id="priorityHigh" name="priority" value="high">
+                        <label for="priorityHigh">高</label>
+                    </div>
+                    <div class="form-radio">
+                        <input type="radio" id="priorityMedium" name="priority" value="medium" checked>
+                        <label for="priorityMedium">中</label>
+                    </div>
+                    <div class="form-radio">
+                        <input type="radio" id="priorityLow" name="priority" value="low">
+                        <label for="priorityLow">低</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 按鈕組 -->
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check"></i> 提交
+                </button>
+                <button type="reset" class="btn btn-outline">
+                    <i class="bi bi-x"></i> 重置
+                </button>
+                <button type="button" class="btn btn-text">
+                    取消
+                </button>
+            </div>
+        </form>
+    </div>
+</section>
+
+<!-- ==================== 6. 標籤頁組件 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-file-earmark-text"></i> 標籤頁
+        </h2>
+        <p class="section-desc">內容分組展示</p>
+    </div>
+
+    <div class="tabs-container">
+        <div class="tabs-header">
+            <button class="tab-btn active" data-tab="tab1">
+                <i class="bi bi-speedometer2"></i> 概覽
+            </button>
+            <button class="tab-btn" data-tab="tab2">
+                <i class="bi bi-gear"></i> 設置
+            </button>
+            <button class="tab-btn" data-tab="tab3">
+                <i class="bi bi-clock-history"></i> 歷史記錄
+            </button>
+        </div>
+        
+        <div class="tabs-content">
+            <div class="tab-pane active" id="tab1">
+                <h3>概覽內容</h3>
+                <p>這裡顯示系統概覽信息。您可以添加統計數據、圖表等內容。</p>
+            </div>
+            <div class="tab-pane" id="tab2">
+                <h3>設置內容</h3>
+                <p>這裡顯示系統設置選項。您可以添加表單、配置項等內容。</p>
+            </div>
+            <div class="tab-pane" id="tab3">
+                <h3>歷史記錄</h3>
+                <p>這裡顯示操作歷史記錄。您可以添加時間線、日誌列表等內容。</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ==================== 7. 徽章和標籤 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-tag"></i> 徽章和標籤
+        </h2>
+        <p class="section-desc">狀態指示器</p>
+    </div>
+
+    <div class="component-card">
+        <h3 class="card-subtitle">狀態徽章</h3>
+        <div class="component-demo">
+            <span class="status-badge success">
+                <i class="bi bi-check-circle"></i> 成功
+            </span>
+            <span class="status-badge warning">
+                <i class="bi bi-exclamation-triangle"></i> 警告
+            </span>
+            <span class="status-badge danger">
+                <i class="bi bi-x-circle"></i> 錯誤
+            </span>
+            <span class="status-badge info">
+                <i class="bi bi-info-circle"></i> 信息
+            </span>
+        </div>
+    </div>
+
+    <div class="component-card">
+        <h3 class="card-subtitle">計數徽章</h3>
+        <div class="component-demo">
+            <span class="badge badge-primary">5</span>
+            <span class="badge badge-success">12</span>
+            <span class="badge badge-warning">3</span>
+            <span class="badge badge-danger">99+</span>
+        </div>
+    </div>
+</section>
+
+<!-- ==================== 8. 提示信息 ==================== -->
+<section class="component-section">
+    <div class="section-header">
+        <h2 class="section-title">
+            <i class="bi bi-info-square"></i> 提示信息
+        </h2>
+        <p class="section-desc">不同類型的提示框</p>
+    </div>
+
+    <div class="alert-demo">
+        <div class="alert alert-success">
+            <i class="bi bi-check-circle"></i>
+            <span>操作成功完成!</span>
+        </div>
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i>
+            <span>這是一條信息提示。</span>
+        </div>
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            <span>請注意:系統將在5分鐘後進行維護。</span>
+        </div>
+        <div class="alert alert-error">
+            <i class="bi bi-x-circle"></i>
+            <span>發生錯誤:無法連接到服務器。</span>
+        </div>
+    </div>
+</section>
+
+{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ==================== 組件示例樣式 ==================== */
+
+/* 章節樣式 */
+.component-section {
+    margin-bottom: var(--spacing-2xl);
+}
+
+.section-header {
+    margin-bottom: var(--spacing-xl);
+}
+
+.section-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    font-size: var(--font-size-2xl);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 var(--spacing-sm) 0;
+}
+
+.section-title i {
+    color: var(--color-primary);
+}
+
+.section-desc {
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* 組件卡片 */
+.component-card {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-xl);
+    margin-bottom: var(--spacing-lg);
+}
+
+.card-subtitle {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 var(--spacing-lg) 0;
+}
+
+.component-demo {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    align-items: center;
+}
+
+/* 統計卡片網格 */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+.stat-card {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-xl);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    transition: all var(--transition-fast);
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+.stat-icon {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    font-size: 1.75rem;
+    color: white;
+    flex-shrink: 0;
+}
+
+.stat-icon.bg-primary { background-color: var(--color-primary); }
+.stat-icon.bg-success { background-color: var(--color-success); }
+.stat-icon.bg-warning { background-color: var(--color-warning); }
+.stat-icon.bg-info { background-color: var(--color-info); }
+
+.stat-content {
+    flex: 1;
+}
+
+.stat-value {
+    font-size: var(--font-size-3xl);
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1;
+}
+
+.stat-label {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-top: var(--spacing-xs);
+}
+
+.stat-trend {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    margin-top: var(--spacing-sm);
+}
+
+.stat-trend.up { color: var(--color-success); }
+.stat-trend.down { color: var(--color-danger); }
+.stat-trend.neutral { color: var(--text-tertiary); }
+
+/* 內容卡片網格 */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: var(--spacing-lg);
+    margin-top: var(--spacing-xl);
+}
+
+.content-card {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.card-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.card-body {
+    padding: var(--spacing-lg);
+}
+
+.chart-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    margin-top: var(--spacing-md);
+}
+
+.chart-placeholder i {
+    font-size: 3rem;
+    margin-bottom: var(--spacing-sm);
+}
+
+/* 通知列表 */
+.notification-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.notification-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition-fast);
+}
+
+.notification-item:hover {
+    background-color: var(--bg-hover);
+}
+
+.notification-item i {
+    font-size: 1.25rem;
+    margin-top: 2px;
+}
+
+.notification-content {
+    flex: 1;
+}
+
+.notification-title {
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.notification-time {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+/* 表單樣式 */
+.form-example {
+    max-width: 800px;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.form-label {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.form-label .required {
+    color: var(--color-danger);
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.1);
+}
+
+.form-textarea {
+    resize: vertical;
+    font-family: inherit;
+}
+
+.form-checkbox,
+.form-radio {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.form-checkbox input[type="checkbox"],
+.form-radio input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.form-checkbox label,
+.form-radio label {
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.form-radio-group {
+    display: flex;
+    gap: var(--spacing-lg);
+}
+
+.form-actions {
+    display: flex;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-xl);
+}
+
+/* 標籤頁 */
+.tabs-container {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.tabs-header {
+    display: flex;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-md);
+    background-color: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tab-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--text-secondary);
+    background-color: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.tab-btn:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.tab-btn.active {
+    background-color: var(--bg-primary);
+    color: var(--color-primary);
+}
+
+.tabs-content {
+    padding: var(--spacing-xl);
+}
+
+.tab-pane {
+    display: none;
+}
+
+.tab-pane.active {
+    display: block;
+}
+
+.tab-pane h3 {
+    color: var(--text-primary);
+    margin: 0 0 var(--spacing-md) 0;
+}
+
+.tab-pane p {
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* 計數徽章 */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 8px;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    border-radius: var(--radius-full);
+}
+
+.badge-primary {
+    background-color: var(--color-primary);
+    color: white;
+}
+
+.badge-success {
+    background-color: var(--color-success);
+    color: white;
+}
+
+.badge-warning {
+    background-color: var(--color-warning);
+    color: white;
+}
+
+.badge-danger {
+    background-color: var(--color-danger);
+    color: white;
+}
+
+/* 提示框演示 */
+.alert-demo {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+/* 工具類 */
+.text-primary { color: var(--color-primary) !important; }
+.text-success { color: var(--color-success) !important; }
+.text-warning { color: var(--color-warning) !important; }
+.text-danger { color: var(--color-danger) !important; }
+
+/* 響應式 */
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .tabs-header {
+        flex-wrap: wrap;
+    }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ==================== 終端機功能 ====================
+function addTerminalLine(type, message) {
+    const terminal = document.getElementById('exampleTerminal');
+    const line = document.createElement('div');
+    line.className = `terminal-line terminal-${type}`;
+    const timestamp = new Date().toLocaleTimeString();
+    const typeLabel = type.toUpperCase();
+    line.textContent = `[${typeLabel}] ${message} - ${timestamp}`;
+    terminal.appendChild(line);
+    terminal.scrollTop = terminal.scrollHeight;
+}
+
+function clearTerminal() {
+    const terminal = document.getElementById('exampleTerminal');
+    terminal.innerHTML = '<div class="terminal-line terminal-success">[INFO] Terminal cleared</div>';
+}
+
+// ==================== 標籤頁切換 ====================
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        // 移除所有活動狀態
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        
+        // 添加活動狀態
+        btn.classList.add('active');
+        const tabId = btn.getAttribute('data-tab');
+        document.getElementById(tabId).classList.add('active');
+    });
+});
+
+// ==================== 表格排序 ====================
+document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+        const wasAsc = th.classList.contains('asc');
+        document.querySelectorAll('th.sortable').forEach(t => {
+            t.classList.remove('asc', 'desc');
+        });
+        
+        if (wasAsc) {
+            th.classList.add('desc');
+        } else {
+            th.classList.add('asc');
+        }
+        
+        app.showNotification('排序功能已觸發', 'info');
+    });
+});
+
+// ==================== 表單驗證示例 ====================
+document.querySelector('.form-example')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    
+    const deviceName = document.getElementById('deviceName').value;
+    if (!deviceName.trim()) {
+        app.showNotification('請輸入設備名稱', 'warning');
+        return;
+    }
+    
+    app.showNotification('表單提交成功!', 'success');
+    console.log('Form submitted');
+});
+
+// ==================== 頁面加載完成 ====================
+console.log('✅ Examples page loaded');
+</script>
+{% endblock %}

@@ -1,33 +1,43 @@
 # app.py
-# 裝配層：載入 schema、建立 dispatcher、載入 /action 註冊 cmd handlers
-# 經常改動的註冊行為會在 /action 內，不讓 /lib 變亂
-
-from lib.proto import StreamParser
 from lib.schema_loader import SchemaStore
 from lib.dispatch import Dispatcher
+from lib.proto import StreamParser
 from lib.file_rx import FileRx
-
 from action.registry import register_all
 
-
 class App:
-    def __init__(self, schema_dir="/schema"):
+    def __init__(self, apa_driver=None):
+        # 1. 核心組件
         self.store = SchemaStore()
-        self.store.load_dir(schema_dir)
+        self.store.load_dir("/schema")
         self.disp = Dispatcher(self.store)
-        self.parser = StreamParser(max_len=4096, accept_addr=None)
         self.file_rx = FileRx()
         
+        # 2. 掛載硬件驅動 (供 Action 調用)
+        self.apa = apa_driver 
+        
+        # 3. 註冊行為
         register_all(self)
-    
-    def on_rx_bytes(self, data: bytes, ctx=None):
-        """任意總線餵入 bytes"""
-        if ctx is None:
-            ctx = {}
+
+    def create_parser(self):
+        return StreamParser()
+
+    def handle_stream(self, parser, data, transport_name="Bus", send_func=None, **kwargs):
+        """
+        處理數據流，並確保解析出當前 buffer 內所有的封包
+        """
+        parser.feed(data)
         
-        # 🔥 關鍵修改: 傳入 app 到 ctx
-        ctx["app"] = self
+        ctx = {
+            "app": self,
+            "transport": transport_name,
+            "send": send_func
+        }
+        ctx.update(kwargs)
         
-        self.parser.feed(data)
-        for ver, addr, cmd, payload in self.parser.pop():
+        # 🛠️ 關鍵：這是一個生成器，必須用 for 跑完
+        packet_found = False
+        for ver, addr, cmd, payload in parser.pop():
+            packet_found = True
             self.disp.dispatch(cmd, payload, ctx)
+        return packet_found

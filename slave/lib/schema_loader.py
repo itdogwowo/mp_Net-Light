@@ -1,45 +1,28 @@
-# /lib/schema_loader.py
-import ujson as json
+import json
 import os
 
-def cmd_str_to_int(s: str) -> int:
-    s = s.strip().lower()
-    return int(s, 16) if s.startswith("0x") else int(s)
-
 class SchemaStore:
-    """
-    載入 /schema 目錄下多個 JSON，建立 cmd_int -> cmd_def 的 map
-    """
-    def __init__(self):
-        self.cmd_map = {}       # cmd_int -> cmd_def
-        self.loaded = set()
+    def __init__(self, dir_path="/schema"):
+        self.cmd_map = {}
+        if dir_path:
+            self.load_dir(dir_path)
 
-    def load_dir(self, dir_path="/schema"):
+    def load_dir(self, dir_path):
+        """掃描並載入所有 JSON Schema"""
         for name in os.listdir(dir_path):
             if name.endswith(".json"):
-                self.load_file(dir_path + "/" + name)
+                self.load_file(f"{dir_path}/{name}")
 
-    def load_file(self, path: str):
-        if path in self.loaded:
-            return
-        with open(path, "r") as f:
-            s = f.read()
-        if not s.strip():
-            # 空檔直接略過
-            self.loaded.add(path)
-            return
-
+    def load_file(self, path):
         try:
-            obj = json.loads(s)
+            with open(path, "r") as f:
+                data = json.load(f)
+                for c in data.get("cmds", []):
+                    # 支援 "0x1101" 或 4353 格式
+                    cmd_id = int(c["cmd"], 16) if "0x" in str(c["cmd"]) else int(c["cmd"])
+                    self.cmd_map[cmd_id] = c
         except Exception as e:
-            print("[SCHEMA JSON ERROR]", path, "=>", e)
-            print("HEAD:", s[:120])
-            raise
+            print(f"❌ [Schema] Failed to load {path}: {e}")
 
-        for c in obj.get("cmds", []):
-            self.cmd_map[cmd_str_to_int(c["cmd"])] = c
-
-        self.loaded.add(path)
-
-    def get(self, cmd_int: int):
-        return self.cmd_map.get(cmd_int)
+    def get(self, cmd_id: int):
+        return self.cmd_map.get(cmd_id)

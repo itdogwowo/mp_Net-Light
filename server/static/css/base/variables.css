@@ -1,0 +1,139 @@
+/**
+ * CSS 主題變量系統
+ * 深色模式為默認,淺色模式為可選
+ */
+
+/* ==================== 深色主題 (默認) ==================== */
+:root,
+[data-theme="dark"] {
+    /* === 主色調 === */
+    --color-primary: #38bdf8;
+    --color-primary-dark: #0284c7;
+    --color-primary-light: #7dd3fc;
+    --color-primary-rgb: 56, 189, 248;
+    
+    /* === 語義化顏色 === */
+    --color-success: #10b981;
+    --color-warning: #f59e0b;
+    --color-danger: #ef4444;
+    --color-info: #06b6d4;
+    
+    /* === 背景色 === */
+    --bg-primary: #0f172a;      /* 主背景 */
+    --bg-secondary: #1e293b;    /* 卡片背景 */
+    --bg-tertiary: #334155;     /* 懸停/次級元素 */
+    --bg-hover: #475569;        /* 懸停狀態 */
+    
+    /* === 文字顏色 === */
+    --text-primary: #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-tertiary: #94a3b8;
+    --text-muted: #64748b;
+    
+    /* === 邊框顏色 === */
+    --border-color: #334155;
+    --border-color-light: #475569;
+    
+    /* === 陰影 === */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+    
+    /* === 終端機顏色 === */
+    --terminal-bg: #000000;
+    --terminal-text: #10b981;
+    --terminal-border: #334155;
+}
+
+/* ==================== 淺色主題 ==================== */
+[data-theme="light"] {
+    /* === 主色調 === */
+    --color-primary: #0284c7;
+    --color-primary-dark: #0369a1;
+    --color-primary-light: #38bdf8;
+    --color-primary-rgb: 2, 132, 199;
+    
+    /* === 語義化顏色 === */
+    --color-success: #059669;
+    --color-warning: #d97706;
+    --color-danger: #dc2626;
+    --color-info: #0891b2;
+    
+    /* === 背景色 === */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8fafc;
+    --bg-tertiary: #f1f5f9;
+    --bg-hover: #e2e8f0;
+    
+    /* === 文字顏色 === */
+    --text-primary: #0f172a;
+    --text-secondary: #334155;
+    --text-tertiary: #64748b;
+    --text-muted: #94a3b8;
+    
+    /* === 邊框顏色 === */
+    --border-color: #e2e8f0;
+    --border-color-light: #cbd5e1;
+    
+    /* === 陰影 === */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    
+    /* === 終端機顏色 === */
+    --terminal-bg: #1e293b;
+    --terminal-text: #10b981;
+    --terminal-border: #cbd5e1;
+}
+
+/* ==================== 佈局變量 (通用) ==================== */
+:root {
+    /* === 尺寸 === */
+    --topbar-height: 60px;
+    --sidebar-width: 280px;
+    --sidebar-width-collapsed: 70px;
+    --footer-height: 60px;
+    
+    /* === 間距 === */
+    --spacing-xs: 0.25rem;    /* 4px */
+    --spacing-sm: 0.5rem;     /* 8px */
+    --spacing-md: 1rem;       /* 16px */
+    --spacing-lg: 1.5rem;     /* 24px */
+    --spacing-xl: 2rem;       /* 32px */
+    --spacing-2xl: 3rem;      /* 48px */
+    
+    /* === 圓角 === */
+    --radius-sm: 0.25rem;     /* 4px */
+    --radius-md: 0.5rem;      /* 8px */
+    --radius-lg: 0.75rem;     /* 12px */
+    --radius-xl: 1rem;        /* 16px */
+    --radius-full: 9999px;
+    
+    /* === 字體 === */
+    --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+    --font-mono: 'Courier New', Consolas, Monaco, 'Cascadia Code', monospace;
+    
+    --font-size-xs: 0.75rem;   /* 12px */
+    --font-size-sm: 0.875rem;  /* 14px */
+    --font-size-base: 1rem;    /* 16px */
+    --font-size-lg: 1.125rem;  /* 18px */
+    --font-size-xl: 1.25rem;   /* 20px */
+    --font-size-2xl: 1.5rem;   /* 24px */
+    --font-size-3xl: 1.875rem; /* 30px */
+    
+    /* === 過渡動畫 === */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+    
+    /* === Z-index 層級 === */
+    --z-dropdown: 1000;
+    --z-sticky: 1020;
+    --z-topbar: 1030;
+    --z-sidebar: 1025;
+    --z-modal-backdrop: 1040;
+    --z-modal: 1050;
+    --z-tooltip: 1070;
+}

@@ -1,0 +1,170 @@
+<!-- file: templates/components/sidebar.html -->
+<aside class="sidebar" id="sidebar">
+    <!-- 側邊欄頭部 -->
+    <div class="sidebar-header">
+        <i class="bi bi-cpu-fill"></i>
+        <span class="sidebar-title">導航菜單</span>
+    </div>
+    
+    <!-- 導航菜單 -->
+    <nav class="sidebar-nav">
+        <ul class="nav-list">
+            {% block sidebar_menu %}
+            <!-- 儀表板 -->
+            <li class="nav-item">
+                <a href="/dashboard" class="nav-link {% if request.path == '/dashboard' %}active{% endif %}">
+                    <i class="bi bi-speedometer2"></i>
+                    <span class="nav-text">儀表板</span>
+                </a>
+            </li>
+
+            <!-- 設備管理 (可摺疊) -->
+            <li class="nav-item has-submenu">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-hdd-network"></i>
+                    <span class="nav-text">設備管理</span>
+                    <i class="bi bi-chevron-down nav-arrow"></i>
+                </a>
+                <ul class="submenu">
+                    <li>
+                        <a href="/devices/list" class="submenu-link {% if request.path == '/devices/list' %}active{% endif %}">
+                            <i class="bi bi-list-ul"></i>
+                            <span>設備列表</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/devices/add" class="submenu-link {% if request.path == '/devices/add' %}active{% endif %}">
+                            <i class="bi bi-plus-circle"></i>
+                            <span>添加設備</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/devices/monitor" class="submenu-link {% if request.path == '/devices/monitor' %}active{% endif %}">
+                            <i class="bi bi-display"></i>
+                            <span>監控中心</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/devices/groups" class="submenu-link {% if request.path == '/devices/groups' %}active{% endif %}">
+                            <i class="bi bi-collection"></i>
+                            <span>設備分組</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
+            <!-- 任務中心 -->
+            <li class="nav-item">
+                <a href="/tasks" class="nav-link {% if request.path == '/tasks' %}active{% endif %}">
+                    <i class="bi bi-clock-history"></i>
+                    <span class="nav-text">任務中心</span>
+                    <span class="badge badge-info">5</span>
+                </a>
+            </li>
+
+            <!-- 日誌管理 (可摺疊) -->
+            <li class="nav-item has-submenu">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-file-text"></i>
+                    <span class="nav-text">系統日誌</span>
+                    <i class="bi bi-chevron-down nav-arrow"></i>
+                </a>
+                <ul class="submenu">
+                    <li>
+                        <a href="/logs/system" class="submenu-link {% if request.path == '/logs/system' %}active{% endif %}">
+                            <i class="bi bi-terminal"></i>
+                            <span>系統日誌</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/logs/error" class="submenu-link {% if request.path == '/logs/error' %}active{% endif %}">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <span>錯誤日誌</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/logs/access" class="submenu-link {% if request.path == '/logs/access' %}active{% endif %}">
+                            <i class="bi bi-key"></i>
+                            <span>訪問日誌</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/logs/audit" class="submenu-link {% if request.path == '/logs/audit' %}active{% endif %}">
+                            <i class="bi bi-shield-check"></i>
+                            <span>審計日誌</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
+            <!-- 報表分析 -->
+            <li class="nav-item has-submenu">
+                <a href="#" class="nav-link">
+                    <i class="bi bi-graph-up"></i>
+                    <span class="nav-text">報表分析</span>
+                    <i class="bi bi-chevron-down nav-arrow"></i>
+                </a>
+                <ul class="submenu">
+                    <li>
+                        <a href="/reports/performance" class="submenu-link">
+                            <i class="bi bi-speedometer"></i>
+                            <span>性能報表</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/reports/availability" class="submenu-link">
+                            <i class="bi bi-check-circle"></i>
+                            <span>可用性報表</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/reports/custom" class="submenu-link">
+                            <i class="bi bi-sliders"></i>
+                            <span>自定義報表</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
+            <!-- 分隔線 -->
+            <li class="nav-divider"></li>
+
+            <!-- 系統設置 -->
+            <li class="nav-item">
+                <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">
+                    <i class="bi bi-gear"></i>
+                    <span class="nav-text">系統設置</span>
+                </a>
+            </li>
+
+            <!-- 用戶管理 -->
+            <li class="nav-item">
+                <a href="/users" class="nav-link {% if request.path == '/users' %}active{% endif %}">
+                    <i class="bi bi-people"></i>
+                    <span class="nav-text">用戶管理</span>
+                </a>
+            </li>
+            {% endblock %}
+        </ul>
+    </nav>
+
+    <!-- 側邊欄底部 -->
+    <div class="sidebar-footer">
+        <div class="system-info">
+            <i class="bi bi-info-circle"></i>
+            <div class="info-text">
+                <small>版本: v1.0.0</small>
+                <small>在線: <span id="onlineUsers">12</span> 人</small>
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- 添加分隔線樣式 -->
+<style>
+.nav-divider {
+    height: 1px;
+    margin: var(--spacing-md) var(--spacing-lg);
+    background-color: var(--border-color);
+}
+</style>

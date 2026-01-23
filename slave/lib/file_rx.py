@@ -1,120 +1,136 @@
-# /lib/file_rx.py
-import binascii
+import hashlib
+import ubinascii
+import os
 
-def sha256_digest_stream_from_file(path: str, bufsize=2048) -> bytes:
-    import hashlib
+def sha256_digest_stream_from_file(path, bufsize=2048):
+    """
+    串流計算文件 SHA256，避免將大文件一次性載入記憶體導致 OOM。
+    使用 memoryview 優化字節切片效能。
+    """
     h = hashlib.sha256()
     buf = bytearray(bufsize)
-    with open(path, "rb") as f:
+    with open(str(path), "rb") as f:
         while True:
-            try:
-                n = f.readinto(buf)
-                if not n:
-                    break
-                h.update(buf[:n])
-            except AttributeError:
-                data = f.read(bufsize)
-                if not data:
-                    break
-                h.update(data)
+            n = f.readinto(buf)
+            if n == 0:
+                break
+            # 使用 memoryview 避免產生臨時 bytes 對象
+            h.update(memoryview(buf)[:n])
     return h.digest()
 
-def sha_hex(digest32: bytes) -> str:
-    return binascii.hexlify(digest32).decode()
-
 class FileRx:
+    """
+    高性能文件接收組件 - 支援分片寫入與 SHA256 流式校驗
+    """
     def __init__(self):
         self.reset()
+        self.last_sha_hex = "" # 儲存最後一次成功或失敗的哈希計算結果
 
     def reset(self):
+        """重置接收狀態"""
         self.active = False
         self.file_id = 0
         self.total = 0
-        self.chunk_size = 0
-        self.sha_expect = None
         self.path = None
         self.fp = None
         self.written = 0
+        self.sha_expect = None
         self.last_error = None
 
     def _close(self):
+        """安全關閉文件句柄，並強制刷入磁盤"""
         if self.fp:
-            try: self.fp.close()
-            except Exception: pass
+            try:
+                self.fp.flush()
+                # 某些 MicroPython 端口支援 os.sync()
+                if hasattr(os, 'sync'):
+                    os.sync()
+                self.fp.close()
+            except:
+                pass
         self.fp = None
 
-    def _prealloc_fast(self, path: str, total: int):
-        try:
-            with open(path, "wb") as f:
-                if total > 0:
-                    f.seek(total - 1)
-                    f.write(b"\x00")
-            return True
-        except Exception:
-            return False
-
     def begin(self, args: dict) -> bool:
-        self.last_error = None
+        """
+        FILE_BEGIN (0x2001) 處理邏輯
+        """
         self._close()
         self.reset()
-
-        self.active = True
-        self.file_id = int(args["file_id"])
-        self.total = int(args["total_size"])
-        self.chunk_size = int(args["chunk_size"])
-        self.sha_expect = args["sha256"]
-        self.path = args["path"]
-        self.written = 0
-
-        if not self._prealloc_fast(self.path, self.total):
-            # fallback fill zeros
-            zero = b"\x00" * 512
-            with open(self.path, "wb") as f:
-                left = self.total
-                while left > 0:
-                    n = 512 if left >= 512 else left
-                    f.write(zero[:n])
-                    left -= n
+        
+        self.file_id = int(args.get("file_id", 0))
+        self.total = int(args.get("total_size", 0))
+        self.path = args.get("path")
+        self.sha_expect = args.get("sha256")
+        
+        if not self.path or not self.sha_expect:
+            self.last_error = "MISSING_PATH_OR_SHA"
+            return False
 
         try:
-            self.fp = open(self.path, "r+b")
+            # 以 'wb' 模式開啟會自動清空舊文件
+            # 對於 ESP32-P4，直接順序寫入比頻繁 seek 預分配更快
+            self.fp = open(self.path, "wb")
+            self.active = True
             return True
         except Exception as e:
-            self.last_error = "OPEN_FAIL:%s" % e
-            self.active = False
+            self.last_error = f"OPEN_FAIL: {e}"
             return False
 
     def chunk(self, args: dict) -> bool:
-        if not self.active or self.fp is None:
-            self.last_error = "NO_ACTIVE"
+        """
+        FILE_CHUNK (0x2002) 處理邏輯
+        支持斷點續傳地址定位，但推薦順序發送以獲得最高效能。
+        """
+        if not self.active or not self.fp:
+            self.last_error = "NO_ACTIVE_SESSION"
             return False
-        if int(args["file_id"]) != self.file_id:
-            self.last_error = "FILE_ID_MISMATCH"
+        
+        # 檢查 file_id 是否匹配當前任務
+        if int(args.get("file_id", 0)) != self.file_id:
             return False
 
-        off = int(args["offset"])
-        data = args["data"] or b""
-        if off + len(data) > self.total:
-            self.last_error = "OUT_OF_RANGE"
-            return False
+        off = int(args.get("offset", 0))
+        data = args.get("data", b"")
+        
         try:
-            self.fp.seek(off)
+            # 只有當 offset 不在當前磁頭位置時才執行 seek
+            if off != self.written:
+                self.fp.seek(off)
+            
             self.fp.write(data)
-            self.written += len(data)
+            self.written = off + len(data)
             return True
         except Exception as e:
-            self.last_error = "WRITE_FAIL:%s" % e
+            self.last_error = f"WRITE_FAIL: {e}"
+            self.active = False # 發生物理錯誤時解除激活
             return False
 
     def end(self, args: dict) -> bool:
-        if int(args["file_id"]) != self.file_id:
-            self.last_error = "FILE_ID_MISMATCH"
+        """
+        FILE_END (0x2003) 處理邏輯
+        執行最終的哈希驗證並關閉任務。
+        """
+        if not self.active:
             return False
+            
+        # 1. 先關閉文件，確保所有數據已從緩存刷入 Flash
         self._close()
-
-        got = sha256_digest_stream_from_file(self.path, bufsize=2048)
-        ok = (got == self.sha_expect)
-        if not ok:
-            self.last_error = "SHA_MISMATCH exp=%s got=%s" % (sha_hex(self.sha_expect), sha_hex(got))
-        self.active = False
-        return ok
+        
+        try:
+            # 2. 計算實際寫入文件的哈希值
+            got_digest = sha256_digest_stream_from_file(self.path)
+            self.last_sha_hex = ubinascii.hexlify(got_digest).decode()
+            
+            # 3. 雙向對應
+            if got_digest == self.sha_expect:
+                self.active = False
+                return True
+            else:
+                exp_hex = ubinascii.hexlify(self.sha_expect).decode()
+                self.last_error = f"SHA_MISMATCH got {self.last_sha_hex}"
+                self.active = False
+                return False
+        except Exception as e:
+            self.last_error = f"VERIFY_ERR: {e}"
+            self.active = False
+            return False

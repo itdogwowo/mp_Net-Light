@@ -1,0 +1,22 @@
+<!-- file: templates/components/footer.html -->
+<footer class="footer">
+    <div class="footer-container">
+        <div class="footer-left">
+            <span>&copy; <span id="currentYear"></span> IT</span>
+            <span class="separator">|</span>
+            <a href="/about">關於我們</a>
+            <span class="separator">|</span>
+            <a href="/privacy">隱私政策</a>
+            <span class="separator">|</span>
+            <a href="/terms">服務條款</a>
+        </div>
+        <div class="footer-right">
+            <span>內部支持熱線: <strong>----</strong></span>
+        </div>
+    </div>
+</footer>
+
+<script>
+// 自動更新年份
+document.getElementById('currentYear').textContent = new Date().getFullYear();
+</script>

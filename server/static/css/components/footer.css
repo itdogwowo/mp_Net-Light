@@ -1,0 +1,67 @@
+/**
+ * Footer 頁尾
+ * 確保頁尾貼底
+ */
+
+.footer {
+    margin-top: auto;
+    padding: var(--spacing-xl) 0;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
+}
+
+.footer-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+}
+
+.footer-left {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--text-tertiary);
+}
+
+.footer-left a {
+    color: var(--text-tertiary);
+    transition: color var(--transition-fast);
+}
+
+.footer-left a:hover {
+    color: var(--color-primary);
+}
+
+.footer-left .separator {
+    color: var(--text-muted);
+}
+
+.footer-right {
+    font-size: var(--font-size-sm);
+    color: var(--text-tertiary);
+}
+
+.footer-right strong {
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+/* === 響應式 === */
+@media (max-width: 768px) {
+    .footer-container {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .footer-left {
+        flex-direction: column;
+        gap: var(--spacing-sm);
+    }
+    
+    .footer-left .separator {
+        display: none;
+    }
+}

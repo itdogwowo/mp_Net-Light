@@ -1,0 +1,31 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WS Test</title>
+</head>
+<body>
+    <h1>MicroPython Style WebSocket Test</h1>
+    <input id="msgInput" type="text" placeholder="輸入訊息...">
+    <button onclick="sendMsg()">發送</button>
+    <div id="log"></div>
+
+    <script>
+        // 初始化 WebSocket，對應 routing.py 中的路徑
+        const ws = new WebSocket('ws://' + window.location.host + '/ws/test/');
+
+        ws.onmessage = function(e) {
+            const data = json_parse(e.data); // 模仿 Python 風格
+            document.getElementById('log').innerHTML += `<p>${data.response}</p>`;
+        };
+
+        function json_parse(str) { return JSON.parse(str); }
+
+        function sendMsg() {
+            const input = document.getElementById('msgInput');
+            ws.send(JSON.stringify({'message': input.value}));
+            input.value = '';
+        }
+    </script>
+</body>
+</html>

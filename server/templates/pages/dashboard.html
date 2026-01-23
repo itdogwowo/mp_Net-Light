@@ -1,0 +1,98 @@
+{% extends "layouts/base.html" %}
+{% load static %}
+
+{% block title %}儀表板{% endblock %}
+
+{% block breadcrumb_items %}
+<li class="breadcrumb-item active">儀表板</li>
+{% endblock %}
+
+{% block page_title %}系統概覽{% endblock %}
+{% block page_subtitle %}實時監控系統運行狀態{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-primary" onclick="app.showNotification('測試通知', 'success')">
+    <i class="bi bi-plus-circle"></i> 測試通知
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- 終端機 -->
+<div class="terminal-mini" id="terminal">
+    <div class="terminal-line terminal-success">[SYSTEM] Application started successfully</div>
+    <div class="terminal-line">[INFO] Loading dashboard components...</div>
+    <div class="terminal-line terminal-success">[SUCCESS] All systems operational</div>
+    <div class="terminal-line">[INFO] Monitoring 128 devices</div>
+</div>
+
+<!-- 統計卡片 -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: var(--spacing-lg); margin-bottom: var(--spacing-xl);">
+    <div style="background: var(--bg-secondary); padding: var(--spacing-xl); border-radius: var(--radius-lg); border: 1px solid var(--border-color);">
+        <div style="display: flex; align-items: center; gap: var(--spacing-md); margin-bottom: var(--spacing-md);">
+            <i class="bi bi-hdd-network" style="font-size: 2rem; color: var(--color-primary);"></i>
+            <div>
+                <div style="font-size: var(--font-size-2xl); font-weight: 700; color: var(--text-primary);">128</div>
+                <div style="font-size: var(--font-size-sm); color: var(--text-secondary);">在線設備</div>
+            </div>
+        </div>
+    </div>
+    
+    <div style="background: var(--bg-secondary); padding: var(--spacing-xl); border-radius: var(--radius-lg); border: 1px solid var(--border-color);">
+        <div style="display: flex; align-items: center; gap: var(--spacing-md); margin-bottom: var(--spacing-md);">
+            <i class="bi bi-check-circle" style="font-size: 2rem; color: var(--color-success);"></i>
+            <div>
+                <div style="font-size: var(--font-size-2xl); font-weight: 700; color: var(--text-primary);">95%</div>
+                <div style="font-size: var(--font-size-sm); color: var(--text-secondary);">系統健康度</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 數據表格 -->
+<div class="table-container">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-lg);">
+        <h6 style="margin: 0; color: var(--text-secondary);">設備狀態</h6>
+        <button class="btn-outline-custom">
+            <i class="bi bi-arrow-clockwise"></i> 刷新
+        </button>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>設備ID</th>
+                <th>IP地址</th>
+                <th>負載</th>
+                <th>狀態</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>SRV-01</td>
+                <td>192.168.1.10</td>
+                <td>12%</td>
+                <td><span style="color: var(--color-success)">正常</span></td>
+            </tr>
+            <tr>
+                <td>SRV-02</td>
+                <td>192.168.1.11</td>
+                <td>88%</td>
+                <td><span style="color: var(--color-warning)">高負載</span></td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// 模擬終端機輸出
+setInterval(() => {
+    const terminal = document.getElementById('terminal');
+    const line = document.createElement('div');
+    line.className = 'terminal-line';
+    line.textContent = `[${new Date().toLocaleTimeString()}] System check completed`;
+    terminal.appendChild(line);
+    terminal.scrollTop = terminal.scrollHeight;
+}, 10000);
+</script>
+{% endblock %}

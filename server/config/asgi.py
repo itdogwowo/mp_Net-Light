@@ -9,23 +9,19 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 
 # 🔥 只導入一次,使用別名
-from light_control.routing import websocket_urlpatterns as light_ws
-from slave_controller.routing import websocket_urlpatterns as slave_ws
+from api.routing import websocket_urlpatterns as api_ws
+from apps.routing import websocket_urlpatterns as apps_ws
+from core.routing import websocket_urlpatterns as core_ws
+from webUI.routing import websocket_urlpatterns as appTimer_ws
+from appTimer.routing import websocket_urlpatterns as webUI_ws
 
 # 🔥 合併路由
-all_websocket_patterns = light_ws + slave_ws
-
-# 🔥 啟動設備發現服務
-from slave_controller.device_discovery import discovery_service
-print("[ASGI] 正在啟動設備發現服務...")
-discovery_service.start()
-print("[ASGI] 設備發現服務已啟動")
+all_websocket_patterns = api_ws + apps_ws + core_ws + webUI_ws + appTimer_ws
 
 # 🔥 打印所有路由
 print("\n所有 WebSocket 路由:")
 for pattern in all_websocket_patterns:
     print(f"  - {pattern.pattern}")
-print()
 
 # 🔥 配置 ASGI application
 application = ProtocolTypeRouter({

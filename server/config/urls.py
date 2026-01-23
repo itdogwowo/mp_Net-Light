@@ -1,8 +1,7 @@
-"""
-URL configuration for config project.
+"""config URL Configuration
 
 The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.2/topics/http/urls/
+    https://docs.djangoproject.com/en/4.0/topics/http/urls/
 Examples:
 Function views
     1. Add an import:  from my_app import views
@@ -21,7 +20,9 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('api.urls')),
-    path('light/', include('light_control.urls')),
-    path('slave/', include('slave_controller.urls')),
+    path('', include('api.urls')),
+    path('', include('apps.urls')),
+    path('', include('core.urls')),
+    path('', include('webUI.urls')),
+    path('', include('appTimer.urls')),
 ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
