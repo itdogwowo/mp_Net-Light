@@ -10,12 +10,32 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.0/ref/settings/
 """
 
-import os
+import os, sys
 from pathlib import Path
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# BASE_DIR 現在指向 'server/' 資料夾
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 將 server 資料夾加入路徑，這樣 'from core.xxx import yyy' 才能運作
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+PROJECT_ROOT = BASE_DIR.parent
+
+SLAVE_DIR = PROJECT_ROOT / 'slave'
+if SLAVE_DIR.exists():
+    if str(SLAVE_DIR) not in sys.path:
+        sys.path.insert(0, str(SLAVE_DIR))
+    print(f"✓ Slave path added: {SLAVE_DIR}")
+else:
+    print(f"✗ Warning: Slave directory not found at {SLAVE_DIR}")
+
+PROTOCOL_CONFIG = {
+    'schema_dir': str(SLAVE_DIR / 'schema'),
+    'version': 3,
+    'sof': b'NL',
+    'max_packet_len': 65535,
+}
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/

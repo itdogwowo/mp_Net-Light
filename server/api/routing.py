@@ -1,11 +1,11 @@
-# light_control/routing.py - 確認路由配置
+# api/routing.py - 確認路由配置
 from django.urls import re_path
 from . import consumers
 
 websocket_urlpatterns = [
-    # 設備控制 WebSocket
-    re_path(r'ws/api/(?P<device_id>\w+)/$', consumers.APIConsumer.as_asgi()),
-    
+    # 使用 re_path 確保精確匹配，加上 $ 符號結尾
+    re_path(r'^ws/slave/(?P<slave_id>.+)$', consumers.APIConsumer.as_asgi()),
+    re_path(r"ws/api/?$", consumers.APIConsumer.as_asgi()),
 ]
 
 print("WebSocket 路由已加載:")

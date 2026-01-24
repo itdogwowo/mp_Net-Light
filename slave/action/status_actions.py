@@ -1,192 +1,61 @@
-# action/status_actions.py - STATUS 指令處理(修正版)
+# action/status_actions.py
 import json
-import os
 import gc
+import os
 import time
+import machine, ubinascii
+from lib.proto import Proto
+from lib.schema_codec import SchemaCodec
 
-# 全局系統狀態
-SYSTEM_STATUS = {}
-STATUS_FILE = "/system_status.json"
+# 引用其他模組的狀態
+from action import stream_actions
 
-def load_system_status():
-    """開機時載入 system_status.json"""
-    global SYSTEM_STATUS
-    
-    try:
-        with open(STATUS_FILE, 'r') as f:
-            SYSTEM_STATUS = json.load(f)
-        print("[Status] 已載入 system_status.json")
-        print("[Status] 配置:", SYSTEM_STATUS)
-    except OSError:
-        # 文件不存在,創建默認配置
-        SYSTEM_STATUS = {
-            "server_ip": "0.0.0.0",
-            "server_port": 8000,
-            "auto_connect": False,
-            "pixel_count": 400,
-            "last_update": 0
-        }
-        save_system_status()
-        print("[Status] 已創建默認 system_status.json")
-    except Exception as e:
-        print("[Status] 載入失敗: {}".format(e))
-        SYSTEM_STATUS = {}
-
-def save_system_status():
-    """保存 system_status 到 JSON 文件"""
-    try:
-        with open(STATUS_FILE, 'w') as f:
-            json.dump(SYSTEM_STATUS, f)
-        print("[Status] 已保存 system_status.json")
-        return True
-    except Exception as e:
-        print("[Status] 保存失敗: {}".format(e))
-        return False
-
-def get_runtime_status():
-    """獲取實時系統狀態"""
-    import network
-    
-    # 網絡信息
-    try:
-        lan = network.LAN()
-        if lan.isconnected():
-            ip, netmask, gateway, dns = lan.ifconfig()
-        else:
-            ip, netmask, gateway = "N/A", "N/A", "N/A"
-    except:
-        ip, netmask, gateway = "N/A", "N/A", "N/A"
-    
-    # 文件系統信息
-    stat = os.statvfs('/')
-    fs_total = (stat[0] * stat[2]) // 1024
-    fs_free = (stat[0] * stat[3]) // 1024
+def get_runtime_info():
+    """抓取整合性的實時運行數據"""
+    # 獲取文件系統空間
+    fs_stat = os.statvfs('/')
+    fs_free = (fs_stat[0] * fs_stat[3]) // 1024
+    uid = ubinascii.hexlify(machine.unique_id()).decode().upper()
     
     return {
-        "uptime_ms": time.ticks_ms(),
+        "id": uid,
         "mem_free": gc.mem_free(),
-        "mem_alloc": gc.mem_alloc(),
-        "fs_total_kb": fs_total,
+        "uptime_ms": time.ticks_ms(),
         "fs_free_kb": fs_free,
-        "network": {
-            "connected": True,
-            "ip": ip,
-            "netmask": netmask,
-            "gateway": gateway
-        }
+        # 🚀 整合 Stream 模組的實時數據
+        "fps": stream_actions._STREAM_STATE["fps"],
+        "frame_count": stream_actions.get_frame_count(),
+        "stream_mode": stream_actions.get_mode(),
+        "is_streaming": stream_actions.is_streaming()
     }
 
-# ==================== CMD Handlers ====================
-
 def on_status_get(ctx, args):
-    """處理 STATUS_GET 指令"""
+    """處理 PC 的 0x1101 指令"""
+    app = ctx.get("app")
     query_type = args.get("query_type", 0)
     
-    print("[Status] STATUS_GET, query_type={}".format(query_type))
+    print(f"🔍 [Status] Active query received (type: {query_type})")
     
-    result = {}
-    
-    if query_type == 0:
-        result = SYSTEM_STATUS.copy()
-    elif query_type == 1:
-        result = get_runtime_status()
-    elif query_type == 2:
-        result = {
-            "config": SYSTEM_STATUS.copy(),
-            "runtime": get_runtime_status()
-        }
-    
-    status_json = json.dumps(result)
-    
-    # 發送回應
-    from lib.schema_loader import cmd_str_to_int
-    from lib.schema_codec import encode_payload
-    from lib.proto import pack_packet
-    
-    CMD_STATUS_RSP = cmd_str_to_int("0x1102")
-    
-    app = ctx.get("app")
-    if not app:
-        print("[Status] 錯誤: ctx 沒有 app")
-        return
-    
-    cmd_def = app.store.get(CMD_STATUS_RSP)
-    payload = encode_payload(cmd_def, {"status_json": status_json})
-    packet = pack_packet(CMD_STATUS_RSP, payload)
-    
-    # 發送
-    send_func = ctx.get("send") or ctx.get("send_loopback")
-    if send_func:
-        send_func(packet)
-    
-    print("[Status] 已發送 STATUS_RSP ({} bytes)".format(len(status_json)))
-
-def on_status_update(ctx, args):
-    """處理 STATUS_UPDATE 指令"""
-    global SYSTEM_STATUS
-    
-    config_json = args.get("config_json", "{}")
-    
-    print("[Status] STATUS_UPDATE")
-    print("[Status] 新配置: {}".format(config_json[:100]))
-    
-    success = 0
-    message = ""
-    
-    try:
-        new_config = json.loads(config_json)
-        SYSTEM_STATUS.update(new_config)
-        SYSTEM_STATUS["last_update"] = time.time()
+    # 根據 query_type 返回不同層級的數據
+    if query_type == 1: # 僅實時數據 (Health Check)
+        res_data = get_runtime_info()
+    else: # 默認包含靜態配置 (需自行讀取 system_status.json)
+        res_data = {"runtime": get_runtime_info(), "ver": "1.0.0"}
         
-        if save_system_status():
-            success = 1
-            message = "Status updated successfully"
-            print("[Status] 更新成功")
-        else:
-            message = "Failed to save status file"
-            print("[Status] 保存失敗")
+    try:
+        status_json = json.dumps(res_data)
+        cmd_def = app.store.get(0x1102) # STATUS_RSP
+        payload = SchemaCodec.encode(cmd_def, {"status_json": status_json})
+        packet = Proto.pack(0x1102, payload)
+        
+        if "send" in ctx:
+            ctx["send"](packet)
+            print("📤 [Status] Detailed health data sent")
     except Exception as e:
-        message = str(e)
-        print("[Status] 更新失敗: {}".format(e))
-    
-    # 發送 ACK
-    from lib.schema_loader import cmd_str_to_int
-    from lib.schema_codec import encode_payload
-    from lib.proto import pack_packet
-    
-    CMD_STATUS_UPDATE_ACK = cmd_str_to_int("0x1104")
-    
-    app = ctx.get("app")
-    if not app:
-        print("[Status] 錯誤: ctx 沒有 app")
-        return
-    
-    cmd_def = app.store.get(CMD_STATUS_UPDATE_ACK)
-    payload = encode_payload(cmd_def, {
-        "success": success,
-        "message": message
-    })
-    packet = pack_packet(CMD_STATUS_UPDATE_ACK, payload)
-    
-    send_func = ctx.get("send") or ctx.get("send_loopback")
-    if send_func:
-        send_func(packet)
-    
-    print("[Status] 已發送 STATUS_UPDATE_ACK")
-
-# ==================== 註冊 ====================
+        print(f"❌ [Status] Error: {e}")
 
 def register(app):
-    """註冊 STATUS 指令"""
-    from lib.schema_loader import cmd_str_to_int
-    
-    CMD_STATUS_GET = cmd_str_to_int("0x1101")
-    CMD_STATUS_UPDATE = cmd_str_to_int("0x1103")
-    
-    app.disp.on(CMD_STATUS_GET, on_status_get)
-    app.disp.on(CMD_STATUS_UPDATE, on_status_update)
-    
-    print("[Status] STATUS 指令已註冊")
-    
-    # 開機時載入 system_status
-    load_system_status()
+    """註冊狀態與健康查詢指令"""
+    app.disp.on(0x1101, on_status_get)
+    # 你可以選擇在這裡也載入配置檔
+    print("✅ [Action] Status & Health actions integrated")

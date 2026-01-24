@@ -1,13 +1,8 @@
 import time
-
 import gc
-
 import network
-
 import machine
-
 from app import App
-
 import time, gc, network, machine
 from app import App
 from lib.net_bus import NetBus
@@ -180,31 +175,22 @@ def main():
             if diff_ticks(now, s["last_hbeat"]) > CONFIG["heartbeat_interval"]:
 
                 # 計算實際 FPS
-
                 elapsed_ms = diff_ticks(now, s["last_report_t"])
                 actual_fps = (s["frame_count"] * 1000) / elapsed_ms if elapsed_ms > 0 else 0
-
                 # 只有在這一刻才產生打印 IO
                 print(f"📊 FPS: {actual_fps:.2f} | RAM: {gc.mem_free()//1024}KB")
-                
                 s["last_hbeat"] = now
                 s["last_report_t"] = now
                 s["frame_count"] = 0
                 if check_mode() != "local": reset_frame_count()
                 gc.collect()
-
                 mem = gc.mem_free() // 1024
 
-                
-
+            
                 # 豪華日誌輸出面版
-
                 print("-" * 40)
-
                 print(f"📊 [Monitor] Actual FPS: {actual_fps:.2f} / {1000/CONFIG['local_fps_ms']:.0f}")
-
                 print(f"💓 [System] RAM: {mem}KB | Frames: {s['frame_count']}")
-
                 print("-" * 40)
 
                 
@@ -212,15 +198,10 @@ def main():
                 # 重置計數器進入下一個週期
 
                 s["last_hbeat"] = now
-
                 s["last_report_t"] = now
-
                 s["frame_count"] = 0 
-
                 if check_mode() != "local": # 同步重置 Direct 模式的計數器
-
                     from action.stream_actions import reset_frame_count
-
                     reset_frame_count()
 
             # 🚀 ESP32-P4 強大之處在於不需要長的 sleep，1ms 即可維持穩定
