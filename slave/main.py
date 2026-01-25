@@ -26,30 +26,32 @@ def setup_network():
     return False
 
 def launcher():
-    if not setup_network():
-        print("❌ Network Failed")
-        return
-
-    # 1. 核心硬件初始化 (APA102 @ 12MHz)
-    apa = APA102(num_leds=CONFIG["num_leds"], sck_pin=22, mosi_pin=23, baudrate=12_000_000)
+    # 1. 硬件初始化 (假設 num_leds 由此獲取)
+    NUM_LEDS = 2000
+    apa = APA102(num_leds=NUM_LEDS, sck_pin=22, mosi_pin=23)
     
-    # 2. 系統總線標識 (單例)
+    # 2. 總線與 ID
     bus.slave_id = ubinascii.hexlify(machine.unique_id()).decode().upper()
-    bus.shared["engine_run"] = True # 🚀 確保主開關開啟
+    bus.shared["engine_run"] = True
+    bus.shared["num_leds"] = NUM_LEDS # 🚀 顯式存儲供後續使用
 
-    # 3. 建立並註冊交換服務 (8000 Bytes)
-    hub = AtomicStreamHub(CONFIG["num_leds"] * 4) 
+    # 3. 🚀 註冊核心交換服務 (不修改 lib，在此處申請)
+    hub = AtomicStreamHub(NUM_LEDS * 4) 
     bus.register_service("pixel_stream", hub)
 
-    # 4. 裝配動作模組
-    app = App(apa_driver=apa)
+    
+    
+    
+    
 
     try:
-        # 🚀 啟動核心 1：專職渲染 (異步線程)
-        _thread.start_new_thread(Core1_engine.task_loop, (apa, CONFIG["local_fps"]))
+
+        # 4. 啟動雙核任務
+        _thread.start_new_thread(Core1_engine.task_loop, (apa, 40))
 
         print(f"✨ NetBus System Online: {bus.slave_id}")
-
+        
+        app = App()
         # 🚀 啟動核心 0：Data 路由處理 (主線程阻塞)
         Core0_worker.task_loop(app, CONFIG)
 

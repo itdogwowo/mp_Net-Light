@@ -6,16 +6,13 @@ from lib.file_rx import FileRx
 from action.registry import register_all
 
 class App:
-    def __init__(self, apa_driver=None):
+    def __init__(self):
         # 1. 核心組件
         self.store = SchemaStore()
         self.store.load_dir("/schema")
         self.disp = Dispatcher(self.store)
         self.file_rx = FileRx()
-        
-        # 2. 掛載硬件驅動 (供 Action 調用)
-        self.apa = apa_driver 
-        
+   
         # 3. 註冊行為
         register_all(self)
 
