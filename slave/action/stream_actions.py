@@ -4,45 +4,49 @@ from lib.proto import Proto
 from lib.schema_codec import SchemaCodec
 
 def on_stream_state_set(ctx, args):
-    """0x3009: 準備狀態 (不播放)"""
+    """0x3009: 準備分塊與文件模式"""
     bus.shared.update({
         "active_file": args["file_name"],
         "cur_block": args["block_id"],
-        "play_mode": args["play_mode"], # 0:Once, 1:Loop
-        "is_seeking": True,             # 觸發 Core 0 打開文件
+        "play_mode": args["play_mode"],
+        "is_seeking": True,
         "is_ready": False,
-        "is_streaming": False           # 確保 Core 1 靜止
+        "is_streaming": False # 先設為 False 以免 Ready 途中亂跳
     })
+    print(f"📡 [Stream] Set: {args['file_name']}")
 
 def handle_supply_chain(hub, s, ctx):
-    """由 Core0_worker 持續調用"""
+    """由 Core 0 定時調用，負責加載與 READY 回報"""
     if bus.shared.get("is_seeking"):
         try:
-            if s["f_local"]: s["f_local"].close()
+            if s.get("f_local"): s["f_local"].close()
             s["f_local"] = open(bus.shared["active_file"], "rb")
-            # 填寫第一幀預熱
+            
+            # 預填第一幀
             view = hub.get_write_view()
             if s["f_local"].readinto(view) > 0:
                 hub.commit()
+            
             bus.shared["is_seeking"] = False
             bus.shared["is_ready"] = True
             
-            # --- 🚀 自動向 PC 舉手回報 READY ---
+            # --- 主動回報 READY 給 PC ---
             cmd_def = ctx["app"].store.get(0x3008)
             payload = SchemaCodec.encode(cmd_def, {"block_id": bus.shared["cur_block"]})
             ctx["send"](Proto.pack(0x3008, payload))
-        except: bus.shared["is_seeking"] = False
+            print(f"✅ READY: {bus.shared['active_file']}")
+        except Exception as e:
+            print(f"❌ Load Error: {e}")
+            bus.shared["is_seeking"] = False
 
-    # 播放期間的預讀
+    # 播放規律預讀
     if bus.shared.get("is_streaming") and not bus.shared.get("is_paused"):
-        # 利用 lib 自帶的 dirty 機制，這裡簡單判斷
-        if not hub.dirty and s["f_local"]:
+        # 利用 Hub 自帶 dirty 位檢查供給
+        if not hub.dirty and s.get("f_local"):
             view = hub.get_write_view()
             if s["f_local"].readinto(view) == 0:
-                if bus.shared.get("play_mode") == 1: 
-                    s["f_local"].seek(0)
-                else: 
-                    bus.shared["is_streaming"] = False # Stop
+                if bus.shared.get("play_mode") == 1: s["f_local"].seek(0)
+                else: bus.shared["is_streaming"] = False
             else:
                 hub.commit()
 

@@ -4,6 +4,7 @@ import gc
 import os
 import time
 import machine, ubinascii
+from lib.sys_bus import bus
 from lib.proto import Proto
 from lib.schema_codec import SchemaCodec
 
@@ -30,27 +31,21 @@ def get_runtime_info():
     }
 
 def on_status_get(ctx, args):
-    """處理 PC 的 0x1101 指令"""
-    app = ctx.get("app")
-    query_type = args.get("query_type", 0)
+    """處理 0x1101：動態抓取 hub 註冊的所有 Provider 數據"""
+    app = ctx["app"]
     
-    print(f"🔍 [Status] Active query received (type: {query_type})")
+    # 從總線獲取所有 Action 自動註冊的數值 (fps, mem, count等)
+    metrics = bus.get_metrics()
     
-    # 根據 query_type 返回不同層級的數據
-    if query_type == 1: # 僅實時數據 (Health Check)
-        res_data = get_runtime_info()
-    else: # 默認包含靜態配置 (需自行讀取 system_status.json)
-        res_data = {"runtime": get_runtime_info(), "ver": "1.0.0"}
-        
+    # 額外補充即時內存訊息
+    metrics["mem_free"] = gc.mem_free()
+    
     try:
-        status_json = json.dumps(res_data)
-        cmd_def = app.store.get(0x1102) # STATUS_RSP
+        status_json = json.dumps(metrics)
+        cmd_def = app.store.get(0x1102)
         payload = SchemaCodec.encode(cmd_def, {"status_json": status_json})
-        packet = Proto.pack(0x1102, payload)
-        
         if "send" in ctx:
-            ctx["send"](packet)
-            print("📤 [Status] Detailed health data sent")
+            ctx["send"](Proto.pack(0x1102, payload))
     except Exception as e:
         print(f"❌ [Status] Error: {e}")
 

@@ -21,14 +21,16 @@ def setup_network():
     lan = network.LAN(mdc=31, mdio=52, phy_addr=1, phy_type=network.PHY_IP101, ref_clk=50)
     lan.active(True)
     for _ in range(20):
-        if lan.isconnected(): return True
+        if lan.isconnected():
+            print(lan.ipconfig("addr4"))
+            return True
         time.sleep(0.5)
     return False
 
 def launcher():
     # 1. 硬件初始化 (假設 num_leds 由此獲取)
     NUM_LEDS = 2000
-    apa = APA102(num_leds=NUM_LEDS, sck_pin=22, mosi_pin=23)
+    apa = APA102(num_leds=NUM_LEDS)
     
     # 2. 總線與 ID
     bus.slave_id = ubinascii.hexlify(machine.unique_id()).decode().upper()
@@ -69,4 +71,5 @@ def launcher():
         print("🏁 Clean Exit.")
 
 if __name__ == "__main__":
+    setup_network()
     launcher()
