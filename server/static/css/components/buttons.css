@@ -16,10 +16,32 @@
     border-radius: var(--radius-md);
     border: 1px solid transparent;
     cursor: pointer;
-    transition: all var(--transition-fast);
+    /* transition: all var(--transition-fast); */
     white-space: nowrap;
     user-select: none;
+
+    outline: none;
+    box-shadow: 0 0 0 0px rgba(var(--color-primary-rgb), 0);
+    transition: 
+        background-color var(--transition-fast),
+        border-color var(--transition-fast),
+        box-shadow 0.4s ease-out,
+        transform 0.1s active;
 }
+
+.btn:active {
+    transform: scale(0.98);
+    transition: 0s;
+}
+
+.btn:focus {
+    outline: none;
+}
+
+.btn:focus-visible {
+    box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.4);
+}
+
 
 .btn:disabled {
     opacity: 0.5;

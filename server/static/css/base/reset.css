@@ -2,7 +2,7 @@
  * 樣式重置與標準化
  */
 
-*, *::before, *::after {
+ *, *::before, *::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;

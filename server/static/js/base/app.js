@@ -6,11 +6,18 @@
 class App {
     constructor() {
         this.csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
-        this.sidebar = document.getElementById('sidebar');
-        this.sidebarToggle = document.getElementById('sidebarToggle');
+        // this.sidebar = document.getElementById('sidebar');
+        // this.sidebarToggle = document.getElementById('sidebarToggle');
         this.userMenuToggle = document.getElementById('userMenuToggle');
         this.userMenuDropdown = document.getElementById('userMenuDropdown');
-        
+        // 使用解構賦值獲取常用節點
+        this.nodes = {
+            body: document.body,
+            sidebar: document.getElementById('sidebar'),
+            sidebarToggle: document.getElementById('sidebarToggle'),
+        };
+        this.storageKey = 'sidebarCollapsed';
+
         this.init();
     }
 
@@ -25,43 +32,58 @@ class App {
 
     // ==================== 側邊欄功能 ====================
     initSidebar() {
-        // 切換側邊欄伸縮
-        this.sidebarToggle?.addEventListener('click', () => {
-            this.toggleSidebar();
-        });
-
-        // 恢復側邊欄狀態
-        const savedState = localStorage.getItem('sidebarCollapsed');
-        if (savedState === 'true') {
-            document.body.classList.add('sidebar-collapsed');
+        // 1. 恢復狀態 (從 EEPROM/LocalStorage 讀取)
+        const isCollapsed = localStorage.getItem(this.storageKey) === 'true';
+        if (isCollapsed && window.innerWidth > 1024) {
+            this.nodes.body.classList.add('sidebar-collapsed');
         }
 
-        // 初始化子菜單摺疊
-        this.initSubmenuToggle();
+        // 2. 監聽切換按鈕
+        this.nodes.sidebarToggle?.addEventListener('click', () => this.toggleSidebar());
+
+        // 3. 子菜單處理 (優化：增加對收縮狀態的檢查)
+        const hasSubmenuItems = document.querySelectorAll('.nav-item.has-submenu');
         
-        // 移動端點擊外部關閉側邊欄
-        if (window.innerWidth <= 1024) {
-            document.addEventListener('click', (e) => {
-                if (!this.sidebar?.contains(e.target) && 
-                    !this.sidebarToggle?.contains(e.target) &&
-                    document.body.classList.contains('sidebar-open')) {
-                    this.closeSidebar();
+        hasSubmenuItems.forEach(item => {
+            const link = item.querySelector('.nav-link');
+            link?.addEventListener('click', (e) => {
+                // 如果側邊欄處於收起狀態，不處理二級菜單摺疊，直接跳轉或失效
+                if (this.nodes.body.classList.contains('sidebar-collapsed')) {
+                    return; 
                 }
+
+                e.preventDefault();
+                const isOpen = item.classList.contains('open');
+                
+                // 關閉其他已打開的菜單 (保持 UI 整潔，類似單一中斷觸發)
+                hasSubmenuItems.forEach(el => el.classList.remove('open'));
+                
+                if (!isOpen) {
+                    item.classList.add('open');
+                }
+                
+                this.saveSubmenuState();
             });
-        }
+        });
     }
 
     toggleSidebar() {
         const isMobile = window.innerWidth <= 1024;
         
         if (isMobile) {
-            // 移動端：開關側邊欄
-            document.body.classList.toggle('sidebar-open');
+            this.nodes.body.classList.toggle('sidebar-open');
         } else {
-            // 桌面端:收起/展開
-            document.body.classList.toggle('sidebar-collapsed');
-            const isCollapsed = document.body.classList.contains('sidebar-collapsed');
-            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            // 切換時移除所有 open 類，避免展開時子菜單雜亂
+            if (!this.nodes.body.classList.contains('sidebar-collapsed')) {
+                document.querySelectorAll('.nav-item.has-submenu.open')
+                    .forEach(el => el.classList.remove('open'));
+            }
+            
+            this.nodes.body.classList.toggle('sidebar-collapsed');
+            
+            // 寫入緩存 (Persistence)
+            const currentState = this.nodes.body.classList.contains('sidebar-collapsed');
+            localStorage.setItem(this.storageKey, currentState);
         }
     }
 
@@ -179,36 +201,47 @@ class App {
 
     // ==================== 工具方法 ====================
     showNotification(message, type = 'info') {
-        let container = document.getElementById('messagesContainer');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'messagesContainer';
-            container.className = 'messages-container';
-            document.querySelector('.content-body')?.prepend(container);
-        }
-
+        // 1. 獲取或創建容器 (確保唯一性)
+        let container = document.getElementById('messagesContainer') || (() => {
+            const c = document.createElement('div');
+            c.id = 'messagesContainer';
+            c.className = 'messages-container';
+            document.querySelector('.content-body')?.prepend(c);
+            return c;
+        })();
+    
         const iconMap = {
             success: 'check-circle',
             error: 'x-circle',
             warning: 'exclamation-triangle',
             info: 'info-circle'
         };
-
+    
+        // 2. 建立通知節點
         const alert = document.createElement('div');
-        alert.className = `alert alert-${type}`;
+        alert.className = `alert alert-${type} fade show`; // 加入 fade show 類別以支援 CSS 過渡
         alert.innerHTML = `
             <i class="bi bi-${iconMap[type] || 'info-circle'}"></i>
             <span>${message}</span>
-            <button type="button" class="btn-close" onclick="this.parentElement.remove()">
+            <button type="button" class="btn-close" onclick="closeAlert(this.parentElement)">
                 <i class="bi bi-x"></i>
             </button>
         `;
+    
         container.appendChild(alert);
-
-        setTimeout(() => {
-            alert.style.opacity = '0';
-            setTimeout(() => alert.remove(), 300);
-        }, 5000);
+    
+        // 3. 自動銷毀邏輯 (TTL 控管)
+        // 使用 Promise 或簡潔的延遲執行
+        const delay = (ms) => new Promise(res => setTimeout(res, ms));
+    
+        (async () => {
+            await delay(5000);
+            if (alert.parentNode) {
+                alert.classList.remove('show'); // 觸發 CSS 漸隱
+                await delay(300);              // 等待動畫結束
+                alert.remove();                // 從內存釋放資產
+            }
+        })();
     }
 
     updateFooterYear() {

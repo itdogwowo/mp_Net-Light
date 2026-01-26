@@ -1,0 +1,53 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>權限不足</title>
+    {% include "partials/head-css.html" %}
+    <style>
+        .error-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .error-card {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 600px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        .error-icon {
+            font-size: 5rem;
+            color: #dc3545;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-card">
+            <i class="fas fa-lock error-icon"></i>
+            <h1>403 - 權限不足</h1>
+            <p class="text-muted">{{ message }}</p>
+            {% if required_groups %}
+            <div class="mt-4">
+                <h6>需要以下群組權限:</h6>
+                <ul class="list-unstyled">
+                    {% for group in required_groups %}
+                    <li><span class="badge badge-info">{{ group }}</span></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            <div class="mt-4">
+                <a href="/" class="btn btn-primary">返回首頁</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -3,7 +3,7 @@
  * 交互式表格樣式
  */
 
-.table-container {
+ .table-container {
     background-color: var(--bg-secondary);
     border-radius: var(--radius-lg);
     padding: var(--spacing-xl);

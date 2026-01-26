@@ -3,7 +3,7 @@
  * 包含伸縮和菜單摺疊功能
  */
 
-.sidebar {
+ .sidebar {
     position: fixed;
     left: 0;
     top: var(--topbar-height);
@@ -244,7 +244,10 @@ body.sidebar-collapsed .sidebar {
 body.sidebar-collapsed .sidebar-title,
 body.sidebar-collapsed .nav-text,
 body.sidebar-collapsed .nav-arrow,
-body.sidebar-collapsed .badge,
+body.sidebar-collapsed .badge {
+    display: none !important; /* 強制釋放空間，讓圖標真正居中 */
+}
+
 body.sidebar-collapsed .info-text {
     opacity: 0;
     pointer-events: none;
@@ -255,13 +258,30 @@ body.sidebar-collapsed .submenu {
 }
 
 body.sidebar-collapsed .nav-link {
+    justify-content: center !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    gap: 0 !important;
+}
+
+body.sidebar-collapsed .nav-link i:first-child {
+    /* 4. 強制圖標不彈性伸縮，並給予固定寬度 */
+    flex: 0 0 100%; 
+    margin: 0;
+    display: flex;
     justify-content: center;
-    padding: var(--spacing-md);
+    align-items: center;
 }
 
 body.sidebar-collapsed .submenu-link {
-    padding-left: var(--spacing-lg);
+    padding-left: 0;
+    justify-content: center;
 }
+
+body.sidebar-collapsed .submenu-link i {
+    margin: 0;
+}
+
 
 body.sidebar-collapsed .sidebar-header {
     justify-content: center;
