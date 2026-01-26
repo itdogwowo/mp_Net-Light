@@ -175,6 +175,52 @@ class PCTestTool:
         for i, sid in enumerate(ids): print(f"{i+1}. {sid} ({self.slaves[sid]['addr'][0]})")
         res = input("👉 Select (num or 'a'): ")
         return ids if res == 'a' else [ids[int(res)-1]]
+    
+    def upload_file_task(self):
+        targets = self.select_targets()
+        if not targets: return
+        
+        files = [f for f in os.listdir('.') if f.endswith(('.bin', '.py', '.json', '.pxld'))]
+        if not files: return
+        
+        for i, f in enumerate(files): print(f"{i+1}. {f} ({os.path.getsize(f)} bytes)")
+        try: 
+            local_name = files[int(input("📂 Choose file: "))-1]
+        except: return
+        
+        remote_path = input(f"💾 Remote Path [/{local_name}]: ") or f"/{local_name}"
+        
+        with open(local_name, "rb") as f:
+            data = f.read()
+        
+        sha = hashlib.sha256(data).digest()
+        f_id = 100
+        chunk_size = 1024
+        
+        print(f"\n🚀 Uploading to {targets}...")
+        self.send_to_targets(targets, 0x2001, {
+            "file_id": f_id, "total_size": len(data), 
+            "chunk_size": chunk_size, "sha256": sha, "path": remote_path
+        })
+        
+        for off in range(0, len(data), chunk_size):
+            chunk = data[off : off + chunk_size]
+            for tid in targets:
+                if tid not in self.slaves: continue
+                # 停等機制
+                retry = 0
+                while retry < 5:
+                    self.slaves[tid]["ack_event"].clear()
+                    self.send_to_targets([tid], 0x2002, {"file_id": f_id, "offset": off, "data": chunk})
+                    if self.slaves[tid]["ack_event"].wait(timeout=1.0):
+                        break
+                    retry += 1
+                    print(f"⚠️ [{tid}] Retry {retry}/5 for offset {off}")
+            
+            print(f"  ﹂ 📤 Progress: {min(off+chunk_size, len(data))}/{len(data)} bytes", end='\r')
+            
+        self.send_to_targets(targets, 0x2003, {"file_id": f_id})
+        print("\n✅ Upload Complete.")
 
     def run(self):
         threading.Thread(target=self.start_ws_server, daemon=True).start()
