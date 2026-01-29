@@ -1,53 +1,95 @@
-# Core1_engine.py
 """
 Core 1 渲染引擎
 ═══════════════════════════════════════════════════════
 職責:
-- 從 Hub 讀取幀數據
-- 驅動 APA102/WS2812
-- 維護本地幀計數器
-- 死守目標 FPS
+- 從 Flash/RAM 讀取幀數據
+- 驅動 LED
+- 死守 FPS
 """
 import time
 from lib.sys_bus import bus
 
+def _read_frame_from_flash(fd, frame_idx, num_leds):
+    """從 Flash 讀取幀"""
+    frame_size = num_leds * 4
+    offset = frame_idx * frame_size
+    
+    try:
+        fd.seek(offset)
+        data = fd.read(frame_size)
+        
+        if len(data) != frame_size:
+            return None
+        
+        return data
+    except Exception as e:
+        print(f"❌ [Core 1] Read Failed: {e}")
+        return None
+
 def task_loop(apa, fps=40):
-    """
-    Core 1 主循環
-    ───────────────────────────────────────────────────
-    """
-    # 等待 Hub 初始化
+    """Core 1 主循環"""
+    print("🎨 [Core 1] Waiting for Hub...")
+    
+    # 等待 Hub
     hub = None
     while hub is None:
         hub = bus.get_service("pixel_stream")
         time.sleep_ms(100)
     
-    # 獲取共享狀態
-    stream_state = bus.shared.get("stream_state", {})
-    playback = bus.shared.get("playback", {})
-    slot_meta = bus.shared.get("slot_meta", {})
+    # 等待配置
+    while not bus.shared.get("stream_config", {}).get("initialized"):
+        time.sleep_ms(100)
+    
+    config = bus.shared["stream_config"]
+    playback = bus.shared["playback"]
+    slot_meta = bus.shared["slot_meta"]
+    control = bus.shared["stream_control"]
     
     # 註冊 Provider
     render_state = {"count": 0}
-    bus.register_provider("render_fps", lambda: render_state["count"])
+    bus.register_provider("render_total_count", lambda: render_state["count"])
     
-    # 計算幀間隔
-    interval_us = (1000 // fps) * 1000
+    # FPS 控制
+    interval_us = (1000 // config["fps"]) * 1000
     next_tick_us = time.ticks_us()
     
-    # 幀配置
-    num_leds = bus.shared.get("num_leds", 2000)
+    # 配置
+    num_leds = config["num_leds"]
     bytes_per_frame = num_leds * 4
-    f_per_block = stream_state.get("f_per_block", 500)
+    f_per_block = config["f_per_block"]
     
-    print(f"🔥 [Core 1] Render Engine @ {fps} FPS")
+    current_slot = -1
+    current_fd = None
+    
+    print(f"🔥 [Core 1] Render Engine @ {config['fps']} FPS")
     
     while bus.shared.get("engine_run", True):
+        # ══════════════════════════════════════════════
+        # [中斷處理]
+        # ══════════════════════════════════════════════
+        if control.get("abort_now"):
+            if current_fd:
+                current_fd.close()
+                current_fd = None
+            
+            apa.raw_buffer[:] = bytearray(len(apa.raw_buffer))
+            apa.show()
+            
+            if current_slot >= 0:
+                from action.stream_actions import on_block_complete
+                on_block_complete(current_slot, interrupted=True)
+                hub.release()
+            
+            current_slot = -1
+            playback["local_frame"] = 0
+            control["abort_now"] = False
+            next_tick_us = time.ticks_us()
+            continue
         
         # ══════════════════════════════════════════════
-        # [停止模式] 黑屏
+        # [停止模式]
         # ══════════════════════════════════════════════
-        if not stream_state.get("is_streaming"):
+        if not playback.get("is_streaming"):
             apa.raw_buffer[:] = bytearray(len(apa.raw_buffer))
             apa.show()
             time.sleep_ms(100)
@@ -56,88 +98,105 @@ def task_loop(apa, fps=40):
             continue
         
         # ══════════════════════════════════════════════
-        # [暫停模式] 定格
+        # [暫停模式]
         # ══════════════════════════════════════════════
-        if stream_state.get("is_paused"):
+        if playback.get("is_paused"):
             time.sleep_ms(50)
             next_tick_us = time.ticks_us()
             continue
         
         # ══════════════════════════════════════════════
-        # [播放模式] 死守時鐘
+        # [播放模式]
         # ══════════════════════════════════════════════
         now = time.ticks_us()
         
         if time.ticks_diff(now, next_tick_us) >= 0:
-            # 獲取當前槽位
             slot_idx, view = hub.get_read_view()
             
-            if slot_idx is not None and view:
-                # 獲取槽位的業務數據
+            if slot_idx is not None:
                 meta = slot_meta.get(slot_idx, {})
-                local_frame = playback.get("local_frame", 0)
                 
-                # 🚀 檢查是否切換了槽位
-                if playback.get("active_slot") != slot_idx:
-                    # 新槽位開始
+                # 切換槽位
+                if current_slot != slot_idx:
+                    if current_fd:
+                        current_fd.close()
+                        current_fd = None
+                    
+                    # 開啟文件 (Flash 模式)
+                    if meta.get("type") == "flash":
+                        file_path = meta.get("file_path")
+                        try:
+                            current_fd = open(file_path, "rb")
+                            print(f"📂 [Core 1] Opened: {file_path}")
+                        except Exception as e:
+                            print(f"❌ [Core 1] Open Failed: {e}")
+                            from action.stream_actions import send_error, ERROR_FILE_NOT_FOUND
+                            send_error(ERROR_FILE_NOT_FOUND, meta.get("block_id", -1), slot_idx, str(e))
+                            hub.release()
+                            current_slot = -1
+                            continue
+                    
+                    current_slot = slot_idx
                     playback["active_slot"] = slot_idx
                     playback["active_block"] = meta.get("block_id", -1)
-                    playback["start_frame"] = meta.get("frame_offset", 0)
                     playback["local_frame"] = meta.get("frame_offset", 0)
+                    playback["start_frame"] = playback["local_frame"]
                     playback["block_start_time"] = time.ticks_ms()
                     playback["render_count"] = 0
                     
-                    local_frame = playback["local_frame"]
-                    
-                    print(f"🔄 [Core 1] Playing Slot {slot_idx} (Block {meta.get('block_id')}, Frame {meta.get('frame_offset')})")
+                    print(f"🔄 [Core 1] Playing Slot {slot_idx} (Block {meta.get('block_id')})")
                 
-                # 計算幀偏移
-                offset = local_frame * bytes_per_frame
-                
-                # 邊界檢查
-                if offset + bytes_per_frame <= len(view):
-                    # 讀取幀數據
-                    frame_view = view[offset : offset + bytes_per_frame]
-                    apa.raw_buffer[:] = frame_view
+                # 讀取幀數據
+                if meta["type"] == "flash":
+                    if not current_fd:
+                        continue
                     
-                    # 更新計數器
-                    render_state["count"] += 1
-                    playback["local_frame"] += 1
-                    playback["global_frame"] += 1
-                    playback["render_count"] += 1
+                    data = _read_frame_from_flash(
+                        current_fd,
+                        playback["local_frame"],
+                        num_leds
+                    )
+                else:  # RAM
+                    offset = playback["local_frame"] * bytes_per_frame
+                    if offset + bytes_per_frame <= len(view):
+                        data = view[offset : offset + bytes_per_frame]
+                    else:
+                        data = None
+                
+                if data:
+                    apa.raw_buffer[:] = data
                 else:
-                    # 超出邊界,顯示黑屏
                     apa.raw_buffer[:] = bytearray(len(apa.raw_buffer))
+                
+                apa.show()
+                
+                render_state["count"] += 1
+                playback["local_frame"] += 1
+                playback["global_frame"] += 1
+                playback["render_count"] += 1
+                
+                # 檢查 Block 完成
+                if playback["local_frame"] >= f_per_block:
+                    if current_fd:
+                        current_fd.close()
+                        current_fd = None
+                    
+                    from action.stream_actions import on_block_complete
+                    on_block_complete(current_slot, interrupted=False)
+                    
+                    hub.release()
+                    current_slot = -1
+                    playback["local_frame"] = 0
             else:
-                # 無數據,黑屏
                 apa.raw_buffer[:] = bytearray(len(apa.raw_buffer))
+                apa.show()
             
-            # 輸出到 LED
-            apa.show()
-            
-            # 更新時間戳
             next_tick_us += interval_us
             
-            # ══════════════════════════════════════════
-            # [檢查 Block 完成]
-            # ══════════════════════════════════════════
-            if playback.get("local_frame", 0) >= f_per_block:
-                # 播完一個 Block
-                current_slot = playback.get("active_slot")
-                
-                if current_slot is not None:
-                    # 回調 stream_actions
-                    from action.stream_actions import on_block_complete
-                    on_block_complete(current_slot)
-                    
-                    # 釋放槽位
-                    hub.release()
-                
-                # 重置計數器
-                playback["local_frame"] = 0
-                playback["start_frame"] = 0
-                playback["render_count"] = 0
-                playback["block_start_time"] = time.ticks_ms()
+            # 自動回報
+            from action.stream_actions import check_auto_report
+            check_auto_report()
         else:
-            # 還沒到時間
             time.sleep_ms(1)
+    
+    print("🛑 [Core 1] Stopped")

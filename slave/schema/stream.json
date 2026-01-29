@@ -3,37 +3,21 @@
   "cmds": [
     {
       "cmd": "0x3001",
-      "name": "STREAM_INFO",
+      "name": "STREAM_CONFIG",
       "payload": [
+        {"name": "num_leds", "type": "u16"},
+        {"name": "f_per_block", "type": "u32"},
         {"name": "total_blocks", "type": "u32"},
-        {"name": "frames_per_block", "type": "u32"},
-        {"name": "fps", "type": "u8"}
+        {"name": "fps", "type": "u8"},
+        {"name": "mode", "type": "u8"},
+        {"name": "data_path", "type": "str_u16len"},
+        {"name": "num_buffers", "type": "u8"},
+        {"name": "report_interval", "type": "u16"}
       ]
     },
     {
-      "cmd": "0x3009",
-      "name": "STREAM_STATE_SET",
-      "payload": [
-        {"name": "block_id", "type": "u32"},
-        {"name": "frame_offset", "type": "u32"},
-        {"name": "priority", "type": "u8"},
-        {"name": "target_slot", "type": "u8"}
-      ]
-    },
-    {
-      "cmd": "0x3008",
-      "name": "STREAM_READY_ACK",
-      "payload": [
-        {"name": "block_id", "type": "u32"},
-        {"name": "frame_offset", "type": "u32"},
-        {"name": "status", "type": "u8"},
-        {"name": "slot", "type": "u8"},
-        {"name": "replaced_block", "type": "i32"}
-      ]
-    },
-    {
-      "cmd": "0x300A",
-      "name": "STREAM_PLAY",
+      "cmd": "0x3002",
+      "name": "STREAM_STOP",
       "payload": []
     },
     {
@@ -44,17 +28,41 @@
       ]
     },
     {
-      "cmd": "0x3002",
-      "name": "STREAM_STOP",
+      "cmd": "0x3009",
+      "name": "STREAM_STATE_SET",
+      "payload": [
+        {"name": "block_id", "type": "u32"},
+        {"name": "frame_offset", "type": "u32"},
+        {"name": "priority", "type": "u8"},
+        {"name": "source", "type": "u8"}
+      ]
+    },
+    {
+      "cmd": "0x3008",
+      "name": "STREAM_READY_ACK",
+      "payload": [
+        {"name": "block_id", "type": "u32"},
+        {"name": "frame_offset", "type": "u32"},
+        {"name": "status", "type": "u8"},
+        {"name": "slot", "type": "u8"},
+        {"name": "replaced_block", "type": "i32"},
+        {"name": "slot_type", "type": "u8"}
+      ]
+    },
+    {
+      "cmd": "0x300A",
+      "name": "STREAM_PLAY",
       "payload": []
     },
     {
-      "cmd": "0x3004",
-      "name": "STREAM_SEEK",
-      "payload": [
-        {"name": "target_block", "type": "u32"},
-        {"name": "target_frame", "type": "u32"}
-      ]
+      "cmd": "0x3010",
+      "name": "STREAM_ABORT",
+      "payload": []
+    },
+    {
+      "cmd": "0x3011",
+      "name": "STREAM_FREEZE",
+      "payload": []
     },
     {
       "cmd": "0x3012",
@@ -69,6 +77,28 @@
         {"name": "next_frame", "type": "u32"},
         {"name": "freed_slot", "type": "u8"},
         {"name": "interrupted", "type": "u8"}
+      ]
+    },
+    {
+      "cmd": "0x3014",
+      "name": "STREAM_STATUS_GET",
+      "payload": []
+    },
+    {
+      "cmd": "0x3015",
+      "name": "STREAM_STATUS_RSP",
+      "payload": [
+        {"name": "status_json", "type": "str_u16len"}
+      ]
+    },
+    {
+      "cmd": "0x3016",
+      "name": "STREAM_ERROR",
+      "payload": [
+        {"name": "error_code", "type": "u8"},
+        {"name": "block_id", "type": "i32"},
+        {"name": "slot", "type": "u8"},
+        {"name": "message", "type": "str_u16len"}
       ]
     }
   ]
