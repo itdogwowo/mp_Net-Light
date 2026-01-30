@@ -100,6 +100,25 @@
         {"name": "slot", "type": "u8"},
         {"name": "message", "type": "str_u16len"}
       ]
+    },
+    {
+      "cmd": "0x3017",
+      "name": "STREAM_PUSH",
+      "payload": [
+        {"name": "block_id", "type": "u32"},
+        {"name": "part_index", "type": "u16"},
+        {"name": "data", "type": "bytes_rest"}
+      ]
+    },
+    {
+      "cmd": "0x3018",
+      "name": "STREAM_PUSH_ACK",
+      "payload": [
+        {"name": "block_id", "type": "u32"},
+        {"name": "part_index", "type": "u16"},
+        {"name": "status", "type": "u8"},
+        {"name": "crc32", "type": "u32"}
+      ]
     }
   ]
 }
