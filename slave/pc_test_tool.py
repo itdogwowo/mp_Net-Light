@@ -3,9 +3,10 @@ PC 端測試工具
 ═══════════════════════════════════════════════════════
 功能:
 1. 廣播發現設備
-2. 上傳 .bin 文件
-3. 發送 Stream 指令
-4. 監控狀態
+2. 上傳文件 (Flash 模式)
+3. 推送數據 (RAM 模式)
+4. 發送 Stream 指令
+5. 監控狀態
 """
 import socket
 import time
@@ -14,6 +15,7 @@ import os
 import hashlib
 import struct
 import json
+import zlib
 
 from lib.proto import Proto, StreamParser
 from lib.schema_loader import SchemaStore
@@ -29,6 +31,7 @@ class PCTestTool:
         self.local_ip = self.get_local_ip()
     
     def get_local_ip(self):
+        """獲取 PC 當前網絡 IP"""
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.connect(('8.8.8.8', 80))
@@ -38,9 +41,12 @@ class PCTestTool:
         finally:
             s.close()
     
-    # ==================== Server ====================
+    # ══════════════════════════════════════════════════
+    # WebSocket Server
+    # ══════════════════════════════════════════════════
     
     def start_ws_server(self):
+        """啟動 WebSocket 服務器"""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(('0.0.0.0', 8000))
@@ -53,8 +59,11 @@ class PCTestTool:
                 threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True).start()
             except:
                 break
+        
+        s.close()
     
     def handle_client(self, conn, addr):
+        """處理單個設備連接"""
         curr_id = f"PENDING_{addr[1]}"
         
         try:
@@ -72,7 +81,7 @@ class PCTestTool:
             )
             conn.send(resp.encode())
             
-            # 初始化槽位
+            # 初始化設備槽位
             self.slaves[curr_id] = {
                 "conn": conn,
                 "addr": addr,
@@ -94,7 +103,7 @@ class PCTestTool:
                     break
                 
                 if DEBUG_MODE:
-                    print(f"📥 [RECV] {len(raw)} bytes: {raw.hex(' ')}")
+                    print(f"📥 [RECV] {len(raw)} bytes")
                 
                 # 解 WebSocket 幀
                 if raw[0] == 0x82:
@@ -124,6 +133,7 @@ class PCTestTool:
             print(f"🔌 [Conn] {curr_id} left")
     
     def dispatch(self, cid, cmd, payload):
+        """指令分發器"""
         try:
             c_def = self.store.get(cmd)
             if not c_def:
@@ -133,7 +143,8 @@ class PCTestTool:
             
             real_id = None
             
-            if cmd == 0x1201:  # HEARTBEAT
+            # HEARTBEAT
+            if cmd == 0x1201:
                 real_id = args.get("slave_id")
                 if cid in self.slaves:
                     self.slaves[cid].update({
@@ -141,7 +152,8 @@ class PCTestTool:
                         "uptime": args.get("uptime_ms", 0)
                     })
             
-            elif cmd == 0x1102:  # STATUS_RSP
+            # STATUS_RSP
+            elif cmd == 0x1102:
                 try:
                     status_data = json.loads(args["status_json"])
                     real_id = status_data.get("id")
@@ -157,20 +169,26 @@ class PCTestTool:
                 except:
                     pass
             
-            elif cmd == 0x2004:  # FILE_ACK
+            # FILE_ACK
+            elif cmd == 0x2004:
                 if cid in self.slaves:
                     self.slaves[cid]["last_ack_off"] = args["offset"]
                     self.slaves[cid]["ack_event"].set()
             
-            elif cmd == 0x3008:  # STREAM_READY_ACK
+            # STREAM_READY_ACK
+            elif cmd == 0x3008:
                 status_map = ["NOT_READY", "READY", "QUEUE_FULL", "LOADING"]
                 status_str = status_map[args["status"]]
-                print(f"\n📤 [READY_ACK] Block {args['block_id']} → {status_str} (Slot {args['slot']})")
+                replaced_info = f", Replaced {args['replaced_block']}" if args['replaced_block'] >= 0 else ""
+                print(f"\n📤 [READY_ACK] Block {args['block_id']} → {status_str} (Slot {args['slot']}){replaced_info}")
             
-            elif cmd == 0x3012:  # BLOCK_COMPLETE
-                print(f"\n🏁 [BLOCK_COMPLETE] Block {args['block_id']}, FPS {args['actual_fps']/100:.2f}, Freed Slot {args['freed_slot']}")
+            # STREAM_BLOCK_COMPLETE
+            elif cmd == 0x3012:
+                fps = args['actual_fps'] / 100.0
+                print(f"\n🏁 [BLOCK_COMPLETE] Block {args['block_id']}, FPS {fps:.2f}, Freed Slot {args['freed_slot']}")
             
-            elif cmd == 0x3015:  # STATUS_RSP
+            # STREAM_STATUS_RSP
+            elif cmd == 0x3015:
                 try:
                     status_data = json.loads(args["status_json"])
                     print(f"\n📊 [Stream Status]:")
@@ -178,8 +196,25 @@ class PCTestTool:
                 except:
                     pass
             
-            elif cmd == 0x3016:  # ERROR
+            # STREAM_ERROR
+            elif cmd == 0x3016:
                 print(f"\n❌ [Stream Error] Code {args['error_code']}, Block {args['block_id']}: {args['message']}")
+            
+            # STREAM_PUSH_ACK
+            elif cmd == 0x3018:
+                block_id = args["block_id"]
+                part_index = args["part_index"]
+                status = args["status"]
+                crc32 = args["crc32"]
+                
+                if status == 0:  # OK
+                    print(f"✅ [PUSH_ACK] Block {block_id} Part {part_index} OK (CRC32: {crc32:08X})")
+                    
+                    if cid in self.slaves:
+                        self.slaves[cid]["ack_event"].set()
+                else:
+                    status_str = ["OK", "ERROR", "SIZE_MISMATCH", "CRC_FAIL"][status]
+                    print(f"❌ [PUSH_ACK] Block {block_id} Part {part_index} {status_str}")
             
             # ID 更名
             if real_id and real_id != cid:
@@ -198,9 +233,12 @@ class PCTestTool:
             print(f"⚠️ [Dispatch Error] {e}")
             return cid
     
-    # ==================== 發送 ====================
+    # ══════════════════════════════════════════════════
+    # 發送函數
+    # ══════════════════════════════════════════════════
     
     def send_to_targets(self, targets, cmd_id, args):
+        """封裝並發送指令"""
         c_def = self.store.get(cmd_id)
         if not c_def:
             return
@@ -220,7 +258,7 @@ class PCTestTool:
         
         full_pkt = ws_hdr + data_pkt
         
-        if DEBUG_MODE and cmd_id != 0x1202:
+        if DEBUG_MODE and cmd_id not in [0x1202, 0x3018]:  # 過濾頻繁指令
             print(f"📤 [SEND] CMD {hex(cmd_id)}")
         
         for tid in targets:
@@ -230,9 +268,12 @@ class PCTestTool:
                 except:
                     pass
     
-    # ==================== 選單 ====================
+    # ══════════════════════════════════════════════════
+    # 選單功能
+    # ══════════════════════════════════════════════════
     
     def select_targets(self):
+        """選擇目標設備"""
         ids = list(self.slaves.keys())
         if not ids:
             print("❌ No devices online")
@@ -252,6 +293,7 @@ class PCTestTool:
             return []
     
     def upload_file_task(self):
+        """上傳文件 (Flash 模式)"""
         targets = self.select_targets()
         if not targets:
             return
@@ -314,17 +356,19 @@ class PCTestTool:
             
             print(f"  📤 Progress: {min(off+chunk_size, len(data))}/{len(data)} bytes", end='\r')
         
+        print()
         self.send_to_targets(targets, 0x2003, {"file_id": f_id})
-        print("\n✅ Upload Complete")
+        print("✅ Upload Complete")
     
     def stream_config_task(self):
+        """配置 Stream"""
         targets = self.select_targets()
         if not targets:
             return
         
         print("\n🔧 Stream Configuration:")
         num_leds = int(input("LED 數量 [2000]: ") or 2000)
-        f_per_block = int(input("每 Block 幀數 [500]: ") or 500)
+        f_per_block = int(input("每 Block 幀數 [50]: ") or 50)
         total_blocks = int(input("總 Block 數 [100]: ") or 100)
         fps = int(input("FPS [40]: ") or 40)
         mode = int(input("模式 (0=Flash, 1=RAM, 2=混合) [2]: ") or 2)
@@ -346,6 +390,7 @@ class PCTestTool:
         print("✅ Config Sent")
     
     def stream_state_set_task(self):
+        """設置播放目標"""
         targets = self.select_targets()
         if not targets:
             return
@@ -365,6 +410,7 @@ class PCTestTool:
         print("✅ STATE_SET Sent")
     
     def stream_play_task(self):
+        """播放"""
         targets = self.select_targets()
         if not targets:
             return
@@ -372,7 +418,19 @@ class PCTestTool:
         self.send_to_targets(targets, 0x300A, {})
         print("▶️ PLAY Sent")
     
+    def stream_pause_task(self):
+        """暫停/恢復"""
+        targets = self.select_targets()
+        if not targets:
+            return
+        
+        pause = int(input("Pause (0=Resume, 1=Pause): ") or 0)
+        
+        self.send_to_targets(targets, 0x3005, {"pause": pause})
+        print(f"⏸️ {'PAUSE' if pause else 'RESUME'} Sent")
+    
     def stream_stop_task(self):
+        """停止"""
         targets = self.select_targets()
         if not targets:
             return
@@ -380,7 +438,17 @@ class PCTestTool:
         self.send_to_targets(targets, 0x3002, {})
         print("⏹️ STOP Sent")
     
+    def stream_abort_task(self):
+        """立即中斷"""
+        targets = self.select_targets()
+        if not targets:
+            return
+        
+        self.send_to_targets(targets, 0x3010, {})
+        print("🛑 ABORT Sent")
+    
     def stream_status_task(self):
+        """查詢狀態"""
         targets = self.select_targets()
         if not targets:
             return
@@ -388,21 +456,111 @@ class PCTestTool:
         self.send_to_targets(targets, 0x3014, {})
         print("📊 Status Query Sent")
     
-    # ==================== 主循環 ====================
+    def stream_push_task(self):
+        """
+        推送 Block 到 RAM 模式
+        """
+        targets = self.select_targets()
+        if not targets:
+            return
+        
+        files = [f for f in os.listdir('.') if f.endswith('.bin')]
+        if not files:
+            print("❌ No .bin files found")
+            return
+        
+        print("\nAvailable Files:")
+        for i, f in enumerate(files):
+            size = os.path.getsize(f)
+            print(f"{i+1}. {f} ({size} bytes, {size // 1024} KB)")
+        
+        try:
+            local_name = files[int(input("📂 Choose file: "))-1]
+        except:
+            return
+        
+        with open(local_name, "rb") as f:
+            data = f.read()
+        
+        block_id = int(input("Block ID: "))
+        num_leds = int(input("Num LEDs [100]: ") or 100)
+        f_per_part = int(input("Frames per part [50]: ") or 50)
+        
+        bytes_per_part = num_leds * f_per_part * 4
+        
+        if len(data) % bytes_per_part != 0:
+            print(f"⚠️ File size {len(data)} not divisible by {bytes_per_part}")
+            data = data[:len(data) - (len(data) % bytes_per_part)]
+        
+        total_parts = len(data) // bytes_per_part
+        
+        print(f"\n🚀 Pushing Block {block_id} to {targets}...")
+        print(f"   Total Size: {len(data)} bytes ({len(data) // 1024} KB)")
+        print(f"   Parts: {total_parts}")
+        print(f"   Part Size: {bytes_per_part} bytes ({bytes_per_part // 1024} KB)")
+        
+        crc32_expect = zlib.crc32(data) & 0xFFFFFFFF
+        print(f"   Expected CRC32: {crc32_expect:08X}")
+        
+        # 分片推送
+        for part_index in range(total_parts):
+            offset = part_index * bytes_per_part
+            part_data = data[offset : offset + bytes_per_part]
+            
+            print(f"\n📤 Pushing Part {part_index}/{total_parts-1}...")
+            
+            for tid in targets:
+                if tid not in self.slaves:
+                    continue
+                
+                retry = 0
+                while retry < 3:
+                    self.slaves[tid]["ack_event"].clear()
+                    
+                    self.send_to_targets([tid], 0x3017, {
+                        "block_id": block_id,
+                        "part_index": part_index,
+                        "data": part_data
+                    })
+                    
+                    if self.slaves[tid]["ack_event"].wait(timeout=2.0):
+                        break
+                    
+                    retry += 1
+                    print(f"⚠️ [{tid}] Retry {retry}/3 for part {part_index}")
+                
+                if retry >= 3:
+                    print(f"❌ [{tid}] Failed to push part {part_index}")
+                    return
+            
+            print(f"✅ Part {part_index} sent")
+        
+        print(f"\n✅ All parts pushed!")
+        print(f"📊 Please verify CRC32 matches: {crc32_expect:08X}")
+    
+    # ══════════════════════════════════════════════════
+    # 主循環
+    # ══════════════════════════════════════════════════
     
     def run(self):
+        """主入口"""
         threading.Thread(target=self.start_ws_server, daemon=True).start()
         
         while True:
-            print(f"\n--- 🚀 NetBus PC Console ({self.local_ip}) ---")
+            print(f"\n{'='*60}")
+            print(f"🚀 NetBus PC Console ({self.local_ip})")
+            print(f"{'='*60}")
             print("1. Broadcast Discovery")
             print("2. Dashboard")
-            print("3. Upload File")
+            print("3. Upload File (Flash)")
             print("4. Stream Config")
             print("5. Stream State Set")
             print("6. Stream Play")
-            print("7. Stream Stop")
-            print("8. Stream Status Query")
+            print("7. Stream Pause/Resume")
+            print("8. Stream Stop")
+            print("9. Stream Push (RAM)")
+            print("a. Stream Abort")
+            print("s. Stream Status Query")
             print("d. Toggle Debug")
             print("q. Exit")
             
@@ -420,12 +578,15 @@ class PCTestTool:
                 print("📡 Discovery Sent")
             
             elif c == '2':
-                print("-" * 80)
+                print("\n" + "=" * 80)
                 print(f"{'Slave ID':<20} | {'IP':<15} | {'FreeMem':<10} | {'Uptime':<10}")
+                print("=" * 80)
                 now = time.time()
                 for sid, info in self.slaves.items():
-                    print(f"{sid:<20} | {info['addr'][0]:<15} | {info['mem_free']:<10} | {info['uptime']//1000:<10}s")
-                print("-" * 80)
+                    uptime_s = info['uptime'] // 1000
+                    last_seen = int(now - info['last_seen'])
+                    print(f"{sid:<20} | {info['addr'][0]:<15} | {info['mem_free']:<10} | {uptime_s:<10}s (Last: {last_seen}s ago)")
+                print("=" * 80)
             
             elif c == '3':
                 self.upload_file_task()
@@ -440,9 +601,18 @@ class PCTestTool:
                 self.stream_play_task()
             
             elif c == '7':
-                self.stream_stop_task()
+                self.stream_pause_task()
             
             elif c == '8':
+                self.stream_stop_task()
+            
+            elif c == '9':
+                self.stream_push_task()
+            
+            elif c == 'a':
+                self.stream_abort_task()
+            
+            elif c == 's':
                 self.stream_status_task()
             
             elif c == 'd':
