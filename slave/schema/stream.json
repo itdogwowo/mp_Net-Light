@@ -45,7 +45,7 @@
         {"name": "frame_offset", "type": "u32"},
         {"name": "status", "type": "u8"},
         {"name": "slot", "type": "u8"},
-        {"name": "replaced_block", "type": "i32"},
+        {"name": "replaced_block", "type": "u32"},
         {"name": "slot_type", "type": "u8"}
       ]
     },
@@ -96,9 +96,28 @@
       "name": "STREAM_ERROR",
       "payload": [
         {"name": "error_code", "type": "u8"},
-        {"name": "block_id", "type": "i32"},
+        {"name": "block_id", "type": "u32"},
         {"name": "slot", "type": "u8"},
         {"name": "message", "type": "str_u16len"}
+      ]
+    },
+    {
+      "cmd": "0x3017",
+      "name": "STREAM_PUSH",
+      "payload": [
+        {"name": "block_id", "type": "u32"},
+        {"name": "part_index", "type": "u16"},
+        {"name": "data", "type": "bytes_rest"}
+      ]
+    },
+    {
+      "cmd": "0x3018",
+      "name": "STREAM_PUSH_ACK",
+      "payload": [
+        {"name": "block_id", "type": "u32"},
+        {"name": "part_index", "type": "u16"},
+        {"name": "status", "type": "u8"},
+        {"name": "crc32", "type": "u32"}
       ]
     }
   ]

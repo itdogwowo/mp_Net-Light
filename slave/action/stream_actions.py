@@ -41,6 +41,10 @@ ERROR_OOM = 4
 ERROR_INVALID_CONFIG = 5
 ERROR_SLOT_NOT_FOUND = 6
 
+# 🚀 特殊值定義
+NO_REPLACEMENT = 0xFFFFFFFF  # 用於 replaced_block
+NO_BLOCK       = 0xFFFFFFFF        # 用於表示無效 block_id
+
 # ══════════════════════════════════════════════════
 # 全局狀態
 # ══════════════════════════════════════════════════
@@ -144,6 +148,10 @@ def _send_ready_ack(ctx, block_id, frame_offset, status, slot, replaced_block, s
     
     type_code = 1 if slot_type == "flash" else 2
     
+    # 🚀 使用常量
+    if replaced_block is None or replaced_block < 0:
+        replaced_block = NO_REPLACEMENT
+    
     payload = SchemaCodec.encode(cmd_def, {
         "block_id": block_id,
         "frame_offset": frame_offset,
@@ -158,7 +166,7 @@ def _send_ready_ack(ctx, block_id, frame_offset, status, slot, replaced_block, s
         send_func(Proto.pack(0x3008, payload))
         
         status_str = ["NOT_READY", "READY", "QUEUE_FULL", "LOADING"][status]
-        replace_info = f" (Replaced {replaced_block})" if replaced_block >= 0 else ""
+        replace_info = f" (Replaced {replaced_block})" if replaced_block != NO_REPLACEMENT else ""
         print(f"📤 [Stream] READY_ACK: Block {block_id}.{frame_offset} → {status_str} (Slot {slot}, {slot_type}){replace_info}")
 
 def send_block_complete(block_id, start_frame, end_frame, play_time_ms, actual_fps, freed_slot, interrupted):
