@@ -15,6 +15,14 @@ def task_loop(apa, fps=40):
     
     interval_us = (1000 // fps) * 1000
     next_tick_us = time.ticks_us()
+
+    # --- 💎 性能優化：預先緩存常量與局部變量 💎 ---
+    frame_size = len(apa.raw_buffer) # 單幀所需的字節數
+    current_big_buffer = None        # 當前從 Hub 拿到的超大原始 Buff
+    buff_offset = 0                  # 當前讀取偏移量
+
+
+    raw_view = apa.raw_buffer
     
     print(f"🔥 [Core 1] Render Engine Online | {fps} FPS")
 
@@ -39,11 +47,17 @@ def task_loop(apa, fps=40):
         # 🚀 播放模式：死守時鐘
         now = time.ticks_us()
         if time.ticks_diff(now, next_tick_us) >= 0:
-            frame = hub.get_read_view()
-            if frame:
-                apa.raw_buffer[:] = frame # 同步緩衝
+            # 🚀 流式讀取邏輯：如果當前大 Buffer 用完了或還沒有，去 Hub 拿新的
+            if current_big_buffer is None or buff_offset + frame_size > len(current_big_buffer):
+                current_big_buffer = hub.get_read_view() # 這是核心同步點
+                buff_offset = 0 # 重置偏移量
+                
+            if current_big_buffer:
+                # 🐍 Pythonic 高速切片拷貝 (內核級別 memmove)
+                # 從大緩存中提取一幀到 apa 的顯存中
+                raw_view[:] = current_big_buffer[buff_offset : buff_offset + frame_size]
                 _state["render_count"] += 1
-            apa.show()
+                apa.show()
             next_tick_us += interval_us
         else:
-            time.sleep_ms(1)
+            time.sleep_us(500) 

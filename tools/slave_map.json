@@ -1,0 +1,10 @@
+{
+    "mp3_file": "/Users/tungkinlee/Documents/Git/Sourcetree/mp_Net-Light/tools/bgm.mp3",
+    "sync_delay_ms": 150,
+    "mapping": {
+        "30EDA0EA4EC8": {
+            "play_id": 0,
+            "last_sha": "a285a2f25dbeba34544d24f85e02a6168c3b133823cb873d4e93142a2d570b2b"
+        }
+    }
+}

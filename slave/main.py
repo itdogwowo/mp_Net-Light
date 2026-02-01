@@ -13,7 +13,9 @@ CONFIG = {
     "stream_port": 4050,
     "heartbeat_interval": 10000,
     "local_fps": 40,
-    "num_leds": 2000
+    "num_leds": 336,
+    "buffer_frames": 1,  # 幀緩衝區大小 (幀數)
+
 }
 
 def setup_network():
@@ -29,7 +31,7 @@ def setup_network():
 
 def launcher():
     # 1. 硬件初始化 (假設 num_leds 由此獲取)
-    NUM_LEDS = 2000
+    NUM_LEDS = CONFIG["num_leds"]
     apa = APA102(num_leds=NUM_LEDS)
     
     # 2. 總線與 ID
@@ -38,7 +40,7 @@ def launcher():
     bus.shared["num_leds"] = NUM_LEDS # 🚀 顯式存儲供後續使用
 
     # 3. 🚀 註冊核心交換服務 (不修改 lib，在此處申請)
-    hub = AtomicStreamHub(NUM_LEDS * 4) 
+    hub = AtomicStreamHub(NUM_LEDS * 4 * CONFIG["buffer_frames"]) 
     bus.register_service("pixel_stream", hub)
 
     
