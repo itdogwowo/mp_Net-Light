@@ -9,16 +9,24 @@ PC 端測試工具 (完整修正版)
 import socket
 import time
 import threading
-import os
+import os,sys
 import hashlib
 import struct
 import json
 import zlib
 import traceback
 
-from lib.proto import Proto, StreamParser
-from lib.schema_loader import SchemaStore
-from lib.schema_codec import SchemaCodec
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) if 'slave' in SCRIPT_DIR else SCRIPT_DIR
+
+os.chdir(SCRIPT_DIR)
+sys.path.insert(0, PROJECT_ROOT)
+
+
+# 引用 NL3 協議模型
+from slave.lib.proto import Proto, StreamParser
+from slave.lib.schema_loader import SchemaStore
+from slave.lib.schema_codec import SchemaCodec
 
 DEBUG_MODE = True
 

@@ -56,8 +56,9 @@ def task_loop(apa, fps=40):
                 # 🐍 Pythonic 高速切片拷貝 (內核級別 memmove)
                 # 從大緩存中提取一幀到 apa 的顯存中
                 raw_view[:] = current_big_buffer[buff_offset : buff_offset + frame_size]
-                _state["render_count"] += 1
                 apa.show()
+                _state["render_count"] += 1
+                buff_offset += frame_size
             next_tick_us += interval_us
         else:
             time.sleep_us(500) 

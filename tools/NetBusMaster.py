@@ -1,18 +1,25 @@
 import socket
 import time
 import threading
-import os
+import os,sys
 import hashlib
 import struct
 import json
 from pathlib import Path
 from pygame import mixer  # 用於播放同步音訊
 
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) if 'slave' in SCRIPT_DIR else SCRIPT_DIR
+
+os.chdir(SCRIPT_DIR)
+sys.path.insert(0, PROJECT_ROOT)
+
 # 核心協議庫
 try:
-    from lib.proto import Proto, StreamParser
-    from lib.schema_loader import SchemaStore
-    from lib.schema_codec import SchemaCodec
+    from slave.lib.proto import Proto, StreamParser
+    from slave.lib.schema_loader import SchemaStore
+    from slave.lib.schema_codec import SchemaCodec
     from PXLDv3Splitter import PXLDv3Decoder 
 except ImportError as e:
     print(f"❌ 導入錯誤: {e}")
