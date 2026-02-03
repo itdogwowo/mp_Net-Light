@@ -7,18 +7,23 @@ import struct
 import json
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) if 'slave' in SCRIPT_DIR else SCRIPT_DIR
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 os.chdir(SCRIPT_DIR)
-sys.path.insert(0, PROJECT_ROOT)
-
-
-
+print(PROJECT_ROOT)
 
 
 # 引用 NL3 協議模型
 from slave.lib.proto import Proto, StreamParser
 from slave.lib.schema_loader import SchemaStore
+from slave.lib.schema_codec import SchemaCodec
+
+DEBUG_MODE = True
+
+NO_REPLACEMENT = 0xFFFFFFFF  # 🚀 添加常量定義
 from slave.lib.schema_codec import SchemaCodec
 
 # ==================== 全局配置 ====================
@@ -27,7 +32,7 @@ DEBUG_MODE = True  # 開啟以監控二進制封包交換
 class PCTestTool:
     def __init__(self):
         # 1. 載入 Schema
-        self.store = SchemaStore(dir_path="./schema")
+        self.store = SchemaStore(dir_path=f"{PROJECT_ROOT}/slave/schema")
         self.slaves = {} # { slave_id: {data} }
         self.running = True
         self.local_ip = self.get_local_ip()
