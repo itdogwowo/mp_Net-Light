@@ -56,6 +56,30 @@ class NetBus:
         except Exception as e:
             print(f"❌ [{self.label}] Init Failed: {e}")
             return False
+        
+    def disconnect(self):
+        """全面清除現有的網路連接資源"""
+        if not self.sock:
+            self.connected = False
+            return
+            
+        try:
+            # 針對不同類型的協議做優雅收尾
+            if self.type == self.TYPE_WS and self.connected:
+                # 嘗試發送 WS 關閉幀 (Opcode 0x8)
+                try: self.sock.send(b'\x88\x00') 
+                except: pass
+            
+            # 關閉 Socket (TCP/UDP/WS 均適用)
+            self.sock.close()
+        except OSError:
+            pass
+        finally:
+            self.sock = None
+            self.connected = False
+            self.target_addr = None
+            self._ptr = 0 # 清空緩衝區指針
+            print(f"🔌 [{self.label}] Connection Closed.")
 
     def poll(self, **extra_ctx):
         """

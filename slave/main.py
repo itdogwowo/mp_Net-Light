@@ -17,20 +17,18 @@ CONFIG = {
     "buffer_frames": 1,  # 幀緩衝區大小 (幀數)
 
 }
-
-def setup_network():
-    # 確保 LAN 配置正確
+_lan_instance = None
+def init_lan():
+    """初始化 LAN 硬件，但不阻塞等待連接"""
+    # 這裡保持你的硬體配置
     lan = network.LAN(mdc=31, mdio=52, phy_addr=1, phy_type=network.PHY_IP101, ref_clk=50)
     lan.active(True)
-    for _ in range(20):
-        if lan.isconnected():
-            print(lan.ipconfig("addr4"))
-            return True
-        time.sleep(0.5)
-    return False
+    return lan
 
 def launcher():
     # 1. 硬件初始化 (假設 num_leds 由此獲取)
+    lan = init_lan() # 僅初始化硬體
+    
     NUM_LEDS = CONFIG["num_leds"]
     apa = APA102(num_leds=NUM_LEDS)
     
@@ -51,13 +49,13 @@ def launcher():
     try:
 
         # 4. 啟動雙核任務
-        _thread.start_new_thread(Core1_engine.task_loop, (apa, 40))
+        _thread.start_new_thread(Core1_engine.task_loop, (apa, CONFIG["local_fps"]))
 
         print(f"✨ NetBus System Online: {bus.slave_id}")
         
         app = App()
         # 🚀 啟動核心 0：Data 路由處理 (主線程阻塞)
-        Core0_worker.task_loop(app, CONFIG)
+        Core0_worker.task_loop(app, CONFIG, lan)
 
     except KeyboardInterrupt:
         print("\n👋 User stop requested.")
@@ -73,5 +71,4 @@ def launcher():
         print("🏁 Clean Exit.")
 
 if __name__ == "__main__":
-    setup_network()
     launcher()

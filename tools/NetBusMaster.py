@@ -6,15 +6,29 @@ import hashlib
 import struct
 import json
 from pathlib import Path
-from pygame import mixer  # 用於播放同步音訊
+
+# 模式切換：'miniaudio' 或 'pygame'
+AUDIO_MODE = 'miniaudio' 
+
+try:
+    import miniaudio
+except ImportError:
+    AUDIO_MODE = 'pygame'  # 如果沒裝 miniaudio，自動回退
+
+try:
+    from pygame import mixer
+except ImportError:
+    pass
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) if 'slave' in SCRIPT_DIR else SCRIPT_DIR
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 os.chdir(SCRIPT_DIR)
-sys.path.insert(0, PROJECT_ROOT)
-
+print(PROJECT_ROOT)
 # 核心協議庫
 try:
     from slave.lib.proto import Proto, StreamParser
@@ -26,10 +40,12 @@ except ImportError as e:
 
 class NetBusMaster:
     def __init__(self, config_file="slave_map.json"):
-        self.store = SchemaStore(dir_path="./schema")
+        self.store = SchemaStore(dir_path=f"{PROJECT_ROOT}/slave/schema")
         self.slaves = {}      # { cid: {conn, addr, ack_event, query_res} }
         self.running = True
         self.local_ip = self.get_local_ip()
+
+        self.is_playing = False  # 新增：控制音訊播放開關
         
         # 自動化配置
         self.config_file = config_file
@@ -37,7 +53,6 @@ class NetBusMaster:
         self.selected_targets = []  
         self.prepared_data = {}     # {play_id: bytearray}
         
-        mixer.init()
         threading.Thread(target=self.start_ws_server, daemon=True).start()
 
     # ==================== 配置管理 ====================
@@ -45,7 +60,7 @@ class NetBusMaster:
         if os.path.exists(self.config_file):
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        return {"mp3_file": "bgm.mp3", "sync_delay_ms": 150, "mapping": {}}
+        return {"sync_delay_ms": 150, "mapping": {}}
 
     def save_config(self):
         with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -213,22 +228,42 @@ class NetBusMaster:
         print(f"✅ 已選中 {len(self.selected_targets)} 個設備")
 
     def step_2_prepare_data(self):
-        if not self.selected_targets: return
-        path = input("\n[Step 2] .pxld 路徑: ").strip()
-        if not os.path.exists(path): return
+        if not self.selected_targets: 
+            print("⚠️ 請先執行 Step 1 選擇設備")
+            return
+            
+        # --- 自動掃描目錄下的 .pxld 檔案 ---
+        pxld_files = [f for f in os.listdir('.') if f.endswith('.pxld')]
+        if not pxld_files:
+            print("❌ 目錄下找不到任何 .pxld 檔案")
+            return
+        
+        print("\n📂 [Step 2] 選擇動畫數據源:")
+        for i, f in enumerate(pxld_files):
+            print(f"  {i+1}. {f}")
+            
+        try:
+            choice = int(input("👉 請選擇編號: ")) - 1
+            if choice < 0 or choice >= len(pxld_files): raise ValueError
+            path = pxld_files[choice]
+        except:
+            print("❌ 選擇無效"); return
 
-        print("⚙️ 分片中...")
+        print(f"⚙️ 正在切分動畫: {path}...")
         self.prepared_data.clear()
+        
+        # 內存優化：使用上下文管理器確保資源釋放
         with PXLDv3Decoder(path) as decoder:
-            needed_pids = {self.config["mapping"][tid]["play_id"] for tid in self.selected_targets}
+            needed_pids = {self.config["mapping"][tid].get("play_id") for tid in self.selected_targets}
             for pid in needed_pids:
+                if pid is None: continue
                 print(f"  📦 提取 PlayID: {pid}...", end="", flush=True)
                 data = bytearray()
                 for frame in decoder.iterate_frames():
                     data.extend(decoder.get_slave_data(frame, pid))
                 self.prepared_data[pid] = data
                 print(f" OK ({len(data)//1024} KB)")
-        print("✅ 分片完成")
+        print("✅ 動畫分片完成")
 
     def step_3_deploy(self):
         if not self.prepared_data: return
@@ -267,33 +302,138 @@ class NetBusMaster:
         print("✅ 部署完畢")
 
     def step_4_sync_play(self):
-        if not self.selected_targets: return
-        print("\n[Step 4] s:播放 | q:停止")
-        cmd = input("👉: ").lower()
-        if cmd == 's':
-            self.send_pkt(self.selected_targets, 0x3009, {"file_name":"data.bin", "block_id":0, "play_mode":1})
-            time.sleep(0.5)
-            if os.path.exists(self.config["mp3_file"]):
-                mixer.music.load(self.config["mp3_file"])
-                mixer.music.play()
-            wait = self.config["sync_delay_ms"] / 1000.0
-            if wait > 0: time.sleep(wait)
+        """
+        [完整版] 同步播放控制器
+        支援正負延遲校準、雙引擎切換，以及「按鍵即播」觸發機制
+        """
+        if not self.selected_targets: 
+            print("⚠️ 未選擇設備，請先執行 Step 1"); return
+
+        # --- 1. 自動文件選擇 (MP3) ---
+        mp3_files = [f for f in os.listdir('.') if f.endswith('.mp3')]
+        if not mp3_files:
+            print("❌ 當前目錄下找不到 MP3 文件")
+            return
+        
+        print(f"\n🎵 [音訊準備] 模式: {AUDIO_MODE}")
+        for i, f in enumerate(mp3_files):
+            print(f"  {i+1}. {f} ({os.path.getsize(f)//1024} KB)")
+        
+        try:
+            choice_idx = int(input("👉 請選擇 MP3 編號 (輸入 0 取消): ")) - 1
+            if choice_idx < 0: return
+            selected_mp3 = mp3_files[choice_idx]
+        except (ValueError, IndexError):
+            print("❌ 選擇無效"); return
+
+        # --- 2. 預備 Slave (加載與緩衝) ---
+        print(f"⚙️ 正在通知 Slave 預備數據...")
+        # 通知所有 Slave 開啟 data.bin 並進入待命狀態
+        self.send_pkt(self.selected_targets, 0x3009, {
+            "file_name": "data.bin", 
+            "block_id": 0, 
+            "play_mode": 1
+        })
+        time.sleep(0.5) # 給予緩衝，確保 Slave 磁碟 IO 完成
+
+        # --- 3. 等待用戶最終擊發指令 ---
+        print("\n" + "!"*40)
+        print("     所有系統就緒，等待擊發指令")
+        print(f"     當前延遲設定: {self.config.get('sync_delay_ms', 0)} ms")
+        print("     輸入 'go' 開始播放 | 輸入 'q' 取消預備")
+        print("!"*40)
+
+        trigger = input("🚀 指令: ").lower()
+        if trigger != 'go':
+            print("🛑 播放已取消")
+            return
+
+        # --- 4. 核心同步執行 (處理正負延遲) ---
+        delay_ms = self.config.get("sync_delay_ms", 150)
+        delay_sec = abs(delay_ms) / 1000.0
+
+        if delay_ms >= 0:
+            # ✅ 正值：電腦先播，後發脈衝 (適用於補償音效卡啟動延遲)
+            self._start_audio_stream(selected_mp3)
+            if delay_ms > 0:
+                # 這裡不需要加 time.sleep，因為 _start_audio_stream 是非阻塞的
+                # 我們直接在主線程 sleep 完後發送脈衝
+                time.sleep(delay_sec)
             self.send_pkt(self.selected_targets, 0x300A, {}) 
-        elif cmd == 'q':
+            print("🔥 [SYNC] 音訊啟動 -> 延遲脈衝已發送")
+        else:
+            # ✅ 負值：先發脈衝，電腦稍後啟動 (適用於補償 MCU 解碼延遲)
+            self.send_pkt(self.selected_targets, 0x300A, {})
+            print(f"🚀 [SYNC] 脈衝已先發 -> 電腦等待 {abs(delay_ms)}ms...")
+            time.sleep(delay_sec)
+            self._start_audio_stream(selected_mp3)
+            print("🔥 [SYNC] 音訊已補償啟動")
+
+    def _start_audio_stream(self, file_path):
+        self.is_playing = True # 標記開始播放
+        
+        def _play_task():
+            try:
+                if AUDIO_MODE == 'miniaudio':
+                    with miniaudio.PlaybackDevice() as device:
+                        stream = miniaudio.stream_file(file_path)
+                        device.start(stream)
+                        # --- 核心停止判斷 ---
+                        while device.is_active and self.running and self.is_playing:
+                            time.sleep(0.1)
+                        device.stop() # 停止設備
+                else:
+                    if not mixer.get_init(): mixer.init()
+                    mixer.music.load(file_path)
+                    mixer.music.play()
+                    # --- 核心停止判斷 ---
+                    while mixer.music.get_busy() and self.running and self.is_playing:
+                        time.sleep(0.1)
+                    mixer.music.stop() # 停止音樂
+            except Exception as e:
+                print(f"\n[Audio Error] {e}")
+            finally:
+                self.is_playing = False # 播放結束或被停止後重置狀態
+
+        threading.Thread(target=_play_task, daemon=True).start()
+
+    def stop_all(self):
+        """
+        同時停止本地音訊與所有遠端設備
+        """
+        print("\n🛑 執行全局停止...")
+        self.is_playing = False # 讓播放線程跳出循環
+        
+        # 發送網路停止指令 (根據你的協議，0x3002 通常是停止)
+        if self.selected_targets:
             self.send_pkt(self.selected_targets, 0x3002, {})
-            mixer.music.stop()
+        
+        # 如果是 Pygame 模式，額外確保停止（避免線程反應延遲）
+        if AUDIO_MODE == 'pygame':
+            try:
+                if mixer.get_init(): mixer.music.stop()
+            except: pass
+        
+        print("✅ 已發送停止信號")
 
     def main_loop(self):
         while self.running:
-            print("\n" + "="*40 + "\n NetBus Master 工作站\n" + "="*40)
-            print(" 1.Select | 2.Slice | 3.Deploy | 4.SyncPlay | q.Exit")
+            print("\n" + "="*40)
+            print(" 1.Select | 2.Slice | 3.Deploy | 4.SyncPlay")
+            print(" s.STOP ALL | q.Exit") # 這裡增加一個快捷停止鍵
+            print("="*40)
+            
             ch = input("\n👉: ").lower()
             if ch == '1': self.step_1_select_slaves()
             elif ch == '2': self.step_2_prepare_data()
             elif ch == '3': self.step_3_deploy()
             elif ch == '4': self.step_4_sync_play()
-            elif ch == 'q': break
-
+            elif ch == 's': self.stop_all() # 這裡調用停止
+            elif ch == 'q': 
+                self.stop_all()
+                self.running = False
+                break
 if __name__ == "__main__":
     app = NetBusMaster()
     app.main_loop()
+    
