@@ -6,15 +6,11 @@ import hashlib
 import struct
 import json
 
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
-
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) if 'slave' in SCRIPT_DIR else SCRIPT_DIR
 
 os.chdir(SCRIPT_DIR)
-print(PROJECT_ROOT)
+sys.path.insert(0, PROJECT_ROOT)
 
 
 
@@ -31,7 +27,7 @@ DEBUG_MODE = True  # 開啟以監控二進制封包交換
 class PCTestTool:
     def __init__(self):
         # 1. 載入 Schema
-        self.store = SchemaStore(dir_path=f"{PROJECT_ROOT}/slave/schema")
+        self.store = SchemaStore(dir_path="./schema")
         self.slaves = {} # { slave_id: {data} }
         self.running = True
         self.local_ip = self.get_local_ip()
