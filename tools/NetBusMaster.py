@@ -294,6 +294,8 @@ class NetBusMaster:
                 chunk = data[off : off+1024]
                 self.slaves[tid]["ack_event"].clear()
                 self.send_pkt([tid], 0x2002, {"file_id":1, "offset":off, "data":chunk})
+                
+                print(f"  ﹂ 📤 Progress: {min(off+1024, len(data))}/{len(data)} bytes", end='\r')
                 if not self.slaves[tid]["ack_event"].wait(timeout=60.0):
                     print(f"❌ {tid} ACK 超時")
                     break
