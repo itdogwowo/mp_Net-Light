@@ -37,7 +37,7 @@ try:
     from slave.lib.proto import Proto, StreamParser
     from slave.lib.schema_loader import SchemaStore
     from slave.lib.schema_codec import SchemaCodec
-    from PXLDv3Splitter import PXLDv3Decoder 
+    from tools.PXLDv3Splitter import PXLDv3Decoder 
 except ImportError as e:
     print(f"❌ 導入錯誤: {e}")
 
@@ -513,7 +513,6 @@ class NetBusMaster:
             input("\n按 Enter 繼續...")
             self.panel.start()
             return
-        
         pxld_files = [f for f in os.listdir('.') if f.endswith('.pxld')]
         if not pxld_files:
             print("❌ 目錄下找不到任何 .pxld 檔案")
@@ -556,38 +555,109 @@ class NetBusMaster:
         self.panel.start()
     
     def step_3_deploy(self):
-        """部署 (帶監控面板)"""
+        """
+        部署階段：包含 SHA256 預檢與手動設備過濾
+        """
         if not self.prepared_data:
-            print("⚠️ 無預備數據,請先執行 Step 2")
+            print("⚠️ 無預備數據，請先執行 Step 2")
             return
+
+        # --- Phase 1: 預檢與顯示 Hex 狀態 ---
+        self.panel.stop() # 暫時停止面板以進行交互
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
         
-        # 啟動監控面板
+        print("\n🔍 [Step 3.1] 正在讀取設備與本地數據狀態...")
+        
+        deploy_queue = [] # 儲存最終決定要上傳的目標 [ (tid, local_hex, remote_hex) ]
+        
+        # 遍歷已選的目標進行校驗查詢
+        for i, tid in enumerate(self.selected_targets):
+            node = self.slaves.get(tid)
+            pid = self.config["mapping"][tid].get("play_id")
+            data = self.prepared_data.get(pid)
+            
+            if not node or data is None:
+                print(f"  [{i+1}] {tid:15} | ❌ 離線或無數據")
+                continue
+            
+            # 計算本地數據的 SHA256 (Hex 格式)
+            local_sha_bytes = hashlib.sha256(data).digest()
+            local_sha_hex = local_sha_bytes.hex()[:16] # 顯示前16碼即可
+            
+            # 向 Slave 查詢遠端 SHA256
+            node["query_event"].clear()
+            self.send_pkt([tid], 0x2005, {"path": "/data.bin"})
+            
+            remote_sha_hex = "TIMEOUT"
+            if node["query_event"].wait(timeout=120): # 等待 2 秒回報
+                remote_sha_bytes = node.get("remote_sha")
+                if remote_sha_bytes:
+                    remote_sha_hex = remote_sha_bytes.hex()[:16]
+                else:
+                    remote_sha_hex = "NONE(Empty)"
+            
+            status_mark = "✔ MATCH" if local_sha_hex == remote_sha_hex else "✖ DIFF"
+            print(f"  [{i+1}] {tid:12} | Local:{local_sha_hex} | Remote:{remote_sha_hex} | [{status_mark}]")
+            
+            deploy_queue.append((tid, local_sha_hex, remote_sha_hex))
+
+        if not deploy_queue:
+            input("\n❌ 沒有可部署的設備，按 Enter 返回...")
+            self.panel.start()
+            return
+
+        # --- Phase 2: 手動選擇上傳目標 ---
+        print("\n" + "-"*60)
+        choice = input("👉 輸入編號開始上傳 (例如: 1,3,5), 輸入 'a' 僅上傳不一致者, 輸入 'do_all' 全選: ").lower()
+        
+        final_targets = []
+        if choice == 'do_all':
+            final_targets = [item[0] for item in deploy_queue]
+        elif choice == 'a':
+            final_targets = [item[0] for item in deploy_queue if item[1] != item[2]]
+        else:
+            try:
+                idxs = [int(x.strip()) - 1 for x in choice.split(',')]
+                final_targets = [deploy_queue[i][0] for i in idxs if 0 <= i < len(deploy_queue)]
+            except:
+                print("❌ 輸入錯誤，操作已取消")
+                self.panel.start()
+                return
+
+        if not final_targets:
+            print("ℹ️ 無設備被選中上傳")
+            time.sleep(1)
+            self.panel.start()
+            return
+
+        # --- Phase 3: 正式並行部署 (帶監控面板) ---
         self.panel.start()
         
-        # 標記所有設備進入傳輸狀態
+        # 標記非上傳目標的狀態為待機
         for tid in self.selected_targets:
-            self.panel.update_device(tid, status="傳輸中", upload_progress=0, upload_speed=0)
-        
-        # 並行部署
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in self.selected_targets}
+            if tid not in final_targets:
+                self.panel.update_device(tid, status="待機", upload_progress=100)
+            else:
+                self.panel.update_device(tid, status="傳輸中", upload_progress=0, upload_speed=0)
+
+        # 限制並行數量，保護 MCU 接收緩衝區不被網路風暴淹沒
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
             
             for future in futures:
                 tid = futures[future]
                 try:
                     future.result()
+                    # 傳輸成功後更新為待機狀態
                     self.panel.update_device(tid, status="待機", upload_progress=100)
                 except Exception as e:
                     self.panel.update_device(tid, status="錯誤", error_msg=str(e))
         
-        # 等待用戶確認再回到菜單
         time.sleep(2)
-        self.panel.stop()
-        ConsoleUI.clear_screen()
-        ConsoleUI.show_cursor()
-        print("\n✅ 所有設備部署完成")
-        input("按 Enter 繼續...")
-    
+        print("\n✅ 選定設備部署操作完成")
+
+
     def _deploy_to_single_slave(self, tid):
         """單設備部署邏輯"""
         node = self.slaves.get(tid)
@@ -638,7 +708,7 @@ class NetBusMaster:
                 "data": chunk
             })
             
-            if not node["ack_event"].wait(timeout=5.0):
+            if not node["ack_event"].wait(timeout=120):
                 raise Exception(f"Offset {off} 超時")
             
             # 更新統計
