@@ -642,7 +642,7 @@ class NetBusMaster:
                 self.panel.update_device(tid, status="傳輸中", upload_progress=0, upload_speed=0)
 
         # 限制並行數量，保護 MCU 接收緩衝區不被網路風暴淹沒
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=50) as executor:
             futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
             
             for future in futures:
