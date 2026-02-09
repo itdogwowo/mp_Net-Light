@@ -44,12 +44,10 @@ class LEDcontroller:
         # 計算 R/G/B/W 在緩衝區中的偏移量
         self._r_off, self._g_off, self._b_off, self._w_off = self._get_order_offsets(self.order)
         
-        
         if self.led_Type == 'RGB':      self._type_id = 1
         elif self.led_Type == 'i2c_LED': self._type_id = 2
         elif self.led_Type == 'APA102':  self._type_id = 3
         else:                            self._type_id = 0
-        
         
         # ========================================
         # 流式傳輸核心
@@ -189,6 +187,7 @@ class LEDcontroller:
             print(f"st_init error: {e}")
             self.streaming_mode = False
     
+    
     @micropython.native
     def st_load_from_buffer(self, source_buffer, offset=0):
         """流式模式統一入口"""
@@ -196,41 +195,58 @@ class LEDcontroller:
         # 直接交給全能內核處理
         self._convert(source_buffer, offset)
         
-        
     @micropython.viper
     def _convert(self, source, offset: int):
         """
-        🚀 全能轉換內核 (Viper 機器碼級別)
+        🚀 全能轉換內核 (機器碼級別)
         處理邏輯：
-        1. RGB/NeoPixel: 1:1 搬運 8-bit
-        2. i2c_LED/PCA: 抽取 W 通道並擴展至 12-bit (unit16)
-        3. APA102: 搬運 8-bit (可擴展亮度控制)
+        1. RGB/WS2812: 從 RGBW 抽取 RGB，拋棄 W (4bpp -> 3bpp)
+        2. i2c_LED/PCA: 從 RGBW 抽取 W，轉 12-bit (4bpp -> ptr16)
+        3. APA102: 保持 4-byte 結構 (或根據硬體需求調整)
         """
         t_id = int(self._type_id)
         num_leds = int(self.led_IO['Q'])
-        bpp = int(self.bpp)
+        in_bpp = int(self.bpp) # 輸入源的步長 (通常是 4, 因為是 RGBW)
         
-        # 根據模式定義指針
         src = ptr8(source)
         
-        # --- 模式 1: 8-bit 直接搬運 (WS2812, APA102 等) ---
-        if t_id == 1 or t_id == 3:
+        # --- 模式 1: WS2812 (RGB) 處理 ---
+        if t_id == 1:
             dst = ptr8(self.st_buff)
-            frame_len = int(self.frame_size)
-            for i in range(frame_len):
-                dst[i] = src[offset + i]
+            # 獲取色序偏移 (例如 GRB)
+            r_off = int(self._r_off)
+            g_off = int(self._g_off)
+            b_off = int(self._b_off)
+            
+            for i in range(num_leds):
+                s_p = offset + (i * in_bpp)  # 源指針 (跳過 W)
+                d_p = i * 3                  # 目標指針 (只有 3 byte)
                 
-        # --- 模式 2: 8-bit RGBW 轉 12-bit PWM (PCA9685) ---
+                # 按照硬體要求的色序重新排列並存入緩衝區
+                # 這裡完美解決了「拋棄 W」並「適配色序」的問題
+                dst[d_p + r_off] = src[s_p + 0] # 假設 source 固定是 R,G,B,W
+                dst[d_p + g_off] = src[s_p + 1]
+                dst[d_p + b_off] = src[s_p + 2]
+                
+        # --- 模式 2: PCA9685 (12-bit W) 處理 ---
         elif t_id == 2:
             dst_u16 = ptr16(self.st_buff)
-            w_off = int(self._w_off)
+            w_off = int(self._w_off) # 使用初始化時計算好的 W 偏移
             for i in range(num_leds):
-                # 取得 W 分量
-                val = int(src[offset + (i * bpp) + w_off])
-                # 擴展至 12-bit (0-4095)
+                # 僅提取 W 通道
+                val = int(src[offset + (i * in_bpp) + w_off])
                 dst_u16[i] = (val << 4) | (val >> 4)
+
+        # --- 模式 3: APA102 (保持 4-byte) ---
+        elif t_id == 3:
+            dst = ptr8(self.st_buff)
+            # APA102 通常需要 [Header, B, G, R]，這裡可根據需求細化
+            # 簡單處理則 1:1 搬運
+            for i in range(int(self.frame_size)):
+                dst[i] = src[offset + i]
                 
-    
+                
+                              
     def st_show(self):
         """
         流式模式: 顯示流式緩衝區
