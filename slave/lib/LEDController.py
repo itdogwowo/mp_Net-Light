@@ -1,10 +1,10 @@
 from machine import Timer, I2C, SoftI2C, ADC, Pin, PWM, UART
-import esp, gc, time, json, utime, array, struct, ubinascii, _thread, micropython
+import esp, gc, time, json, utime, array, struct, ubinascii, _thread, micropython, neopixel
 
 C_LUMN = 1.0
 
 
-class LEDcontroller:
+class LEDController:
     '''
     LED控制器 - 流式傳輸專用版 (0-4095範圍) + 多色序支持
     
@@ -15,7 +15,7 @@ class LEDcontroller:
     }
     
     支持的 LED 類型:
-    - 'RGB': WS2812/SK6812 (NeoPixel)
+    - 'WS2812': WS2812/SK6812 (NeoPixel)
     - 'APA102': APA102/SK9822 (SPI)
     - 'i2c_LED': PCA9685 (I2C PWM)
     
@@ -45,7 +45,7 @@ class LEDcontroller:
         self._r_off, self._g_off, self._b_off, self._w_off = self._get_order_offsets(self.order)
         
         
-        if self.led_Type == 'RGB':      self._type_id = 1
+        if self.led_Type == 'WS2812':      self._type_id = 1
         elif self.led_Type == 'i2c_LED': self._type_id = 2
         elif self.led_Type == 'APA102':  self._type_id = 3
         else:                            self._type_id = 0
@@ -138,15 +138,10 @@ class LEDcontroller:
                     print(f"[Warning] Q={self.led_IO['Q']} != led.n={led_io.n}, using led.n")
                     self.led_IO['Q'] = led_io.n
         
-        elif self.led_Type == 'RGB':
+        elif self.led_Type == 'WS2812':
             # 傳統 neopixel 初始化
             import neopixel
-            self.led = neopixel.NeoPixel(
-                Pin(led_io, Pin.OUT), 
-                self.led_IO['Q'],
-                bpp=self.bpp
-            )
-        
+            self.led = led_io
         elif self.led_Type == 'i2c_LED':
             # PCA9685 等 I2C PWM
             self.led = led_io
@@ -172,7 +167,7 @@ class LEDcontroller:
         """
         try:
             # 創建流式緩衝區 (與硬體緩衝區大小一致)
-            if self.led_Type in ('RGB', 'APA102'):
+            if self.led_Type in ('WS2812', 'APA102'):
                 self.st_buff = bytearray(self.frame_size)
             
             elif self.led_Type == 'i2c_LED':
@@ -241,7 +236,7 @@ class LEDcontroller:
             return
         
         try:
-            if self.led_Type in ('RGB', 'APA102'):
+            if self.led_Type in ('WS2812', 'APA102'):
                 # 🚀 零拷貝: 直接替換硬體緩衝區
                 self.led.buf[:] = self.st_buff[:]
                 
@@ -310,15 +305,15 @@ class LEDStreamer:
     LED 流式傳輸管理器
     
     功能:
-    - 管理多個 LEDcontroller
+    - 管理多個 LEDController
     - 提供統一的大緩衝區
     - 支持順序渲染多個燈帶
     - 零拷貝高速數據傳輸
     
     典型用法:
         # 1. 創建控制器
-        led1 = LEDcontroller('RGB', {'led_IO': np1, 'Q': 30, 'order': 'GRB'})
-        led2 = LEDcontroller('APA102', {'led_IO': apa, 'Q': 60, 'order': 'RGB'})
+        led1 = LEDController('WS2812', {'led_IO': np1, 'Q': 30, 'order': 'GRB'})
+        led2 = LEDController('APA102', {'led_IO': apa, 'Q': 60, 'order': 'RGB'})
         
         # 2. 創建流式管理器
         streamer = LEDStreamer([led1, led2])
@@ -552,7 +547,7 @@ if __name__ == '__main__':
     np = neopixel.NeoPixel(Pin(5), 30, bpp=3)
     
     # 創建控制器
-    led = LEDcontroller('RGB', {'led_IO': np, 'Q': 30, 'order': 'GRB'})
+    led = LEDController('WS2812', {'led_IO': np, 'Q': 30, 'order': 'GRB'})
     
     # 創建流式管理器
     streamer = LEDStreamer([led])
@@ -583,9 +578,9 @@ if __name__ == '__main__':
     apa = APA102(num_leds=50, spi_id=1, sck_pin=8, mosi_pin=7)
     
     # 創建控制器
-    led1 = LEDcontroller('RGB', {'led_IO': np1, 'Q': 30, 'order': 'GRB'})
-    led2 = LEDcontroller('RGB', {'led_IO': np2, 'Q': 40, 'order': 'GRB'})
-    led3 = LEDcontroller('APA102', {'led_IO': apa, 'Q': 50, 'order': 'RGB'})
+    led1 = LEDController('WS2812', {'led_IO': np1, 'Q': 30, 'order': 'GRB'})
+    led2 = LEDController('WS2812', {'led_IO': np2, 'Q': 40, 'order': 'GRB'})
+    led3 = LEDController('APA102', {'led_IO': apa, 'Q': 50, 'order': 'RGB'})
     
     # 創建流式管理器
     streamer = LEDStreamer([led1, led2, led3])
