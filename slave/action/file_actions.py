@@ -1,6 +1,49 @@
-from lib.proto import Proto
-from lib.schema_codec import SchemaCodec
+# /action/file_actions.py
+import os
+import gc
+import json
 import ubinascii
+from lib.schema_codec import SchemaCodec, encode_payload
+from lib.schema_loader import cmd_str_to_int
+from lib.proto import Proto
+
+# 指令常量定義
+CMD_FS_TREE_GET = 0x1205
+CMD_FS_TREE_RSP = 0x1206
+
+def on_tree_get(ctx, args):
+    """
+    處理 CMD_FS_TREE_GET:
+    1. 生成包含 SHA256 的 JSON 快照
+    2. 將結構成為文本回傳（或之後透過 file_triplet 傳送）
+    """
+    path = args.get("path", "/")
+    out_path = "/temp/fs.json"
+    app = ctx["app"]
+    print(f"🔍 [FS] Generating tree with SHA256 for: {path}")
+    
+    try:
+        app.file_rx.get_fs_tree_and_save(path, out_path)
+        
+        # 讀取生成的 JSON 作為文本回傳 (注意：如果 JSON 極大，這裡建議改用 file_triplet 傳送)
+        # 這裡示範原本的文本回傳邏輯
+        with open(out_path, "r") as f:
+            tree_txt = f.read()
+        
+        if "send" in ctx:
+            rsp_def = app.store.get(CMD_FS_TREE_RSP)
+            rsp_payload = SchemaCodec.encode(rsp_def, {
+                "path": path, 
+                "tree": tree_txt
+            })
+            ctx["send"](Proto.pack(CMD_FS_TREE_RSP, rsp_payload))
+            
+        print(f"✅ [FS] Tree saved to {out_path}")
+        
+    except Exception as e:
+        print(f"❌ [FS] Tree failed: {e}")
+
+
 def on_file_begin(ctx, args):
     app = ctx["app"]
     ok = app.file_rx.begin(args)

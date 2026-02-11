@@ -142,7 +142,7 @@ def register(app):
 
         # sha256
         from lib.file_rx import sha256_digest_stream_from_file
-        sha = sha256_digest_stream_from_file(src_path, bufsize=2048)
+        sha = sha256_digest_stream_from_file(src_path)
         total = os.stat(src_path)[6]
 
         begin_payload = encode_payload(begin_def, {

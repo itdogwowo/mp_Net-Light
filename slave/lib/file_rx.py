@@ -1,7 +1,6 @@
 import hashlib
 import ubinascii
-import os
-
+import os, gc, json
 
 
 class FileRx:
@@ -12,21 +11,134 @@ class FileRx:
         self.reset()
         self.last_sha_hex = "" # 儲存最後一次成功或失敗的哈希計算結果
 
-    def sha256_digest_stream_from_file(self, path, bufsize=2048):
+    def ensure_dir(self, path):
+        """檢查並創建目錄路徑"""
+        parts = path.split('/')
+        curr = ""
+        for p in parts[:-1]: # 最後一個是檔名，跳過
+            if not p: continue
+            curr += "/" + p
+            try:
+                os.mkdir(curr)
+            except OSError:
+                pass # 已存在則忽略
+
+    def get_fs_tree_and_save(self, root_path, out_path):
+        """
+        遍歷文件系統，計算每個文件的 SHA256，並流式寫入 JSON。
+        """
+        self.ensure_dir(out_path)
+        
+        # 使用本地引用加速
+        compute_sha = self.sha256_digest_stream_from_file
+        
+        
+        with open(out_path, "w") as f:
+            f.write('{"root":"%s","entries":[' % root_path)
+            
+            first = True
+            # 使用 stack 進行深度優先遍歷 (避免遞歸消耗 stack 空間)
+            stack = [root_path]
+            
+            while stack:
+                curr_dir = stack.pop()
+                try:
+                    # ilistdir 返回 (name, type, inode, [size])
+                    # type: 0x4000 是目錄, 0x8000 是文件
+                    for entry in os.ilistdir(curr_dir):
+                        name = entry[0]
+                        etype = entry[1]
+                        
+                        # 構建完整路徑
+                        full_path = curr_dir + ("" if curr_dir.endswith("/") else "/") + name
+                        
+                        if not first: f.write(",")
+                        first = False
+                        
+                        if etype == 0x4000: # Directory
+                            f.write('\n{"p":"%s","n":"%s","t":"d"}' % (curr_dir, name))
+                            stack.append(full_path)
+                        else: # File
+                            # 核心要求：計算 SHA256
+                            sha_bytes = compute_sha(full_path)
+                            sha_hex = ubinascii.hexlify(sha_bytes).decode()
+                            
+                            try:
+                                size = os.stat(full_path)[6]
+                            except:
+                                size = 0
+                                
+                            f.write('\n{"p":"%s","n":"%s","t":"f","s":%d,"sha":"%s"}' % 
+                                    (curr_dir, name, size, sha_hex))
+                            
+                        # 每處理一個文件就釋放一次記憶體
+                        gc.collect()
+                        
+                except Exception as e:
+                    print(f"Read dir error {curr_dir}: {e}")
+                    
+            f.write("\n]}")
+
+    def get_extreme_bufsize(self):
+        """
+        極限性能導向的緩衝區計算
+        目標：尋找 32KB - 128KB 之間的平衡點
+        """
+        gc.collect()
+        free_ram = gc.mem_free()
+        
+        # 策略：
+        # 1. 至少保留 32KB 給系統維持運作 (避免執行時期的臨時分配失敗)
+        # 2. 緩衝區設為可用 RAM 的 25%
+        # 3. 硬性限制在 128KB (因為超過此值，SHA256 運算與 I/O 的重疊增益將消失)
+        
+        suggested = (free_ram - 32 * 1024) // 4
+        
+        # 對齊 4KB (檔案系統 Cluster 大小)，這能確保讀取地址對齊，提高 DMA 效率
+        target = (suggested // 4096) * 4096
+        
+        # 限制在 [4KB, 128KB] 區間
+        return max(4096, min(target, 128 * 1024))
+
+    def sha256_digest_stream_from_file(self, path):
         """
         串流計算文件 SHA256，避免將大文件一次性載入記憶體導致 OOM。
         使用 memoryview 優化字節切片效能。
         """
-        h = hashlib.sha256()
+        bufsize = self.get_extreme_bufsize()
+
+        # 預先分配（如果 RAM 充足，這會嘗試在 SRAM 或 PSRAM 分配）
         buf = bytearray(bufsize)
-        with open(str(path), "rb") as f:
+        mv = memoryview(buf)
+        h = hashlib.sha256()
+
+        try:
+            # 使用本地變量引用以優化 lookup 速度 (資深程序員的老技巧)
+            update = h.update
+            readinto = open(path, "rb").readinto
+            
+            # 這裡不使用 with 語句，而是手動控制以獲取極微小的速度提升
+            f = open(path, "rb")
+            _readinto = f.readinto
+            
             while True:
-                n = f.readinto(buf)
+                n = _readinto(buf)
                 if n == 0:
                     break
-                # 使用 memoryview 避免產生臨時 bytes 對象
-                h.update(memoryview(buf)[:n])
+                if n == bufsize:
+                    update(mv)
+                else:
+                    update(mv[:n])
+            f.close()
+            
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            del buf
+            gc.collect()
+            
         return h.digest()
+
 
     def reset(self):
         """重置接收狀態"""

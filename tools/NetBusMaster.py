@@ -556,54 +556,82 @@ class NetBusMaster:
     
     def step_3_deploy(self):
         """
-        部署階段：包含 SHA256 預檢與手動設備過濾
+        優化後的部署階段：實現批量 SHA256 預檢
         """
         if not self.prepared_data:
             print("⚠️ 無預備數據，請先執行 Step 2")
             return
 
-        # --- Phase 1: 預檢與顯示 Hex 狀態 ---
-        self.panel.stop() # 暫時停止面板以進行交互
+        # --- Phase 1: 批量預檢 (Performance Optimized) ---
+        self.panel.stop() 
         ConsoleUI.clear_screen()
         ConsoleUI.show_cursor()
         
-        print("\n🔍 [Step 3.1] 正在讀取設備與本地數據狀態...")
+        print(f"\n🔍 [Step 3.1] 正在同步讀取 {len(self.selected_targets)} 個設備狀態...")
+
+        # 初始化校驗數據快照
+        check_results = {} # {tid: {"local": sha, "remote": None, "match": False}}
         
-        deploy_queue = [] # 儲存最終決定要上傳的目標 [ (tid, local_hex, remote_hex) ]
-        
-        # 遍歷已選的目標進行校驗查詢
-        for i, tid in enumerate(self.selected_targets):
-            node = self.slaves.get(tid)
+        # 1. 預先計算本次部署涉及的所有本地 SHA256，避免在循環中重複計算
+        # 對於大量的 MCU 固件，這能減少 CPU 開銷
+        local_sha_cache = {}
+        for tid in self.selected_targets:
             pid = self.config["mapping"][tid].get("play_id")
             data = self.prepared_data.get(pid)
+            if data:
+                sha = hashlib.sha256(data).digest().hex()[:16]
+                local_sha_cache[tid] = sha
+            else:
+                local_sha_cache[tid] = None
+
+        # 2. 批量清除事件狀態並發送查詢指令 (Fire the requests)
+        valid_tids = []
+        for tid in self.selected_targets:
+            node = self.slaves.get(tid)
+            if node and local_sha_cache[tid]:
+                node["query_event"].clear()
+                node["remote_sha"] = None # 重置舊數據
+                valid_tids.append(tid)
+                # 使用我們開發的通訊層發送指令，0x2005 查詢文件狀態
+                self.send_pkt([tid], 0x2005, {"path": "/data.bin"})
+        
+        # 3. 併發等待回傳 (Batch Waiting)
+        # 給予一個窗口時間（例如 3 秒），等待所有設備通過回調函數填入 remote_sha 並 set() 事件
+        start_wait = time.time()
+        wait_timeout = 60.0 # 優化：批量等待不需要原來的 120s 邏輯，那是單個超時
+        
+        print(f"⏳ 正在等待設備回報校驗值 (Timeout: {wait_timeout}s)...")
+        while time.time() - start_wait < wait_timeout:
+            # 檢查是否所有 valid_tids 都已經完成響應
+            if all(self.slaves[tid]["query_event"].is_set() for tid in valid_tids):
+                break
+            time.sleep(0.1) # 釋放 CPU 時間片給接收線程
+
+        # 4. 匯總結果展示
+        deploy_queue = []
+        print(f"{'ID':<15} | {'Local SHA':<16} | {'Remote SHA':<16} | {'Status'}")
+        print("-" * 70)
+
+        for i, tid in enumerate(self.selected_targets):
+            local_sha = local_sha_cache.get(tid)
+            node = self.slaves.get(tid)
             
-            if not node or data is None:
-                print(f"  [{i+1}] {tid:15} | ❌ 離線或無數據")
+            if not node or not local_sha:
+                print(f"[{i+1:02}] {tid:12} | {'Offline/No Data':^35} | ✖")
                 continue
+
+            # 從 node 中提取回調函數填入的 remote_sha
+            remote_sha_bytes = node.get("remote_sha")
+            remote_sha = remote_sha_bytes.hex()[:16] if remote_sha_bytes else "TIMEOUT"
             
-            # 計算本地數據的 SHA256 (Hex 格式)
-            local_sha_bytes = hashlib.sha256(data).digest()
-            local_sha_hex = local_sha_bytes.hex()[:16] # 顯示前16碼即可
+            is_match = (local_sha == remote_sha)
+            status_mark = "✔ MATCH" if is_match else "✖ DIFF"
             
-            # 向 Slave 查詢遠端 SHA256
-            node["query_event"].clear()
-            self.send_pkt([tid], 0x2005, {"path": "/data.bin"})
-            
-            remote_sha_hex = "TIMEOUT"
-            if node["query_event"].wait(timeout=120): # 等待 2 秒回報
-                remote_sha_bytes = node.get("remote_sha")
-                if remote_sha_bytes:
-                    remote_sha_hex = remote_sha_bytes.hex()[:16]
-                else:
-                    remote_sha_hex = "NONE(Empty)"
-            
-            status_mark = "✔ MATCH" if local_sha_hex == remote_sha_hex else "✖ DIFF"
-            print(f"  [{i+1}] {tid:12} | Local:{local_sha_hex} | Remote:{remote_sha_hex} | [{status_mark}]")
-            
-            deploy_queue.append((tid, local_sha_hex, remote_sha_hex))
+            print(f"[{i+1:02}] {tid:12} | {local_sha} | {remote_sha:16} | [{status_mark}]")
+            deploy_queue.append((tid, local_sha, remote_sha))
 
         if not deploy_queue:
-            input("\n❌ 沒有可部署的設備，按 Enter 返回...")
+            input("\n❌ 沒有可交互設備，按 Enter 返回...")
             self.panel.start()
             return
 
@@ -685,18 +713,20 @@ class NetBusMaster:
                 self.panel.update_device(tid, status="待機", upload_progress=100)
                 return
         
+        chunk_size = 1024
+
         # Phase 2: FILE_BEGIN
         self.send_pkt([tid], 0x2001, {
             "file_id": 1,
             "total_size": total_len,
-            "chunk_size": 1024,
+            "chunk_size": chunk_size,
             "sha256": local_sha,
             "path": target_path
         })
         time.sleep(0.1)
         
         # Phase 3: FILE_CHUNK (實時更新面板)
-        chunk_size = 1024
+        
         
         for off in range(0, total_len, chunk_size):
             chunk = data[off : off + chunk_size]
@@ -708,7 +738,7 @@ class NetBusMaster:
                 "data": chunk
             })
             
-            if not node["ack_event"].wait(timeout=120):
+            if not node["ack_event"].wait(timeout=60):
                 raise Exception(f"Offset {off} 超時")
             
             # 更新統計
