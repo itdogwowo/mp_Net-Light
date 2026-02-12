@@ -139,8 +139,7 @@ class LEDController:
                     self.led_IO['Q'] = led_io.n
         
         elif self.led_Type == 'WS2812':
-            # 傳統 neopixel 初始化
-            import neopixel
+
             self.led = led_io
         elif self.led_Type == 'i2c_LED':
             # PCA9685 等 I2C PWM

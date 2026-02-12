@@ -8,7 +8,7 @@ class APA102:
     APA102 極速驅動 - 專為 LEDcontroller 配套設計
     特性：雙緩衝、Viper 轉換、對齊 LEDcontroller 的 buf 操作
     """
-    def __init__(self, num_leds, spi_id=1, sck_pin=8, mosi_pin=7, baudrate=8_000_000):
+    def __init__(self, num_leds, spi, baudrate=8_000_000):
         self.n = num_leds
         self.buf_length = num_leds * 4
         
@@ -20,14 +20,7 @@ class APA102:
         self.spi_buffer = bytearray(self.buf_length)
         
         # 3. SPI 硬體初始化
-        self.spi = machine.SPI(
-            spi_id,
-            baudrate=baudrate,
-            polarity=1,
-            phase=1,
-            sck=machine.Pin(sck_pin),
-            mosi=machine.Pin(mosi_pin)
-        )
+        self.spi = spi
         
         # 協議控制幀
         self.start_frame = bytearray([0x00, 0x00, 0x00, 0x00])

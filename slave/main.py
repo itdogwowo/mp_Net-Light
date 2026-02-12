@@ -10,7 +10,6 @@ from apa102 import APA102
 CONFIG = {
     "refresh_rate_ms": 1,
     "discovery_port": 9000,
-    "stream_port": 4050,
     "heartbeat_interval": 10000,
     "local_fps": 40,
     "num_leds": 336,

@@ -1,0 +1,81 @@
+{
+    "System": {
+        "c_lum": 1.0,
+        "hostname": "",
+        "refresh_rate_ms": 1,
+        "discovery_port": 9000,
+        "heartbeat_interval": 10000,
+        "local_fps": 40,
+        "num_leds": 336,
+        "buffer_frames": 1,
+    },
+    "WIFI_Network": {
+        "enable": 0,
+        "list": [
+            {
+                "ssid": "Home_WiFi",
+                "wifi_pw": "",
+                "priority": 1
+            }
+        ]
+    },
+    "ETH_Network": {
+        "enable": 0,
+        "list": [
+            {
+                "phy_addr":1,
+                "phy_type":2,
+                "GPIO": { "mdc": 43, "mdio": 52, "ref_clk": 50 },
+            }
+            
+        ]
+    },
+    "UART": {
+        "enable": 0,
+        "list": [
+            {
+                "id": 1,
+                "baudrate": 9600,
+                "GPIO": { "tx": 43, "rx": 44 },
+            }
+        ]
+    },
+    "I2C": {
+        "enable": 0,
+        "list": [
+            {"GPIO":{"scl":47,"sda":48},"address":["0x40"]}
+        ]
+    },
+    "SPI": {
+        "enable": 0,
+        "list": [
+            {
+                "id"1,
+                "baudrate": 8000000,
+                "GPIO": { "sck": 8, "mosi": 7, "miso": -1 }
+            }
+        ]
+    },
+    "I2S": {
+        "enable": 0,
+        "list": [
+            {
+                "config": { "rate": 16000, "bits": 16, "ch": 1 },
+                "GPIO":{"sck":20 ,"ws":21 ,"sd":21}
+            }
+        ]
+    },
+    "PWM": {
+        "enable": 0,
+        "list": [
+            {"GPIO":0,"dArc":0,"type":0},
+        ]
+    },
+    "RGB": {
+        "enable": 0,
+        "list": [
+            {"GPIO":1,"Q":0},
+
+        ]
+    }
+}
