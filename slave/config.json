@@ -20,7 +20,7 @@
         ]
     },
     "ETH_Network": {
-        "enable": 0,
+        "enable": 1,
         "list": [
             {
                 "phy_addr":1,
@@ -47,12 +47,14 @@
         ]
     },
     "SPI": {
-        "enable": 0,
+        "enable": 1,
         "list": [
             {
                 "id"1,
                 "baudrate": 8000000,
-                "GPIO": { "sck": 8, "mosi": 7, "miso": -1 }
+                "phase":1,
+                "polarity":1,
+                "GPIO": { "sck": 8, "mosi": 7, "miso": null }
             }
         ]
     },
@@ -71,10 +73,17 @@
             {"GPIO":0,"dArc":0,"type":0},
         ]
     },
-    "RGB": {
+    "WS2812": {
         "enable": 0,
         "list": [
-            {"GPIO":1,"Q":0},
+            {"GPIO":1,"Q":0,"order":"GRB"},
+
+        ]
+    },
+    "APA102": {
+        "enable": 0,
+        "list": [
+            {"GPIO":1,"Q":0,"order":"BGRW"},
 
         ]
     }
