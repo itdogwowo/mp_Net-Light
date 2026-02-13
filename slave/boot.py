@@ -2,7 +2,15 @@ from lib.ESP_Boot import *
 from lib.LEDController import *
 from lib.ConfigManager import *
 from lib.sys_bus import bus
-import machine
+import machine, os
+from esp32 import LDO
+
+def exists(path):
+    try:
+        os.stat(path)
+    except OSError:
+        return False
+    return True
 
 
 def init_lan(sysBus):
@@ -119,8 +127,28 @@ def init_st(sysBus):
         print(f"❌ st_LED init error: {e}")
     return
 
+
+def init_sd(sysBus):
+    config = sysBus.shared['SDcard']
+    _phat = ''
+    if config['enable'] and not exists(config["phat"]):
+        try:
+            _phat = config["phat"]
+            ldo = LDO(config['LDO']['id'], config['LDO']['mv'], adjustable=True)
+            sd = machine.SDCard(slot=config['config']['slot'], width=config['config']['width'],
+                sck=config['GPIO']['sck'], cmd=config['GPIO']['cmd'],
+                data=config['GPIO']['data'],
+                freq=config['config']['freq'])
+            os.mount(sd, f'{config["phat"]}')
+        except Exception as e:
+            print(f"❌ SD card init error: {e}")
+            
+    sysBus.register_service("data_Phat", _phat)
+    return
+
 init_lan(bus)
 init_bus(bus)
 init_led(bus)
 init_st(bus)
+init_sd(bus)
 

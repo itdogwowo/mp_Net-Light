@@ -1,7 +1,7 @@
 import hashlib
 import ubinascii
 import os, gc, json
-
+from lib.sys_bus import bus
 
 class FileRx:
     """
@@ -173,7 +173,7 @@ class FileRx:
         
         self.file_id = int(args.get("file_id", 0))
         self.total = int(args.get("total_size", 0))
-        self.path = args.get("path")
+        self.path = bus.get_service("data_Phat") + args.get("path")
         self.sha_expect = args.get("sha256")
         
         if not self.path or not self.sha_expect:

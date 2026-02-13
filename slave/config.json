@@ -26,9 +26,16 @@
                 "phy_addr":1,
                 "phy_type":2,
                 "GPIO": { "mdc": 31, "mdio": 52, "ref_clk": 50 },
-            }
-            
+            } 
         ]
+    },
+    "SDcard": {
+        "enable": 0,
+        "phat":"/sd",
+        "LDO":{"id":4,"mv":3300},
+        "config": { "slot": 0, "width": 4, "freq": 40000000 },
+        "GPIO": { "sck": 43, "cmd": 44, "data": [39, 40, 41, 42] }
+
     },
     "UART": {
         "enable": 0,

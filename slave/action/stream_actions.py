@@ -6,7 +6,7 @@ from lib.schema_codec import SchemaCodec
 def on_stream_state_set(ctx, args):
     """0x3009: 準備分塊與文件模式"""
     bus.shared.update({
-        "active_file": args["file_name"],
+        "active_file": bus.get_service("data_Phat")+ '/' + args["file_name"],
         "cur_block": args["block_id"],
         "play_mode": args["play_mode"],
         "is_seeking": True,
