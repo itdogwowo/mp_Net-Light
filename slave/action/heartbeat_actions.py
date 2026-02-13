@@ -6,7 +6,7 @@ import machine
 # 修正匯入路徑，使用你定義好的 Proto 類
 from lib.proto import Proto 
 from lib.schema_codec import SchemaCodec 
-
+from lib.sys_bus import bus
 # 全局變量記錄最後一次心跳時間
 _LAST_HB_TICK = 0
 
@@ -25,7 +25,7 @@ def send_heartbeat(ctx):
 
     # 準備數據
     payload_data = {
-        "slave_id": get_uid(),
+        "slave_id": bus.slave_id,
         "uptime_ms": time.ticks_ms(),
         "mem_free": gc.mem_free(),
         "ws_connected": 1 if ctx.get("is_ws", False) else 0

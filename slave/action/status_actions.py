@@ -16,7 +16,7 @@ def get_runtime_info():
     # 獲取文件系統空間
     fs_stat = os.statvfs('/')
     fs_free = (fs_stat[0] * fs_stat[3]) // 1024
-    uid = ubinascii.hexlify(machine.unique_id()).decode().upper()
+    uid = bus.slave_id
     
     return {
         "id": uid,
