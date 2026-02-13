@@ -34,14 +34,16 @@ def check_network(lan, state):
             
     return is_connected
 
-def task_loop(app, config, lan):
+def task_loop(app):
     # 初始化網路狀態追蹤器
+    bus_sys = bus.shared["System"]
     net_state = {"was_connected": False, "last_retry": 0, "retry_count": 0}
     
+    lan = bus.get_service("lan")
     
     ctrl_bus = NetBus(NetBus.TYPE_WS, app=app, label="CTRL-WS")
     discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCV")
-    discovery_bus.connect(None, config["discovery_port"])
+    discovery_bus.connect(None, bus_sys["discovery_port"])
 
 
     ctx_extra = {
@@ -79,7 +81,7 @@ def task_loop(app, config, lan):
 
         # 3. 系統維護
         now = time.ticks_ms()
-        if time.ticks_diff(now, s["last_hb"]) > config["heartbeat_interval"]:
+        if time.ticks_diff(now, s["last_hb"]) > bus_sys["heartbeat_interval"]:
             if bus.shared.get("is_streaming") and ctrl_bus.connected:
                 
                 send_heartbeat({"app": app, "send": ctrl_bus.write})
@@ -88,6 +90,6 @@ def task_loop(app, config, lan):
             gc.collect()
             s["last_hb"] = now
             last_report = now
-        time.sleep_ms(config.get("refresh_rate_ms", 1))
+        time.sleep_ms(bus_sys.get("refresh_rate_ms", 1))
     
     ctrl_bus.disconnect()

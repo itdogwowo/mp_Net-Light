@@ -2,7 +2,7 @@ from lib.ESP_Boot import *
 from lib.LEDController import *
 from lib.ConfigManager import *
 from lib.sys_bus import bus
-
+import machine
 
 
 def init_lan(sysBus):
@@ -14,13 +14,14 @@ def init_lan(sysBus):
             lan = network.LAN(mdc=i['GPIO']['mdc'], mdio=i['GPIO']['mdio'],
                           ref_clk=i['GPIO']['ref_clk'], phy_addr=i['phy_addr'],
                           phy_type=i['phy_type'] )
+#             lan = network.LAN(mdc=31, mdio=52, phy_addr=1, phy_type=network.PHY_IP101, ref_clk=50)
             
         lan.active(True)
         sysBus.register_service("lan", lan)
     return
 
 def init_bus(sysBus):
-    import machine
+    
     # 這裡保持你的硬體配置
     SPI_config = sysBus.shared['SPI']
     spi_list = []
@@ -35,23 +36,91 @@ def init_bus(sysBus):
                 miso=machine.Pin(i['GPIO']['miso']) if i['GPIO']['miso'] else None
             )
             spi_list.append(spi)            
-            
-        print(SPI_config)
         sysBus.register_service("spi_list", spi_list)
+        
+    I2C_config = sysBus.shared['I2C']
+    i2c_list = []
+    if SPI_config['enable']:
+        for i in I2C_config['list']:
+            i2c = machine.I2C(i['id'],
+                freq=i['freq'] if i['freq'] else None,
+                scl=machine.Pin(i['GPIO']['scl']) if i['GPIO']['scl'] else None ,
+                sda=machine.Pin(i['GPIO']['sda']) if i['GPIO']['sda'] else None 
+            )
+            i2c_list.append(i2c)            
+        sysBus.register_service("i2c_list", i2c_list)
+        
+        
     return
 
 def init_led(sysBus):
-    # 這裡保持你的硬體配置
-
+    
+    PCA9685_config = sysBus.shared['PCA9685']
+    pca9685_list = []
+    if PCA9685_config['enable']:
+        for i in PCA9685_config['list']:
+            if sysBus.shared['I2C']['enable']:
+                try:
+                    i2c_list = sysBus.get_service("i2c_list")
+                    for i2c in i2c_list:
+                        devices = i2c.scan()
+                        print(f"I2C Scan found: {[hex(d) for d in devices]}")
+                        for addr in devices:
+                            try:
+                                if addr != 112:
+                                    pca = PCA9685(i2c, address=addr)
+                                    pca.freq(1000)
+                                    # 建立符合精簡版接口的控制器
+                                    pca9685_list.append(LEDController('i2c_LED', {'led_IO': pca, 'Q': 16, 'order': 'W'}))
+                            except Exception as e:
+                                print(f"❌ PCA9685 at {hex(addr)} error: {e}")
+#                     pca = PCA9685(i2c_list[i['GPIO']['i2c']], address=i['address'])
+#                     pca.freq(1000)
+#                     pca9685_list.append(LEDController('i2c_LED', {'led_IO': pca, 'Q': 16, 'order': 'W'}))
+                except Exception as e:
+                    print(f"❌ PCA9685 at {hex(i['address'])} error: {e}")
+        sysBus.register_service("pca9685_list", pca9685_list)
+    
+    
+    WS2812_config = sysBus.shared['WS2812']
+    ws2812_list = []
+    if WS2812_config['enable']:
+        import neopixel
+        for i in WS2812_config['list']:
+            pixel = neopixel.NeoPixel(machine.Pin(i['GPIO'], machine.Pin.OUT),i['Q'])
+            ws2812_list.append(LEDController('WS2812', {'led_IO': pixel, 'Q': i['Q'], 'order': i['order']}))
+            
+        sysBus.register_service("ws2812_list", ws2812_list)
+        
+        
+    APA102_config = sysBus.shared['APA102']
+    apa1022_list = []
+    if APA102_config['enable']:
+        if sysBus.shared['SPI']['enable']:
+            for i in APA102_config['list']:
+                try:
+                    spi_list = sysBus.get_service("spi_list")
+                    apa = APA102(spi_list[i['GPIO']['spi']], num_leds=i['Q'])
+                    apa1022_list.append(LEDController('APA102', {'led_IO': apa, 'Q': i['Q'], 'order': i['order']}))
+                except Exception as e:
+                    print(f"❌ APA102 at SPI ID {i['GPIO']['spi']} error: {e}")
+                        
+        sysBus.register_service("apa1022_list", apa1022_list)
+            
+    sysBus.register_service("led_list", apa1022_list + ws2812_list + pca9685_list)
     return
 
-
+def init_st(sysBus):
+    try:
+        st_LED = LEDStreamer(sysBus.get_service("led_list"))
+        st_LED.show_all()
+        sysBus.register_service("st_LED", st_LED)
+    except Exception as e:
+        print(f"❌ st_LED init error: {e}")
+    return
 
 init_lan(bus)
 init_bus(bus)
 init_led(bus)
+init_st(bus)
 
-sss = bus.get_service("spi_list")
-print(bus.get_service("lan"))
-print(bus.get_service("spi_list"))
-# bus.shared['ETH_Network']

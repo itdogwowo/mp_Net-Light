@@ -4,7 +4,8 @@ from lib.LEDController import *
 
 from lib.ConfigManager import *
 
-from lib.PCA9685 import *    
+from lib.pca9685 import *    
+from lib.apa102 import *
 
 import usocket as socket
 import network ,webrepl

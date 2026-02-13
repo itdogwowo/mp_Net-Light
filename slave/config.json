@@ -41,9 +41,13 @@
         ]
     },
     "I2C": {
-        "enable": 0,
+        "enable": 1,
         "list": [
-            {"GPIO":{"scl":47,"sda":48},"address":["0x40"]}
+            {
+                "id"1,
+                "freq": 400000,
+                "GPIO":{"scl":20,"sda":21}
+            }
         ]
     },
     "SPI": {
@@ -67,6 +71,12 @@
             }
         ]
     },
+    "PCA9685": {
+        "enable": 1,
+        "list": [
+            {"GPIO":{"i2c":0,"dArc":0,"type":0},"address":["0x40"]}
+        ]
+    },
     "PWM": {
         "enable": 0,
         "list": [
@@ -74,16 +84,18 @@
         ]
     },
     "WS2812": {
-        "enable": 0,
+        "enable": 1,
         "list": [
-            {"GPIO":1,"Q":0,"order":"GRB"},
+            {"GPIO":15,"Q":10,"order":"GRB"},
+            {"GPIO":16,"Q":10,"order":"GRB"},
+            {"GPIO":17,"Q":10,"order":"GRB"},
 
         ]
     },
     "APA102": {
-        "enable": 0,
+        "enable": 1,
         "list": [
-            {"GPIO":1,"Q":0,"order":"BGRW"},
+            {"GPIO":{"spi":0 },"Q":290,"order":"BGRW"},
 
         ]
     }

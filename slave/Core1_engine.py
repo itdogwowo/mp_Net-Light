@@ -2,7 +2,7 @@
 import time
 from lib.sys_bus import bus
 
-def task_loop(apa, fps=40):
+def task_loop(st_LED, fps=40):
     hub = None
     while hub is None:
         hub = bus.get_service("pixel_stream")
@@ -17,12 +17,12 @@ def task_loop(apa, fps=40):
     next_tick_us = time.ticks_us()
 
     # --- 💎 性能優化：預先緩存常量與局部變量 💎 ---
-    frame_size = len(apa.raw_buffer) # 單幀所需的字節數
+    frame_size = len(st_LED.big_buffer) # 單幀所需的字節數
     current_big_buffer = None        # 當前從 Hub 拿到的超大原始 Buff
     buff_offset = 0                  # 當前讀取偏移量
 
 
-    raw_view = apa.raw_buffer
+    raw_view = st_LED.big_buffer
     
     print(f"🔥 [Core 1] Render Engine Online | {fps} FPS")
 
@@ -30,8 +30,8 @@ def task_loop(apa, fps=40):
         # 🚀 停止模式：關燈
         if not bus.shared.get("is_streaming"):
             if bus.shared.get("is_ready") == False:
-                apa.raw_buffer[:] = bytearray(len(apa.raw_buffer)) # 清空
-                apa.show()
+                st_LED.big_buffer[:] = bytearray(frame_size) # 清空
+                st_LED.show_all()
             time.sleep_ms(100)
             next_tick_us = time.ticks_us() # 重置防止緩衝區爆發
             _state["render_count"] = 0 # 停止時清零
@@ -56,7 +56,7 @@ def task_loop(apa, fps=40):
                 # 🐍 Pythonic 高速切片拷貝 (內核級別 memmove)
                 # 從大緩存中提取一幀到 apa 的顯存中
                 raw_view[:] = current_big_buffer[buff_offset : buff_offset + frame_size]
-                apa.show()
+                st_LED.show_all()
                 _state["render_count"] += 1
                 buff_offset += frame_size
             next_tick_us += interval_us

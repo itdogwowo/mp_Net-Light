@@ -8,7 +8,7 @@ class APA102:
     APA102 極速驅動 - 專為 LEDcontroller 配套設計
     特性：雙緩衝、Viper 轉換、對齊 LEDcontroller 的 buf 操作
     """
-    def __init__(self, num_leds, spi, baudrate=8_000_000):
+    def __init__(self, spi, num_leds,  baudrate=8_000_000):
         self.n = num_leds
         self.buf_length = num_leds * 4
         

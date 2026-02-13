@@ -7,37 +7,16 @@ import Core0_worker
 import Core1_engine
 from apa102 import APA102
 
-CONFIG = {
-    "refresh_rate_ms": 1,
-    "discovery_port": 9000,
-    "heartbeat_interval": 10000,
-    "local_fps": 40,
-    "num_leds": 336,
-    "buffer_frames": 1,  # 幀緩衝區大小 (幀數)
-
-}
-_lan_instance = None
-def init_lan():
-    """初始化 LAN 硬件，但不阻塞等待連接"""
-    # 這裡保持你的硬體配置
-    lan = network.LAN(mdc=31, mdio=52, phy_addr=1, phy_type=network.PHY_IP101, ref_clk=50)
-    lan.active(True)
-    return lan
 
 def launcher():
-    # 1. 硬件初始化 (假設 num_leds 由此獲取)
-    lan = init_lan() # 僅初始化硬體
-    
-    NUM_LEDS = CONFIG["num_leds"]
-    apa = APA102(num_leds=NUM_LEDS)
+    st_LED = bus.get_service("st_LED")
     
     # 2. 總線與 ID
     bus.slave_id = ubinascii.hexlify(machine.unique_id()).decode().upper()
     bus.shared["engine_run"] = True
-    bus.shared["num_leds"] = NUM_LEDS # 🚀 顯式存儲供後續使用
-
+    bus_sys = bus.shared["System"]
     # 3. 🚀 註冊核心交換服務 (不修改 lib，在此處申請)
-    hub = AtomicStreamHub(NUM_LEDS * 4 * CONFIG["buffer_frames"]) 
+    hub = AtomicStreamHub(st_LED.total_bytes * bus_sys["buffer_frames"]) 
     bus.register_service("pixel_stream", hub)
 
     
@@ -48,13 +27,13 @@ def launcher():
     try:
 
         # 4. 啟動雙核任務
-        _thread.start_new_thread(Core1_engine.task_loop, (apa, CONFIG["local_fps"]))
+        _thread.start_new_thread(Core1_engine.task_loop, (st_LED, bus_sys["local_fps"]))
 
         print(f"✨ NetBus System Online: {bus.slave_id}")
         
         app = App()
         # 🚀 啟動核心 0：Data 路由處理 (主線程阻塞)
-        Core0_worker.task_loop(app, CONFIG, lan)
+        Core0_worker.task_loop(app)
 
     except KeyboardInterrupt:
         print("\n👋 User stop requested.")
@@ -65,8 +44,8 @@ def launcher():
         bus.shared["engine_run"] = False
         print("🛑 All cores stopping...")
         time.sleep_ms(500) # 給 Core 1 一點時間收尾
-        apa.clear()
-        apa.show()
+        st_LED.big_buffer = bytearray(st_LED.total_bytes) 
+        st_LED.show_all()
         print("🏁 Clean Exit.")
 
 if __name__ == "__main__":
