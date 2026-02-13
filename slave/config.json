@@ -25,7 +25,7 @@
             {
                 "phy_addr":1,
                 "phy_type":2,
-                "GPIO": { "mdc": 43, "mdio": 52, "ref_clk": 50 },
+                "GPIO": { "mdc": 31, "mdio": 52, "ref_clk": 50 },
             }
             
         ]
