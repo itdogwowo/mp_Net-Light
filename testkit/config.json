@@ -1,0 +1,109 @@
+{
+    "System": {
+        "c_lum": 1.0,
+        "hostname": "",
+        "refresh_rate_ms": 1,
+        "discovery_port": 9000,
+        "heartbeat_interval": 10000,
+        "local_fps": 40,
+        "num_leds": 336,
+        "buffer_frames": 1,
+    },
+    "WIFI_Network": {
+        "enable": 0,
+        "list": [
+            {
+                "ssid": "Home_WiFi",
+                "wifi_pw": "",
+                "priority": 1
+            }
+        ]
+    },
+    "ETH_Network": {
+        "enable": 1,
+        "list": [
+            {
+                "phy_addr":1,
+                "phy_type":2,
+                "GPIO": { "mdc": 31, "mdio": 52, "ref_clk": 50 },
+            } 
+        ]
+    },
+    "SDcard": {
+        "enable": 0,
+        "phat":"/sd",
+        "LDO":{"id":4,"mv":3300},
+        "config": { "slot": 0, "width": 4, "freq": 40000000 },
+        "GPIO": { "sck": 43, "cmd": 44, "data": [39, 40, 41, 42] }
+
+    },
+    "UART": {
+        "enable": 0,
+        "list": [
+            {
+                "id": 1,
+                "baudrate": 9600,
+                "GPIO": { "tx": 43, "rx": 44 },
+            }
+        ]
+    },
+    "I2C": {
+        "enable": 1,
+        "list": [
+            {
+                "id"1,
+                "freq": 400000,
+                "GPIO":{"scl":20,"sda":21}
+            }
+        ]
+    },
+    "SPI": {
+        "enable": 1,
+        "list": [
+            {
+                "id"1,
+                "baudrate": 8000000,
+                "phase":1,
+                "polarity":1,
+                "GPIO": { "sck": 8, "mosi": 7, "miso": null }
+            }
+        ]
+    },
+    "I2S": {
+        "enable": 0,
+        "list": [
+            {
+                "config": { "rate": 16000, "bits": 16, "ch": 1 },
+                "GPIO":{"sck":20 ,"ws":21 ,"sd":21}
+            }
+        ]
+    },
+    "PCA9685": {
+        "enable": 1,
+        "list": [
+            {"GPIO":{"i2c":0,"dArc":0,"type":0},"address":["0x40"]}
+        ]
+    },
+    "PWM": {
+        "enable": 0,
+        "list": [
+            {"GPIO":0,"dArc":0,"type":0},
+        ]
+    },
+    "WS2812": {
+        "enable": 1,
+        "list": [
+            {"GPIO":15,"Q":10,"order":"GRB"},
+            {"GPIO":16,"Q":10,"order":"GRB"},
+            {"GPIO":17,"Q":10,"order":"GRB"},
+
+        ]
+    },
+    "APA102": {
+        "enable": 1,
+        "list": [
+            {"GPIO":{"spi":0 },"Q":290,"order":"BGRW"},
+
+        ]
+    }
+}
