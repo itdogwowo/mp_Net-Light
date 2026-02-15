@@ -9,6 +9,9 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from collections import defaultdict, deque
+import select
+import errno
+import platform
 
 # ==================== 音頻模式自動檢測 (修復導入) ====================
 AUDIO_MODE = 'miniaudio'
@@ -45,6 +48,25 @@ except ImportError as e:
     print(f"❌ 導入錯誤: {e}")
     sys.exit(1)
 
+
+def optimize_system_buffers():
+    """
+    系統級 TCP 緩衝區優化
+    僅在 Linux/macOS 上有效
+    """
+    if platform.system() == "Linux":
+        try:
+            # 增加系統最大發送/接收緩衝區
+            os.system("sysctl -w net.core.rmem_max=16777216")  # 16MB
+            os.system("sysctl -w net.core.wmem_max=16777216")  # 16MB
+            
+            # TCP 自動調優
+            os.system("sysctl -w net.ipv4.tcp_rmem='4096 87380 16777216'")
+            os.system("sysctl -w net.ipv4.tcp_wmem='4096 65536 16777216'")
+            
+            print("✅ 系統緩衝區已優化")
+        except:
+            print("⚠️ 系統緩衝區優化需要 root 權限")
 
 # ==================== 增強版設備監控模型 ====================
 class DeviceMonitor:
@@ -334,6 +356,8 @@ class NetBusMaster:
         self.selected_targets = []
         self.prepared_data = {}
         self.pxld_metadata = {}
+
+        optimize_system_buffers()
         
         threading.Thread(target=self.start_ws_server, daemon=True).start()
     
@@ -360,13 +384,22 @@ class NetBusMaster:
     def start_ws_server(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        # 🔥 設置服務器 Socket 緩衝區
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 512 * 1024)  # 512KB 發送
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 256 * 1024)  # 256KB 接收
+        
         s.bind(('0.0.0.0', 8000))
-        s.listen(20)
+        s.listen(20)  # 🔥 允許更多並發連接
         print(f"[WS Server] 監聽 0.0.0.0:8000")
         
         while self.running:
             try:
                 conn, addr = s.accept()
+                
+                # 🔥 立即設置新連接的優先級
+                conn.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 0x10)  # 低延遲
+                
                 threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True).start()
             except:
                 break
@@ -375,6 +408,7 @@ class NetBusMaster:
         cid = f"PENDING_{addr[1]}"
         
         try:
+            # ========== WebSocket 握手 (保持阻塞模式) ==========
             header_data = conn.recv(1024).decode()
             if not header_data or "Upgrade: websocket" not in header_data:
                 conn.close()
@@ -393,6 +427,18 @@ class NetBusMaster:
                     "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n")
             conn.send(resp.encode())
             
+            # 🔥🔥🔥 在握手完成後立即設置非阻塞 🔥🔥🔥
+            conn.setblocking(False)
+            
+            # 🔥 同時設置 TCP 緩衝區大小
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 256 * 1024)  # 發送 256KB
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 128 * 1024)  # 接收 128KB
+            
+            # 🔥 禁用 Nagle 算法 (減少小包延遲)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            
+            # ... 後續的設備註冊與數據處理 ...
+            
             if cid not in self.config["mapping"]:
                 pids = [v["play_id"] for v in self.config["mapping"].values() if "play_id" in v]
                 new_pid = max(pids) + 1 if pids else 0
@@ -410,28 +456,51 @@ class NetBusMaster:
                 "parser": StreamParser(),
                 "ack_event": threading.Event(),
                 "query_event": threading.Event(),
-                "remote_sha": None
+                "remote_sha": None,
+                "last_acked_offset": -1  # 🔥 添加這個字段
             }
             
             parser = self.slaves[cid]["parser"]
+            
+            # ========== 非阻塞接收循環 ==========
             while self.running:
-                raw = conn.recv(4096)
-                if not raw:
+                try:
+                    raw = conn.recv(4096)
+                    if not raw:
+                        break
+                    
+                    # WebSocket 解幀
+                    if raw[0] == 0x82:
+                        plen = raw[1] & 0x7F
+                        off = 2
+                        if plen == 126:
+                            off = 4
+                        elif plen == 127:
+                            off = 10
+                        parser.feed(raw[off:])
+                    else:
+                        parser.feed(raw)
+                    
+                    # 處理協議包
+                    for ver, addr_pkt, cmd, payload in parser.pop():
+                        cid = self.dispatch_logic(cid, cmd, payload)
+                
+                except BlockingIOError:
+                    # 🔥 非阻塞模式下沒有數據是正常的
+                    time.sleep(0.01)  # 短暫休眠,避免 CPU 空轉
+                    continue
+                
+                except socket.error as e:
+                    if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                        time.sleep(0.01)
+                        continue
+                    else:
+                        print(f"[{cid}] Socket Error: {e}")
+                        break
+                
+                except Exception as e:
+                    self.panel.update_device(cid, status="錯誤", error_msg=str(e))
                     break
-                
-                if raw[0] == 0x82:
-                    plen = raw[1] & 0x7F
-                    off = 2
-                    if plen == 126:
-                        off = 4
-                    elif plen == 127:
-                        off = 10
-                    parser.feed(raw[off:])
-                else:
-                    parser.feed(raw)
-                
-                for ver, addr_pkt, cmd, payload in parser.pop():
-                    cid = self.dispatch_logic(cid, cmd, payload)
         
         except Exception as e:
             self.panel.update_device(cid, status="錯誤", error_msg=str(e))
@@ -490,8 +559,16 @@ class NetBusMaster:
                     monitor.block_count += 1
                     monitor.avg_fps = (monitor.avg_fps * (monitor.block_count - 1) + actual_fps) / monitor.block_count
         
-        elif cmd == 0x2004:
+        elif cmd == 0x2004:  # FILE_CHUNK_ACK
             if cid in self.slaves:
+                # 🔥 關鍵: 提取 offset
+                c_def = self.store.get(0x2004)
+                args = SchemaCodec.decode(c_def, payload)
+                
+                acked_offset = args.get("offset", 0)
+                
+                # 保存到節點
+                self.slaves[cid]["last_acked_offset"] = acked_offset
                 self.slaves[cid]["ack_event"].set()
         
         elif cmd == 0x2006:
@@ -678,6 +755,25 @@ class NetBusMaster:
         print("\n✅ 動畫數據準備完成")
         input("\n按 Enter 繼續...")
         self.panel.start()
+
+    def check_socket_buffers(self, tid):
+        """檢查當前 Socket 緩衝區配置"""
+        node = self.slaves.get(tid)
+        if not node:
+            return
+        
+        conn = node["conn"]
+        
+        try:
+            sndbuf = conn.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
+            rcvbuf = conn.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+            
+            print(f"[{tid}] Socket Buffers:")
+            print(f"  - Send Buffer: {sndbuf // 1024} KB")
+            print(f"  - Recv Buffer: {rcvbuf // 1024} KB")
+        except:
+            print(f"[{tid}] 無法查詢緩衝區")
+
     
     # ==================== Step 3: 部署數據 ====================
     def step_3_deploy(self):
@@ -694,6 +790,7 @@ class NetBusMaster:
         
         local_sha_cache = {}
         for tid in self.selected_targets:
+            self.check_socket_buffers(tid)
             pid = self.config["mapping"][tid].get("play_id")
             data = self.prepared_data.get(pid)
             if data:
@@ -776,8 +873,9 @@ class NetBusMaster:
                 self.panel.update_device(tid, status="傳輸中", upload_progress=0)
         
         with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
-            
+            # futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
+            futures = {executor.submit(self._deploy_to_single_slave_smart, tid): tid for tid in final_targets}
+
             for future in futures:
                 tid = futures[future]
                 try:
@@ -788,6 +886,250 @@ class NetBusMaster:
         
         time.sleep(2)
         print("\n✅ 部署完成")
+    
+    def _deploy_to_single_slave_smart(self, tid):
+        """
+        高性能滑動窗口 - 目標 500 KB/s
+        """
+        node = self.slaves.get(tid)
+        pid = self.config["mapping"][tid].get("play_id")
+        data = self.prepared_data.get(pid)
+        
+        if not node or data is None:
+            raise Exception("無數據或離線")
+        
+        conn = node["conn"]
+        local_sha = hashlib.sha256(data).digest()
+        target_path = "/data.bin"
+        total_len = len(data)
+        chunk_size = 4096  # ✅ 已確認可用
+        
+        # 🔥 激進窗口參數
+        INITIAL_WINDOW = 32   # 從 4 改為 32（128KB 飛行數據）
+        MAX_WINDOW = 64       # 從 16 改為 64（256KB 飛行數據）
+        MIN_WINDOW = 8        # 從 2 改為 8
+        
+        current_window = INITIAL_WINDOW
+        
+        start_time = time.time()
+        
+        self.panel.update_device(
+            tid,
+            uploaded_bytes=0,
+            total_bytes=total_len,
+            upload_start_time=start_time
+        )
+        
+        # 發送 BEGIN
+        self.send_pkt([tid], 0x2001, {
+            "file_id": 1,
+            "total_size": total_len,
+            "chunk_size": chunk_size,
+            "sha256": local_sha,
+            "path": target_path
+        })
+        time.sleep(0.15)
+        
+        # 傳輸核心
+        pending_acks = {}
+        send_offset = 0
+        confirmed_offset = 0
+        last_ack_time = time.time()
+        consecutive_timeouts = 0
+        
+        # 🔥 性能統計
+        total_sent_packets = 0
+        total_retransmits = 0
+        last_log_time = time.time()
+        
+        while confirmed_offset < total_len:
+            now = time.time()
+            
+            # ========== 批量發送 ==========
+            packets_sent_this_round = 0
+            
+            while (len(pending_acks) < current_window and 
+                send_offset < total_len and
+                packets_sent_this_round < 16):  # 🔥 每輪最多發 16 個包
+                
+                chunk = data[send_offset : send_offset + chunk_size]
+                
+                try:
+                    self._send_chunk_nonblocking(tid, send_offset, chunk)
+                    pending_acks[send_offset] = now
+                    send_offset += len(chunk)
+                    total_sent_packets += 1
+                    packets_sent_this_round += 1
+                
+                except BlockingIOError:
+                    break  # Socket 緩衝區滿，等下一輪
+                
+                except Exception as e:
+                    print(f"[{tid}] ❌ 發送失敗 {send_offset}: {e}")
+                    raise
+            
+            # ========== 批量收集 ACK（關鍵優化）==========
+            acks_collected = 0
+            ack_deadline = time.time() + 0.01  # 🔥 只等 10ms（從 50ms 降低）
+            
+            while time.time() < ack_deadline and len(pending_acks) > 0:
+                if node["ack_event"].wait(timeout=0.002):  # 🔥 2ms 快速檢查
+                    node["ack_event"].clear()
+                    
+                    acked_offset = node.get("last_acked_offset", -1)
+                    
+                    if acked_offset in pending_acks:
+                        del pending_acks[acked_offset]
+                        
+                        if acked_offset >= confirmed_offset:
+                            confirmed_offset = acked_offset + chunk_size
+                        
+                        acks_collected += 1
+                        last_ack_time = now
+                        consecutive_timeouts = 0
+                        
+                        # 🔥 慢啟動：收到 ACK 立即擴窗
+                        if current_window < MAX_WINDOW:
+                            current_window = min(MAX_WINDOW, current_window + 2)
+                else:
+                    break  # 沒有更多 ACK
+            
+            # ========== 更新進度 ==========
+            elapsed = time.time() - start_time
+            speed = (confirmed_offset / 1024) / elapsed if elapsed > 0 else 0
+            progress = (confirmed_offset / total_len) * 100
+            
+            self.panel.update_device(
+                tid,
+                upload_progress=progress,
+                upload_speed=speed,
+                uploaded_bytes=confirmed_offset
+            )
+            
+            # 🔥 每 5 秒打印一次性能日誌
+            if now - last_log_time > 5.0:
+                rtt = (now - last_ack_time) * 1000  # 毫秒
+                print(f"[{tid}] 📊 窗口:{current_window} | 未確認:{len(pending_acks)} | "
+                    f"重傳:{total_retransmits} | RTT:{rtt:.0f}ms")
+                last_log_time = now
+            
+            # ========== 超時重傳（放寬條件）==========
+            if now - last_ack_time > 2.0 and len(pending_acks) > 0:  # 🔥 從 1.0s 改為 2.0s
+                consecutive_timeouts += 1
+                
+                # 🔥 縮窗更溫和
+                if current_window > MIN_WINDOW:
+                    current_window = max(MIN_WINDOW, int(current_window * 0.75))
+                    print(f"[{tid}] ⚠️ 超時，縮窗至 {current_window}")
+                
+                # 重傳最舊的包
+                oldest_offset = min(pending_acks.keys())
+                chunk = data[oldest_offset : oldest_offset + chunk_size]
+                
+                self._send_chunk_nonblocking(tid, oldest_offset, chunk)
+                pending_acks[oldest_offset] = now
+                total_retransmits += 1
+                
+                last_ack_time = now
+                
+                if consecutive_timeouts > 20:  # 🔥 從 10 改為 20
+                    raise Exception("連續超時過多,傳輸失敗")
+            
+            # 🔥 防止 CPU 空轉（但不要睡太久）
+            if packets_sent_this_round == 0 and acks_collected == 0:
+                time.sleep(0.001)  # 只睡 1ms
+        
+        # 發送 END
+        self.send_pkt([tid], 0x2003, {"file_id": 1})
+        time.sleep(0.2)
+        
+        # 🔥 最終統計
+        elapsed_total = time.time() - start_time
+        avg_speed = (total_len / 1024) / elapsed_total
+        print(f"\n[{tid}] ✅ 傳輸完成:")
+        print(f"  - 總大小: {total_len//1024} KB")
+        print(f"  - 耗時: {elapsed_total:.1f}s")
+        print(f"  - 平均速度: {avg_speed:.1f} KB/s")
+        print(f"  - 重傳次數: {total_retransmits}")
+        
+        self.config["mapping"][tid]["last_sha"] = local_sha.hex()
+        self.save_config()
+    
+    def _send_chunk_nonblocking(self, tid, offset, chunk):
+        """
+        改進版非阻塞發送 - 完整錯誤處理
+        """
+        node = self.slaves.get(tid)
+        if not node:
+            raise Exception("設備離線")
+        
+        # 構造協議包
+        c_def = self.store.get(0x2002)
+        data_pkt = Proto.pack(0x2002, SchemaCodec.encode(c_def, {
+            "file_id": 1,
+            "offset": offset,
+            "data": chunk
+        }))
+        
+        # WebSocket 封裝
+        l = len(data_pkt)
+        hdr = bytearray([0x82])
+        if l <= 125:
+            hdr.append(l)
+        elif l <= 65535:
+            hdr.append(126)
+            hdr.extend(struct.pack(">H", l))
+        else:
+            hdr.append(127)
+            hdr.extend(struct.pack(">Q", l))
+        
+        pkt = hdr + data_pkt
+        conn = node["conn"]
+        
+        # 🔥 完整的非阻塞發送邏輯
+        total_sent = 0
+        retry_count = 0
+        max_retries = 50  # 最多重試 50 次 (約 5 秒)
+        
+        while total_sent < len(pkt):
+            try:
+                # 嘗試發送剩餘數據
+                sent = conn.send(pkt[total_sent:])
+                
+                if sent == 0:
+                    raise Exception("Socket 連接已關閉")
+                
+                total_sent += sent
+                retry_count = 0  # 發送成功,重置計數
+            
+            except BlockingIOError:
+                # 緩衝區滿,等待可寫
+                retry_count += 1
+                
+                if retry_count > max_retries:
+                    raise Exception(f"發送超時 ({offset})")
+                
+                # 🔥 使用 select 等待 Socket 可寫
+                _, writable, exceptional = select.select([], [conn], [conn], 0.1)
+                
+                if exceptional:
+                    raise Exception("Socket 異常")
+                
+                if not writable:
+                    time.sleep(0.01)
+                    continue
+            
+            except socket.error as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    # 與 BlockingIOError 相同處理
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        raise Exception(f"發送超時 ({offset})")
+                    time.sleep(0.01)
+                    continue
+                else:
+                    # 嚴重錯誤
+                    raise Exception(f"Socket Error: {e}")
     
     def _deploy_to_single_slave(self, tid):
         node = self.slaves.get(tid)

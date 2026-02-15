@@ -20,12 +20,11 @@ class NetBus:
         self.target_addr = None # UDP 發送對象
         
         # 內存隔離：每個 Bus 實例擁有獨立的緩衝區與解析器
-        self._buf = bytearray(4096)
+        self._buf = bytearray(8192)
         self._ptr = 0
         self.parser = app.create_parser() if app else None
 
     def connect(self, host, port, path="/ws"):
-        """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
         try:
             if self.type == self.TYPE_UDP:
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -33,11 +32,19 @@ class NetBus:
                 self.connected = True
             else:
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                
+                # 🔥 MCU 端也設置緩衝區
+                try:
+                    self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 32 * 1024)  # 32KB 接收
+                    self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 * 1024)   # 8KB 發送
+                except:
+                    pass  # 某些 MCU 不支持
+                
                 self.sock.settimeout(5)
                 self.sock.connect((host, port))
                 
                 if self.type == self.TYPE_WS:
-                    # WebSocket 握手邏輯
+                    # WebSocket 握手
                     handshake = (
                         f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
                         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -50,9 +57,10 @@ class NetBus:
                 
                 self.connected = True
             
-            self.sock.settimeout(0)  # 統一進入非阻塞模式
+            self.sock.settimeout(0)  # 非阻塞
             print(f"✅ [{self.label}] Initialized")
             return True
+        
         except Exception as e:
             print(f"❌ [{self.label}] Init Failed: {e}")
             return False
@@ -92,10 +100,10 @@ class NetBus:
         
         try:
             if self.type == self.TYPE_UDP:
-                raw, addr = self.sock.recvfrom(2048)
+                raw, addr = self.sock.recvfrom(8192)
                 self.target_addr = addr # 自動鎖定最後一個來源
             else:
-                raw = self.sock.recv(2048)
+                raw = self.sock.recv(8192)
                 if not raw: 
                     self.connected = False
                     return

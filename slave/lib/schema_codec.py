@@ -1,40 +1,55 @@
 import struct
 
 class SchemaCodec:
-    @staticmethod
     def decode(cmd_def: dict, payload: bytes) -> dict:
-        """穩定版解碼：優化內存開銷"""
+        """優化版解碼：減少對象創建"""
         pos = 0
         payload_len = len(payload)
         out = {"_name": cmd_def.get("name"), "_cmd": cmd_def.get("cmd")}
         
+        # 🔥 使用 memoryview 避免切片拷貝
+        payload_view = memoryview(payload)
+        
         for f in cmd_def.get("payload", []):
             t, name = f["type"], f["name"]
+            
             if pos >= payload_len and t != "bytes_rest":
                 break
-
+            
             try:
-                # 使用 memoryview 能避免在大數據塊(Buffer)傳輸時產生不必要的拷貝
                 if t == "u8":
-                    out[name] = int(payload[pos]); pos += 1
+                    out[name] = payload_view[pos]
+                    pos += 1
+                
                 elif t == "u16":
-                    out[name] = struct.unpack_from("<H", payload, pos)[0]; pos += 2
+                    out[name] = struct.unpack_from("<H", payload_view, pos)[0]
+                    pos += 2
+                
                 elif t == "u32":
-                    out[name] = struct.unpack_from("<I", payload, pos)[0]; pos += 4
+                    out[name] = struct.unpack_from("<I", payload_view, pos)[0]
+                    pos += 4
+                
                 elif t == "str_u16len":
-                    ln = struct.unpack_from("<H", payload, pos)[0]; pos += 2
-                    out[name] = bytes(payload[pos : pos + ln]).decode("utf-8"); pos += ln
+                    ln = struct.unpack_from("<H", payload_view, pos)[0]
+                    pos += 2
+                    out[name] = bytes(payload_view[pos : pos + ln]).decode("utf-8")
+                    pos += ln
+                
                 elif t == "bytes_fixed":
                     flen = int(f["len"])
-                    # 這裡必須拷貝一份，因為 Parser 的 Buffer 是會變動的
-                    out[name] = bytes(payload[pos : pos + flen]); pos += flen
+                    # 🔥 直接返回 memoryview (零拷貝)
+                    out[name] = payload_view[pos : pos + flen]
+                    pos += flen
+                
                 elif t == "bytes_rest":
-                    # 🚀 [修正] 提取剩下的所有數據到 data
-                    out[name] = bytes(payload[pos:])
+                    # 🔥 直接返回 memoryview (零拷貝)
+                    out[name] = payload_view[pos:]
                     pos = payload_len
+            
             except Exception as e:
                 print(f"❌ [Codec] Decode field '{name}' error: {e}")
                 break
+        
         return out
 
     @staticmethod

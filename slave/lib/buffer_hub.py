@@ -1,55 +1,155 @@
 # lib/buffer_hub.py
+"""
+AtomicStreamHub - 動態規模緩衝管理器
+═══════════════════════════════════════════════════════
+支持兩種模式:
+1. 全內存模式: 單次分配整個文件大小
+2. 滾動緩衝模式: 固定數量的小緩衝塊
+"""
 import gc
 
 class AtomicStreamHub:
-    """
-    極速雙緩衝中心 (High-Performance Dual-Buffering Hub)
-    設計目標：
-    1. 解決雙核心(Core 0/1)讀寫競爭。
-    2. 提供 memoryview 視圖，實現零拷貝數據填充。
-    3. 內存預分配，運行期間零 GC 抖動。
-    """
-    def __init__(self, size):
-        # 🚀 物理內存預分配：建立兩塊獨立緩衝區
-        self._bufs = [bytearray(size), bytearray(size)]
-        # 🚀 視圖緩存：避免運行時重複創建 memoryview 對象
+    IDLE = 0
+    READY = 1
+
+    def __init__(self, size, num_buffers=8):
+        """
+        :param size: 每個緩衝區的大小 (bytes)
+        :param num_buffers: 緩衝區數量
+        """
+        self._bufs = [bytearray(size) for _ in range(num_buffers)]
         self._views = [memoryview(b) for b in self._bufs]
         
-        # 指針索引：w_idx(寫入/生產), r_idx(讀取/消費)
-        self._w_idx = 0
-        self._r_idx = 1
+        # 🔥 新增: offset 追蹤 (用於精確 ACK)
+        self._offsets = [0] * num_buffers
         
-        # Dirty Flag (紅旗標誌)：代表是否有新數據等待消費
-        self.dirty = False
+        self._status = [self.IDLE] * num_buffers
+        self._w_ptr = 0
+        self._r_ptr = 0
+        
         self.size = size
+        self.num_buffers = num_buffers
+        
+        print(f"🚀 [BufferHub] Rolling Mode: {(size * num_buffers) // 1024} KB")
 
-    def get_write_view(self):
+    def write_from(self, source, offset=0):
         """
-        生產者 (Core 0) 調用：獲取當前可寫入的後台緩衝區。
+        寫入數據
+        :param source: 來源數據
+        :param offset: 文件偏移量 (用於 ACK)
+        :return: bool
         """
-        return self._views[self._w_idx]
+        ptr = self._w_ptr
+        
+        if self._status[ptr] != self.IDLE:
+            return False
+        
+        # 拷貝數據
+        data_len = len(source)
+        self._views[ptr][:data_len] = source
+        
+        # 🔥 記錄 offset 和實際長度
+        self._offsets[ptr] = offset
+        
+        self._status[ptr] = self.READY
+        self._w_ptr = (ptr + 1) % self.num_buffers
+        
+        return True
 
-    def commit(self):
+    def read_into(self, target):
         """
-        生產者 (Core 0) 調用：提交數據，瞬間交換讀寫指針。
-        執行後，剛才寫入的數據對消費者變為可見。
+        讀出數據
+        :return: (success: bool, offset: int, length: int)
         """
-        self._w_idx, self._r_idx = self._r_idx, self._w_idx
-        self.dirty = True
+        ptr = self._r_ptr
+        
+        if self._status[ptr] != self.READY:
+            return False, 0, 0
+        
+        # 拷貝數據
+        data_len = min(len(target), self.size)
+        target[:data_len] = self._views[ptr][:data_len]
+        
+        offset = self._offsets[ptr]
+        
+        self._status[ptr] = self.IDLE
+        self._r_ptr = (ptr + 1) % self.num_buffers
+        
+        return True, offset, data_len
 
-    def get_read_view(self):
-        """
-        消費者 (Core 1) 調用：嘗試獲取最新展示數據。
-        若無新數據 (dirty=False)，返回 None。
-        """
-        if self.dirty:
-            self.dirty = False # 🚀 消費者看見紅旗後，立刻收起紅旗
-            return self._views[self._r_idx]
-        return None
+    def get_fill_level(self):
+        """當前積壓數量"""
+        return sum(1 for s in self._status if s == self.READY)
+    
+    def is_full(self):
+        """檢查是否已滿"""
+        return self._status[self._w_ptr] != self.IDLE
+    
+    def is_empty(self):
+        """檢查是否為空"""
+        return self._status[self._r_ptr] != self.READY
 
-    def force_get_view(self):
+    def flush(self):
+        """重置所有狀態"""
+        for i in range(self.num_buffers):
+            self._status[i] = self.IDLE
+        self._w_ptr = 0
+        self._r_ptr = 0
+        
+    def free(self):
+        """釋放內存"""
+        self._bufs = None
+        self._views = None
+        gc.collect()
+        print("♻️ [BufferHub] Memory Released")
+
+
+class FullMemoryBuffer:
+    """
+    全內存模式緩衝器
+    ═══════════════════════════════════════════════════════
+    一次性分配整個文件大小，零拷貝設計
+    """
+    def __init__(self, total_size):
+        self.buffer = bytearray(total_size)
+        self.view = memoryview(self.buffer)
+        self.total_size = total_size
+        self.written = 0
+        
+        print(f"🚀 [FullMemoryBuffer] Allocated: {total_size // 1024} KB")
+    
+    def write_at(self, offset, data):
         """
-        強制獲取當前讀取緩衝區 (無視 dirty 位)。
-        用於某些需要持續刷燈而不在乎數據是否更新的場景。
+        寫入指定偏移量
+        :param offset: 文件偏移
+        :param data: 數據
+        :return: bool
         """
-        return self._views[self._r_idx]
+        data_len = len(data)
+        
+        if offset + data_len > self.total_size:
+            return False
+        
+        # 🔥 零拷貝寫入
+        self.view[offset : offset + data_len] = data
+        
+        # 更新最大寫入位置
+        if offset + data_len > self.written:
+            self.written = offset + data_len
+        
+        return True
+    
+    def get_progress(self):
+        """獲取寫入進度"""
+        return (self.written / self.total_size) * 100 if self.total_size > 0 else 0
+    
+    def get_buffer(self):
+        """獲取完整緩衝區"""
+        return self.buffer
+    
+    def free(self):
+        """釋放內存"""
+        self.buffer = None
+        self.view = None
+        gc.collect()
+        print("♻️ [FullMemoryBuffer] Memory Released")

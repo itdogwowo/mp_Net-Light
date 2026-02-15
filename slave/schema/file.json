@@ -5,98 +5,72 @@
       "cmd": "0x2001",
       "name": "FILE_BEGIN",
       "payload": [
-        {
-          "name": "file_id",
-          "type": "u16"
-        },
-        {
-          "name": "total_size",
-          "type": "u32"
-        },
-        {
-          "name": "chunk_size",
-          "type": "u16"
-        },
-        {
-          "name": "sha256",
-          "type": "bytes_fixed",
-          "len": 32
-        },
-        {
-          "name": "path",
-          "type": "str_u16len"
-        }
+        {"name": "file_id", "type": "u16"},
+        {"name": "total_size", "type": "u32"},
+        {"name": "chunk_size", "type": "u16"},
+        {"name": "sha256", "type": "bytes_fixed", "len": 32},
+        {"name": "path", "type": "str_u16len"}
       ]
     },
     {
       "cmd": "0x2002",
       "name": "FILE_CHUNK",
       "payload": [
-        {
-          "name": "file_id",
-          "type": "u16"
-        },
-        {
-          "name": "offset",
-          "type": "u32"
-        },
-        {
-          "name": "data",
-          "type": "bytes_rest"
-        }
+        {"name": "file_id", "type": "u16"},
+        {"name": "offset", "type": "u32"},
+        {"name": "data", "type": "bytes_rest"}
       ]
     },
     {
       "cmd": "0x2003",
       "name": "FILE_END",
       "payload": [
-        {
-          "name": "file_id",
-          "type": "u16"
-        }
+        {"name": "file_id", "type": "u16"}
       ]
     },
     {
       "cmd": "0x2004",
-      "name": "FILE_ACK",
+      "name": "FILE_CHUNK_ACK",
       "payload": [
-        {
-          "name": "file_id",
-          "type": "u16"
-        },
-        {
-          "name": "offset",
-          "type": "u32"
-        }
+        {"name": "file_id", "type": "u16"},
+        {"name": "offset", "type": "u32"}
       ]
     },
     {
       "cmd": "0x2005",
       "name": "FILE_QUERY",
       "payload": [
-        {
-          "name": "path",
-          "type": "str_u16len"
-        }
+        {"name": "path", "type": "str_u16len"}
       ]
     },
     {
       "cmd": "0x2006",
       "name": "FILE_QUERY_RSP",
       "payload": [
-        {
-          "name": "exists",
-          "type": "u8"
-        },
-        {
-          "name": "sha256",
-          "type": "bytes_fixed",
-          "len": 32
-        },
-        {
-          "name": "path",
-          "type": "str_u16len"
-        }
+        {"name": "exists", "type": "u8"},
+        {"name": "sha256", "type": "bytes_fixed", "len": 32},
+        {"name": "path", "type": "str_u16len"}
+      ]
+    },
+    {
+      "cmd": "0x2007",
+      "name": "FILE_RECEIVED",
+      "comment": "MCU 通知 PC: 網絡接收完成 (數據已在 PSRAM)",
+      "payload": [
+        {"name": "file_id", "type": "u16"},
+        {"name": "received_bytes", "type": "u32"},
+        {"name": "mode", "type": "u8", "comment": "0=ROLLING, 1=FULL_MEMORY"}
+      ]
+    },
+    {
+      "cmd": "0x2008",
+      "name": "FILE_WRITTEN",
+      "comment": "MCU 通知 PC: Flash 寫入完成",
+      "payload": [
+        {"name": "file_id", "type": "u16"},
+        {"name": "success", "type": "u8"},
+        {"name": "sha256", "type": "bytes_fixed", "len": 32},
+        {"name": "error_msg", "type": "str_u16len"}
       ]
     }
   ]

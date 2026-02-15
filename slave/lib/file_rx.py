@@ -78,7 +78,7 @@ class FileRx:
             self.last_error = f"OPEN_FAIL: {e}"
             return False
 
-    def chunk(self, args: dict) -> bool:
+    def _chunk(self, args: dict) -> bool:
         """
         FILE_CHUNK (0x2002) 處理邏輯
         支持斷點續傳地址定位，但推薦順序發送以獲得最高效能。
@@ -106,6 +106,58 @@ class FileRx:
             self.last_error = f"WRITE_FAIL: {e}"
             self.active = False # 發生物理錯誤時解除激活
             return False
+        
+
+    def chunk(self, args: dict) -> bool:
+        """
+        立即回 ACK，延遲寫入
+        """
+        if not self.active or not self.fp:
+            return False
+        
+        if int(args.get("file_id", 0)) != self.file_id:
+            return False
+        
+        off = int(args.get("offset", 0))
+        data = args.get("data", b"")
+        
+        # 🔥 先緩存數據
+        if not hasattr(self, '_write_queue'):
+            self._write_queue = {}
+        
+        self._write_queue[off] = data
+        
+        # 🔥 立即標記為成功（先回 ACK）
+        return True
+
+        # 新增異步寫入函數
+    def flush_queue(self):
+        """
+        批量寫入緩存的數據
+        """
+        if not hasattr(self, '_write_queue') or not self._write_queue:
+            return
+        
+        try:
+            # 按順序寫入
+            for off in sorted(self._write_queue.keys()):
+                data = self._write_queue[off]
+                
+                if off != self.written:
+                    self.fp.seek(off)
+                
+                self.fp.write(data)
+                self.written = off + len(data)
+            
+            # 清空隊列
+            self._write_queue.clear()
+            
+            # 強制刷入磁盤
+            self.fp.flush()
+        
+        except Exception as e:
+            self.last_error = f"FLUSH_FAIL: {e}"
+            self.active = False
 
     def end(self, args: dict) -> bool:
         """
