@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 # config/asgi.py (完整修正版)
+=======
+# config/asgi.py - 確認配置正確
+>>>>>>> main
 import os
 from django.core.asgi import get_asgi_application
 
@@ -30,3 +34,5 @@ application = ProtocolTypeRouter({
         URLRouter(all_websocket_patterns)  # 🔥 使用合併後的路由
     ),
 })
+
+print("✅ ASGI 配置完成")

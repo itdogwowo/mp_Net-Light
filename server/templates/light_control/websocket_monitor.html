@@ -1,0 +1,328 @@
+<!-- templates/light_control/websocket_monitor.html -->
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}{{ title }} - mp_Net-Light{% endblock %}
+
+{% block content %}
+<div class="content" style="max-width: 1200px; margin: 0 auto;">
+  <h2 style="color:#667eea; margin-bottom:20px;">🔌 WebSocket 監察器</h2>
+  
+  <div style="display: grid; gap: 16px;">
+    
+    <!-- 連接控制 -->
+    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+      <h3 style="margin-top: 0;">連接控制</h3>
+      
+      <div style="display: grid; gap: 12px;">
+        <div>
+          <label style="font-weight: 600;">WebSocket URL:</label>
+          <input id="wsUrl" type="text" 
+                 value="ws://{{ request.get_host }}/ws/light/playback/" 
+                 style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+        </div>
+        
+        <div style="display: flex; gap: 8px;">
+          <button id="connectBtn" class="btn" style="flex: 1;">🔗 連接</button>
+          <button id="disconnectBtn" class="btn" style="flex: 1; background: #dc2626;">🔌 斷開</button>
+        </div>
+        
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: white; border-radius: 6px;">
+          <span style="font-weight: 600;">狀態:</span>
+          <span id="connectionStatus" style="color: #dc2626;">❌ 未連接</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 發送測試訊息 -->
+    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+      <h3 style="margin-top: 0;">發送測試訊息</h3>
+      
+      <div style="display: grid; gap: 12px;">
+        <div>
+          <label style="font-weight: 600;">訊息類型:</label>
+          <select id="messageType" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+            <option value="playback_init">playback_init - 初始化播放器</option>
+            <option value="playback_play">playback_play - 開始播放</option>
+            <option value="playback_pause">playback_pause - 暫停</option>
+            <option value="playback_stop">playback_stop - 停止</option>
+            <option value="playback_seek">playback_seek - 跳轉幀</option>
+            <option value="playback_get_frame">playback_get_frame - 獲取單幀</option>
+            <option value="custom">custom - 自定義 JSON</option>
+          </select>
+        </div>
+        
+        <div>
+          <label style="font-weight: 600;">訊息內容（JSON）:</label>
+          <textarea id="messageContent" rows="6" 
+                    style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace;">
+{
+  "type": "playback_init",
+  "filename": "show.pxld",
+  "slave_id": -1
+}
+          </textarea>
+        </div>
+        
+        <button id="sendBtn" class="btn">📤 發送訊息</button>
+      </div>
+    </div>
+    
+    <!-- 訊息記錄 -->
+    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 style="margin: 0;">📝 訊息記錄</h3>
+        <button id="clearLogBtn" class="btn" style="padding: 6px 12px; background: #6b7280;">清除</button>
+      </div>
+      
+      <div id="messageLog" 
+           style="background: #1f2937; color: #e5e7eb; padding: 12px; border-radius: 6px; 
+                  height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px;">
+        <div style="color: #9ca3af;">等待連接...</div>
+      </div>
+    </div>
+    
+    <!-- 統計信息 -->
+    <div style="background: #f3f4f6; padding: 16px; border-radius: 8px;">
+      <h3 style="margin-top: 0;">📊 統計信息</h3>
+      
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
+        <div style="background: white; padding: 12px; border-radius: 6px;">
+          <div style="color: #6b7280; font-size: 0.9rem;">接收訊息</div>
+          <div id="statReceived" style="font-size: 1.5rem; font-weight: 600; color: #059669;">0</div>
+        </div>
+        
+        <div style="background: white; padding: 12px; border-radius: 6px;">
+          <div style="color: #6b7280; font-size: 0.9rem;">發送訊息</div>
+          <div id="statSent" style="font-size: 1.5rem; font-weight: 600; color: #2563eb;">0</div>
+        </div>
+        
+        <div style="background: white; padding: 12px; border-radius: 6px;">
+          <div style="color: #6b7280; font-size: 0.9rem;">錯誤次數</div>
+          <div id="statErrors" style="font-size: 1.5rem; font-weight: 600; color: #dc2626;">0</div>
+        </div>
+        
+        <div style="background: white; padding: 12px; border-radius: 6px;">
+          <div style="color: #6b7280; font-size: 0.9rem;">連接時長</div>
+          <div id="statUptime" style="font-size: 1.5rem; font-weight: 600; color: #d97706;">0s</div>
+        </div>
+      </div>
+    </div>
+    
+  </div>
+</div>
+
+<script>
+// WebSocket 監察器
+(function() {
+  'use strict';
+  
+  let ws = null;
+  let connected = false;
+  let stats = {
+    received: 0,
+    sent: 0,
+    errors: 0,
+    connectTime: null
+  };
+  
+  // DOM 元素
+  const wsUrlEl = document.getElementById('wsUrl');
+  const connectBtn = document.getElementById('connectBtn');
+  const disconnectBtn = document.getElementById('disconnectBtn');
+  const statusEl = document.getElementById('connectionStatus');
+  const messageTypeEl = document.getElementById('messageType');
+  const messageContentEl = document.getElementById('messageContent');
+  const sendBtn = document.getElementById('sendBtn');
+  const messageLog = document.getElementById('messageLog');
+  const clearLogBtn = document.getElementById('clearLogBtn');
+  
+  // 統計元素
+  const statReceived = document.getElementById('statReceived');
+  const statSent = document.getElementById('statSent');
+  const statErrors = document.getElementById('statErrors');
+  const statUptime = document.getElementById('statUptime');
+  
+  // 日誌函數
+  function log(message, type = 'info') {
+    const timestamp = new Date().toLocaleTimeString();
+    const colors = {
+      info: '#9ca3af',
+      success: '#10b981',
+      error: '#ef4444',
+      warning: '#f59e0b',
+      sent: '#3b82f6',
+      received: '#8b5cf6'
+    };
+    
+    const logEntry = document.createElement('div');
+    logEntry.style.marginBottom = '4px';
+    logEntry.style.color = colors[type] || colors.info;
+    logEntry.innerHTML = `<span style="color: #6b7280;">[${timestamp}]</span> ${message}`;
+    
+    messageLog.appendChild(logEntry);
+    messageLog.scrollTop = messageLog.scrollHeight;
+  }
+  
+  // 更新統計
+  function updateStats() {
+    statReceived.textContent = stats.received;
+    statSent.textContent = stats.sent;
+    statErrors.textContent = stats.errors;
+    
+    if (stats.connectTime) {
+      const uptime = Math.floor((Date.now() - stats.connectTime) / 1000);
+      statUptime.textContent = `${uptime}s`;
+    } else {
+      statUptime.textContent = '0s';
+    }
+  }
+  
+  // 連接 WebSocket
+  function connect() {
+    const url = wsUrlEl.value;
+    
+    log(`嘗試連接到: ${url}`, 'info');
+    
+    try {
+      ws = new WebSocket(url);
+      
+      ws.onopen = () => {
+        connected = true;
+        stats.connectTime = Date.now();
+        statusEl.textContent = '✅ 已連接';
+        statusEl.style.color = '#059669';
+        log('WebSocket 連接成功', 'success');
+        updateStats();
+      };
+      
+      ws.onmessage = (event) => {
+        stats.received++;
+        
+        try {
+          const data = JSON.parse(event.data);
+          log(`⬇️ 接收: ${JSON.stringify(data, null, 2)}`, 'received');
+        } catch (error) {
+          log(`⬇️ 接收 (非 JSON): ${event.data}`, 'received');
+        }
+        
+        updateStats();
+      };
+      
+      ws.onclose = (event) => {
+        connected = false;
+        stats.connectTime = null;
+        statusEl.textContent = '❌ 未連接';
+        statusEl.style.color = '#dc2626';
+        log(`WebSocket 連接關閉 (code: ${event.code}, reason: ${event.reason || '無'})`, 'warning');
+        updateStats();
+      };
+      
+      ws.onerror = (error) => {
+        stats.errors++;
+        log(`WebSocket 錯誤: ${error.message || '未知錯誤'}`, 'error');
+        updateStats();
+      };
+      
+    } catch (error) {
+      stats.errors++;
+      log(`連接失敗: ${error.message}`, 'error');
+      updateStats();
+    }
+  }
+  
+  // 斷開連接
+  function disconnect() {
+    if (ws) {
+      ws.close();
+      ws = null;
+      connected = false;
+      log('手動斷開連接', 'info');
+    }
+  }
+  
+  // 發送訊息
+  function sendMessage() {
+    if (!connected) {
+      log('請先連接 WebSocket', 'error');
+      return;
+    }
+    
+    try {
+      const content = messageContentEl.value;
+      const data = JSON.parse(content);
+      
+      ws.send(JSON.stringify(data));
+      stats.sent++;
+      
+      log(`⬆️ 發送: ${JSON.stringify(data, null, 2)}`, 'sent');
+      updateStats();
+      
+    } catch (error) {
+      stats.errors++;
+      log(`發送失敗: ${error.message}`, 'error');
+      updateStats();
+    }
+  }
+  
+  // 清除日誌
+  function clearLog() {
+    messageLog.innerHTML = '<div style="color: #9ca3af;">日誌已清除</div>';
+  }
+  
+  // 訊息類型變更時更新範例內容
+  messageTypeEl.addEventListener('change', () => {
+    const type = messageTypeEl.value;
+    
+    const examples = {
+      playback_init: {
+        type: 'playback_init',
+        filename: 'show.pxld',
+        slave_id: -1
+      },
+      playback_play: {
+        type: 'playback_play',
+        frame: 0
+      },
+      playback_pause: {
+        type: 'playback_pause'
+      },
+      playback_stop: {
+        type: 'playback_stop'
+      },
+      playback_seek: {
+        type: 'playback_seek',
+        frame: 10
+      },
+      playback_get_frame: {
+        type: 'playback_get_frame',
+        frame: 0,
+        slave_id: 0
+      },
+      custom: {
+        type: 'custom',
+        message: 'your message here'
+      }
+    };
+    
+    if (examples[type]) {
+      messageContentEl.value = JSON.stringify(examples[type], null, 2);
+    }
+  });
+  
+  // 綁定事件
+  connectBtn.addEventListener('click', connect);
+  disconnectBtn.addEventListener('click', disconnect);
+  sendBtn.addEventListener('click', sendMessage);
+  clearLogBtn.addEventListener('click', clearLog);
+  
+  // 定時更新運行時間
+  setInterval(updateStats, 1000);
+  
+  // 頁面卸載時關閉連接
+  window.addEventListener('beforeunload', () => {
+    if (ws) ws.close();
+  });
+  
+})();
+</script>
+{% endblock %}
