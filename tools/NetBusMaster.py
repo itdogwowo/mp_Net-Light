@@ -543,29 +543,40 @@ class NetBusMaster:
         s.sendto(Proto.pack(0x1001, p_data), ('255.255.255.255', 9000))
         s.close()
         
-        time.sleep(1.5)
+        time.sleep(3)
         
-        ids = list(self.slaves.keys())
-        if not ids:
+        # --- 修改排序邏輯 ---
+        # 取得所有在線設備 ID
+        online_ids = list(self.slaves.keys())
+        
+        if not online_ids:
             print("❌ 未發現任何在線設備")
             input("\n按 Enter 繼續...")
             self.panel.start()
             return
-        
-        print(f"\n✅ 發現 {len(ids)} 個設備:")
+
+        # 根據 PlayID 進行排序 (如果沒定義 PlayID 則排最後，預設給個很大的數字 999)
+        sorted_ids = sorted(
+            online_ids, 
+            key=lambda sid: self.config["mapping"].get(sid, {}).get("play_id", 999)
+        )
+        # ------------------
+
+        print(f"\n✅ 發現 {len(sorted_ids)} 個設備 (按 PlayID 排序):")
         print("-" * 50)
-        for i, sid in enumerate(ids):
-            pid = self.config["mapping"].get(sid, {}).get("play_id", "?")
-            print(f"  {i+1}. {sid:15} (PlayID: {pid})")
+        for i, sid in enumerate(sorted_ids):
+            pid = self.config["mapping"].get(sid, {}).get("play_id", "N/A")
+            print(f"  {i+1:2d}. {sid:15} (PlayID: {pid})")
         
         choice = input("\n👉 選擇目標 (a=全選 / 逗號分隔編號): ").lower()
         
         if choice == 'a':
-            self.selected_targets = ids
+            self.selected_targets = sorted_ids  # 使用排序後的列表
         else:
             try:
+                # 根據用戶輸入的編號從排序後的 sorted_ids 中提取
                 indices = [int(x.strip()) - 1 for x in choice.split(',')]
-                self.selected_targets = [ids[i] for i in indices if 0 <= i < len(ids)]
+                self.selected_targets = [sorted_ids[i] for i in indices if 0 <= i < len(sorted_ids)]
             except:
                 print("❌ 輸入無效")
                 input("\n按 Enter 繼續...")
@@ -575,7 +586,6 @@ class NetBusMaster:
         print(f"\n✅ 已選中 {len(self.selected_targets)} 個設備")
         input("\n按 Enter 繼續...")
         self.panel.start()
-    
     # ==================== Step 2: 準備數據 (修復版) ====================
     def step_2_prepare_data(self):
         """切分 PXLD 動畫數據"""
@@ -775,7 +785,7 @@ class NetBusMaster:
             else:
                 self.panel.update_device(tid, status="傳輸中", upload_progress=0)
         
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=50) as executor:
             futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
             
             for future in futures:
@@ -902,7 +912,7 @@ class NetBusMaster:
         self.send_pkt(self.selected_targets, 0x3009, {
             "file_name": "data.bin",
             "block_id": 0,
-            "play_mode": 1
+            "play_mode": 0
         })
         time.sleep(0.5)
         

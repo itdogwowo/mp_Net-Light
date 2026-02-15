@@ -1,8 +1,13 @@
 from lib.proto import Proto
 from lib.schema_codec import SchemaCodec
 import ubinascii
+from lib.sys_bus import bus
+
 def on_file_begin(ctx, args):
     app = ctx["app"]
+    if args.get("path",False):
+        args['path'] = bus.get_service("data_Phat") + args['path']
+
     ok = app.file_rx.begin(args)
     if ok: print(f"📂 [File] Start -> {app.file_rx.path}")
 
