@@ -9,25 +9,27 @@
         "num_leds": 336,
         "buffer_frames": 1,
     },
-    "WIFI_Network": {
-        "enable": 0,
-        "list": [
-            {
-                "ssid": "Home_WiFi",
-                "wifi_pw": "",
-                "priority": 1
+    "Network": {
+        "priority": ["lan", "wifi"],
+        "lan": {
+            "enable": 1,
+            "active_mode": 1,
+            "driver": "RMII",
+            "phy_addr": 1,
+            "phy_type": "IP101",
+            "GPIO": { 
+                "mdc": 31, "mdio": 52, "ref_clk": 50,
+                "spi": -1, "cs": -1, "rst": -1, "int": -1
             }
-        ]
-    },
-    "ETH_Network": {
-        "enable": 1,
-        "list": [
-            {
-                "phy_addr":1,
-                "phy_type":2,
-                "GPIO": { "mdc": 31, "mdio": 52, "ref_clk": 50 },
-            } 
-        ]
+        },
+        "wifi": {
+            "enable": 1,
+            "active_mode": 2,
+            "timeout": 300,
+            "ssid": "Home_WiFi",
+            "password": "",
+            "mdns_name": "esp32-led"
+        }
     },
     "SDcard": {
         "enable": 0,
@@ -51,7 +53,7 @@
         "enable": 1,
         "list": [
             {
-                "id"1,
+                "id": 1,
                 "freq": 400000,
                 "GPIO":{"scl":20,"sda":21}
             }
@@ -61,7 +63,7 @@
         "enable": 1,
         "list": [
             {
-                "id"1,
+                "id": 1,
                 "baudrate": 8000000,
                 "phase":1,
                 "polarity":1,

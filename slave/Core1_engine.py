@@ -29,6 +29,9 @@ def task_loop(st_LED, fps=40):
     while bus.shared.get("engine_run", True):
         # 🚀 停止模式：關燈
         if not bus.shared.get("is_streaming"):
+            if current_big_buffer is not None:
+                hub.release()
+                current_big_buffer = None
             if bus.shared.get("is_ready") == False:
                 st_LED.big_buffer[:] = bytearray(frame_size) # 清空
                 st_LED.show_all()
@@ -49,6 +52,10 @@ def task_loop(st_LED, fps=40):
         if time.ticks_diff(now, next_tick_us) >= 0:
             # 🚀 流式讀取邏輯：如果當前大 Buffer 用完了或還沒有，去 Hub 拿新的
             if current_big_buffer is None or buff_offset + frame_size > len(current_big_buffer):
+                if current_big_buffer is not None:
+                    hub.release() # 記得釋放舊的！
+                    current_big_buffer = None
+                
                 current_big_buffer = hub.get_read_view() # 這是核心同步點
                 buff_offset = 0 # 重置偏移量
                 

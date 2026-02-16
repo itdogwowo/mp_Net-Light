@@ -2,14 +2,17 @@ import hashlib
 import ubinascii
 import os, gc, json
 from lib.sys_bus import bus
+from lib.memory_manager import MemoryManager
 
 class FileRx:
     """
     高性能文件接收組件 - 支援分片寫入與 SHA256 流式校驗
+    使用 MemoryManager 進行動態緩衝區分配
     """
     def __init__(self):
         self.reset()
         self.last_sha_hex = "" # 儲存最後一次成功或失敗的哈希計算結果
+        self.mem_mgr = MemoryManager.get() # 獲取單例管理器
 
     def ensure_dir(self, path):
         """檢查並創建目錄路徑"""
@@ -32,6 +35,8 @@ class FileRx:
         # 使用本地引用加速
         compute_sha = self.sha256_digest_stream_from_file
         
+        # 為了避免頻繁的 GC，我們在這裡使用一個較大的緩衝區來讀取目錄
+        # 但 os.ilistdir 已經很高效，所以主要是控制 SHA 計算時的內存
         
         with open(out_path, "w") as f:
             f.write('{"root":"%s","entries":[' % root_path)
@@ -102,27 +107,24 @@ class FileRx:
 
     def sha256_digest_stream_from_file(self, path):
         """
-        串流計算文件 SHA256，避免將大文件一次性載入記憶體導致 OOM。
-        使用 memoryview 優化字節切片效能。
+        串流計算文件 SHA256，針對大內存 (PSRAM) 優化。
+        動態租用「最大可用」緩衝區，一次吞吐數 MB，大幅減少 I/O 調用次數。
         """
-        bufsize = self.get_extreme_bufsize()
-
-        # 預先分配（如果 RAM 充足，這會嘗試在 SRAM 或 PSRAM 分配）
-        buf = bytearray(bufsize)
+        # 嘗試租用最大緩衝區 (預設上限 16MB)
+        buf = self.mem_mgr.rent_max(hard_limit=16*1024*1024)
+        bufsize = len(buf)
         mv = memoryview(buf)
         h = hashlib.sha256()
 
         try:
-            # 使用本地變量引用以優化 lookup 速度 (資深程序員的老技巧)
+            # 使用本地變量引用以優化 lookup 速度
             update = h.update
-            readinto = open(path, "rb").readinto
             
-            # 這裡不使用 with 語句，而是手動控制以獲取極微小的速度提升
             f = open(path, "rb")
-            _readinto = f.readinto
+            readinto = f.readinto
             
             while True:
-                n = _readinto(buf)
+                n = readinto(buf)
                 if n == 0:
                     break
                 if n == bufsize:
@@ -135,6 +137,7 @@ class FileRx:
             print(f"Error: {e}")
         finally:
             del buf
+            del mv
             gc.collect()
             
         return h.digest()

@@ -41,14 +41,20 @@ def handle_supply_chain(hub, s, ctx):
 
     # 播放規律預讀
     if bus.shared.get("is_streaming") and not bus.shared.get("is_paused"):
-        # 利用 Hub 自帶 dirty 位檢查供給
-        if not hub.dirty and s.get("f_local"):
-            view = hub.get_write_view()
-            if s["f_local"].readinto(view) == 0:
-                if bus.shared.get("play_mode") == 1: s["f_local"].seek(0)
-                else: bus.shared["is_streaming"] = False
-            else:
-                hub.commit()
+        # 嘗試獲取寫入視圖 (如果 Hub 滿了會返回 None)
+        view = hub.get_write_view()
+        if view is not None and s.get("f_local"):
+            # 注意: readinto 需要 view 大小匹配。文件讀取可能不滿一個 buffer
+            # 這裡我們假設文件塊大小和 buffer 大小是一致的
+            try:
+                n = s["f_local"].readinto(view)
+                if n == 0:
+                    if bus.shared.get("play_mode") == 1: s["f_local"].seek(0)
+                    else: bus.shared["is_streaming"] = False
+                else:
+                    hub.commit()
+            except Exception:
+                pass
 
 def register(app):
     # 播放控制
@@ -56,5 +62,5 @@ def register(app):
     app.disp.on(0x300A, lambda c,a: bus.shared.update({"is_streaming": True})) # PLAY
     app.disp.on(0x3005, lambda c,a: bus.shared.update({"is_paused": bool(a["pause"])})) # PAUSE
     app.disp.on(0x3002, lambda c,a: bus.shared.update({"is_streaming": False, "is_ready": False})) # STOP
-    # 0x3003 Direct Mode
-    app.disp.on(0x3003, lambda c,a: (bus.get_service("pixel_stream").get_write_view().__setitem__(slice(None), a["pixel_data"]), bus.get_service("pixel_stream").commit()))
+    # 0x3003 Direct Mode: 使用新 API write_from
+    app.disp.on(0x3003, lambda c,a: bus.get_service("pixel_stream").write_from(a["pixel_data"]))

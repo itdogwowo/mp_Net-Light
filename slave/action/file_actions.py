@@ -7,17 +7,14 @@ def on_file_begin(ctx, args):
     if ok: print(f"📂 [File] Start -> {app.file_rx.path}")
 
 def on_file_chunk(ctx, args):
-    app = ctx["app"]
-    if app.file_rx.chunk(args):
-        # 🚀 關鍵：每收到一包就回傳 ACK
-        # 讓 PC 知道可以發下一包了
-        if "send" in ctx:
-            ack_def = app.store.get(0x2004)
-            ack_data = SchemaCodec.encode(ack_def, {
-                "file_id": args["file_id"],
-                "offset": args["offset"]
-            })
-            ctx["send"](Proto.pack(0x2004, ack_data))
+    """
+    接收文件數據塊
+    🚀 高性能模式：移除每塊 ACK
+    僅接收並寫入，依賴 TCP 保證順序與完整性。
+    最終校驗由 FILE_END 負責。
+    """
+    ctx["app"].file_rx.chunk(args)
+
 
 def on_file_end(ctx, args):
     app = ctx["app"]
@@ -33,16 +30,33 @@ def on_file_end(ctx, args):
         print(f"🏁 [File] End Success: {path}")
         print(f"🔒 [SHA256] {sha}")
         print("-" * 40)
+        
+        # 發送最終 ACK (FILE_ACK 0x2004)
+        if "send" in ctx:
+            ack_def = app.store.get(0x2004)
+            # 使用 -1 表示整數個文件已完成
+            ack_data = SchemaCodec.encode(ack_def, {
+                "file_id": args.get("file_id", 0),
+                "offset": -1 
+            })
+            ctx["send"](Proto.pack(0x2004, ack_data))
     else:
         err = app.file_rx.last_error
         print(f"❌ [File] End Failed: {err}")
+        # 發送失敗 ACK (可選，這裡暫不發送或發送錯誤碼)
 
 def on_file_query(ctx, args):
     app = ctx["app"]
-    path = bus.get_service("data_Phat") + args.get("path")
+    
+    # 獲取路徑
+    root = bus.get_service("data_Phat")
+    rel_path = args.get("path")
+    if not rel_path: return
+    
+    path = root + rel_path
     
     exists = 0
-    sha = b'\x00' * 32
+    sha_bytes = b'\x00' * 32
     
     # 檢查文件是否存在
     try:
@@ -51,18 +65,18 @@ def on_file_query(ctx, args):
         os.stat(path)
         exists = 1
         # 調用你現有的高性能流式校驗函數
-        sha = app.file_rx.sha256_digest_stream_from_file(path)
-        print(f"🔍 [Query] {path} exists, SHA: {ubinascii.hexlify(sha).decode()[:8]}...")
-    except:
-        print(f"🔍 [Query] {path} not found.")
+        sha_bytes = app.file_rx.sha256_digest_stream_from_file(path)
+        print(f"🔍 [Query] {path} exists, SHA: {ubinascii.hexlify(sha_bytes).decode()[:8]}...")
+    except Exception as e:
+        print(f"🔍 [Query] {path} not found or error: {e}")
 
     # 回傳結果
     if "send" in ctx:
         rsp_def = app.store.get(0x2006)
         rsp_data = SchemaCodec.encode(rsp_def, {
             "exists": exists,
-            "sha256": sha,
-            "path": path
+            "sha256": sha_bytes,
+            "path": rel_path # 回傳相對路徑
         })
         ctx["send"](Proto.pack(0x2006, rsp_data))
 

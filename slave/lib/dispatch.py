@@ -32,7 +32,8 @@ class Dispatcher:
             args = SchemaCodec.decode(cmd_def, payload_bytes)
             
             # 3. 調試輸出面板 (現代化風格)
-            if self.debug_level >= 1:
+            # 🚀 性能優化: 針對高頻數據包 (FILE_CHUNK 0x2002, DIRECT 0x3003) 屏蔽日誌
+            if self.debug_level >= 1 and cmd_int not in (0x2002, 0x3003):
                 t = time.ticks_ms()
                 source = ctx.get("transport", "Unknown")
                 print(f"🔹 [{source}] {cmd_def['name']} (0x{cmd_int:04X})")
@@ -44,7 +45,7 @@ class Dispatcher:
             handler(ctx, args)
             end_t = time.ticks_us()
             
-            if self.debug_level >= 2:
+            if self.debug_level >= 2 and cmd_int not in (0x2002, 0x3003):
                 print(f"   ﹂ ✅ Exec Time: {end_t - start_t} us")
 
         except Exception as e:
