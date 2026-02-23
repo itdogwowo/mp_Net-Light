@@ -586,31 +586,97 @@ class NetBusMaster:
         print(f"\n✅ 已選中 {len(self.selected_targets)} 個設備")
         input("\n按 Enter 繼續...")
         self.panel.start()
+    
     # ==================== Step 2: 準備數據 (修復版) ====================
+    def _save_bins(self):
+        """將 prepared_data 保存到 bins/ 目錄"""
+        bins_dir = os.path.join('.', 'bins')
+        os.makedirs(bins_dir, exist_ok=True)
+
+        for pid, data in self.prepared_data.items():
+            bin_path = os.path.join(bins_dir, f'pid_{pid}.bin')
+            with open(bin_path, 'wb') as f:
+                f.write(data)
+            print(f"  💾 已保存 {bin_path} ({len(data)//1024} KB)")
+
+    def _load_bins(self):
+        """從 bins/ 目錄載入 bin 檔案到 prepared_data"""
+        bins_dir = os.path.join('.', 'bins')
+        needed_pids = {self.config["mapping"][tid].get("play_id") for tid in self.selected_targets}
+        needed_pids.discard(None)
+
+        self.prepared_data.clear()
+        self.pxld_metadata.clear()
+
+        loaded = 0
+        missing = []
+        for pid in needed_pids:
+            bin_path = os.path.join(bins_dir, f'pid_{pid}.bin')
+            if os.path.isfile(bin_path):
+                with open(bin_path, 'rb') as f:
+                    self.prepared_data[pid] = bytearray(f.read())
+                print(f"  📂 已載入 pid_{pid}.bin ({len(self.prepared_data[pid])//1024} KB)")
+                loaded += 1
+            else:
+                missing.append(pid)
+
+        if missing:
+            print(f"  ⚠️ 缺少 PlayID: {missing}")
+
+        return loaded, missing
+
     def step_2_prepare_data(self):
         """切分 PXLD 動畫數據"""
         self.panel.stop()
         ConsoleUI.clear_screen()
         ConsoleUI.show_cursor()
-        
+
         if not self.selected_targets:
             print("⚠️ 請先執行 Step 1 選擇設備")
             input("\n按 Enter 繼續...")
             self.panel.start()
             return
-        
+
+        # 檢查 bins/ 是否有現成的 bin 檔案
+        bins_dir = os.path.join('.', 'bins')
+        has_bins = os.path.isdir(bins_dir) and any(f.endswith('.bin') for f in os.listdir(bins_dir))
+
         pxld_files = [f for f in os.listdir('.') if f.endswith('.pxld')]
+
+        if has_bins:
+            bin_files = sorted(f for f in os.listdir(bins_dir) if f.endswith('.bin'))
+            print("\n📂 [Step 2] 選擇數據來源:")
+            print(f"  1. 從 bins/ 載入已切分的數據 ({len(bin_files)} 個檔案)")
+            if pxld_files:
+                print(f"  2. 重新從 .pxld 切分")
+
+            try:
+                src = input("\n👉 請選擇 (1/2): ").strip()
+            except:
+                src = "1"
+
+            if src == "1":
+                print(f"\n⚙️ 正在從 bins/ 載入...")
+                loaded, missing = self._load_bins()
+                if loaded > 0:
+                    print(f"\n✅ 已載入 {loaded} 個 PlayID 的數據")
+                else:
+                    print("❌ 沒有載入任何數據")
+                input("\n按 Enter 繼續...")
+                self.panel.start()
+                return
+
         if not pxld_files:
             print("❌ 當前目錄下找不到 .pxld 文件")
             input("\n按 Enter 繼續...")
             self.panel.start()
             return
-        
+
         print("\n📂 [Step 2] 選擇動畫源:")
         for i, f in enumerate(pxld_files):
             size_kb = os.path.getsize(f) // 1024
             print(f"  {i+1}. {f} ({size_kb} KB)")
-        
+
         try:
             choice = int(input("\n👉 請選擇編號: ")) - 1
             if choice < 0 or choice >= len(pxld_files):
@@ -684,7 +750,11 @@ class NetBusMaster:
             input("\n按 Enter 繼續...")
             self.panel.start()
             return
-        
+
+        # 保存 bin 檔案到 bins/
+        print("\n💾 正在保存切分數據到 bins/...")
+        self._save_bins()
+
         print("\n✅ 動畫數據準備完成")
         input("\n按 Enter 繼續...")
         self.panel.start()
