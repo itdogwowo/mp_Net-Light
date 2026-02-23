@@ -21,7 +21,7 @@ class PCA9685:
     def setup(self):
         try:
             self.i2c.writeto_mem(self.address, 0x00, b'\x00')
-            self.freq(200)
+            self.freq(1000)
         except Exception as e:
             print(f"PCA9685 Init Error: {e}")
 

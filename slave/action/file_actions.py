@@ -44,7 +44,8 @@ def on_file_end(ctx, args):
 
 def on_file_query(ctx, args):
     app = ctx["app"]
-    path = args.get("path")
+    path = bus.get_service("data_Phat") + args['path']
+
     
     exists = 0
     sha = b'\x00' * 32

@@ -785,7 +785,7 @@ class NetBusMaster:
             else:
                 self.panel.update_device(tid, status="傳輸中", upload_progress=0)
         
-        with ThreadPoolExecutor(max_workers=50) as executor:
+        with ThreadPoolExecutor(max_workers=37) as executor:
             futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
             
             for future in futures:
@@ -828,7 +828,7 @@ class NetBusMaster:
             "sha256": local_sha,
             "path": target_path
         })
-        time.sleep(0.1)
+        time.sleep(0.12)
         
         for off in range(0, total_len, chunk_size):
             chunk = data[off : off + chunk_size]
@@ -840,7 +840,7 @@ class NetBusMaster:
                 "data": chunk
             })
             
-            if not node["ack_event"].wait(timeout=5.0):
+            if not node["ack_event"].wait(timeout=15.0):
                 raise Exception(f"Offset {off} 超時")
             
             done = off + len(chunk)

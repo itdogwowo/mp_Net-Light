@@ -77,7 +77,7 @@ def init_led(sysBus):
                             try:
                                 if addr != 112:
                                     pca = PCA9685(i2c, address=addr)
-                                    pca.freq(1000)
+#                                     pca.freq(1000)
                                     # 建立符合精簡版接口的控制器
                                     pca9685_list.append(LEDController('i2c_LED', {'led_IO': pca, 'Q': 16, 'order': 'W'}))
                             except Exception as e:
