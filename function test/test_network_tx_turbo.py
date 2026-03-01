@@ -1,28 +1,39 @@
-# test_network_tx_extreme.py
+# test_network_tx_turbo.py
+"""
+Turbo Network TX Test
+測試連接 MCU 的 Turbo Channel (Port 8889)
+"""
 import socket
 import time
 import os
 import sys
 
-def test_network_send_extreme(mcu_ip, duration_sec=10):
+def test_turbo_send(mcu_ip, duration_sec=10, port=8889):
     print("╔════════════════════════════════════════╗")
-    print("║  Network TX EXTREME (Raw TCP)          ║")
+    print("║  Turbo Network TX (Port 8889)          ║")
     print("╚════════════════════════════════════════╝")
-    print(f"Target: {mcu_ip}:8888")
+    print(f"Target: {mcu_ip}:{port}")
     print(f"Duration: {duration_sec} seconds")
 
-    # 1. 準備巨型數據塊 (減少 Python 循環開銷)
-    CHUNK_SIZE = 64 * 1024  # 64KB per send call
+    # 1. 準備數據
+    # 假設我們發送的是 1024 顆 LED 的數據 (3KB/frame)
+    FRAME_SIZE = 1024 * 3 
+    # 為了測試吞吐量，我們發送更大的塊，但 DataStreamer 會自動處理
+    CHUNK_SIZE = 64 * 1024 
     data_chunk = os.urandom(CHUNK_SIZE)
     
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((mcu_ip, 8888))
+    try:
+        sock.connect((mcu_ip, port))
+    except ConnectionRefusedError:
+        print(f"❌ Connection Refused: Ensure MCU is running updated Core0 with Turbo enabled.")
+        return
     
     # 2. Socket 優化
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024) # 1MB Send Buffer
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) # Disable Nagle's algo
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024) 
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) 
     
-    print("\n🚀 Blast off! Sending data...")
+    print("\n🚀 Turbo Blast! Sending data...")
     
     total_sent = 0
     start_time = time.time()
@@ -30,7 +41,6 @@ def test_network_send_extreme(mcu_ip, duration_sec=10):
     
     try:
         while True:
-            # 持續發送直到時間結束
             if time.time() - start_time > duration_sec:
                 break
                 
@@ -58,5 +68,10 @@ def test_network_send_extreme(mcu_ip, duration_sec=10):
         sock.close()
 
 if __name__ == "__main__":
-    ip = sys.argv[1] if len(sys.argv) > 1 else input("MCU IP: ").strip()
-    test_network_send_extreme(ip)
+    if len(sys.argv) > 1:
+        ip = sys.argv[1]
+    else:
+        ip = input("MCU IP: ").strip()
+    
+    if ip:
+        test_turbo_send(ip)

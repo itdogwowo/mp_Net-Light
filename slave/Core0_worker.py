@@ -45,6 +45,15 @@ def task_loop(app):
     discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCV")
     discovery_bus.connect(None, bus_sys["discovery_port"])
 
+    # 🚀 Turbo Data Streamer (Port 8889)
+    try:
+        from lib.data_streamer import DataStreamer
+        turbo = DataStreamer(port=8889)
+        turbo.start()
+        print("🚀 [Turbo] Service initialized on port 8889")
+    except Exception as e:
+        print(f"❌ [Turbo] Failed to init: {e}")
+        turbo = None # 確保變量存在
 
     ctx_extra = {
         "app": app, 
@@ -79,6 +88,12 @@ def task_loop(app):
         worker_ctx = {"app": app, "send": ctrl_bus.write}
         handle_supply_chain(hub, s, worker_ctx)
 
+        # 2.5 🚀 Turbo Data Streamer (Raw TCP)
+        # 優先級高於系統維護
+        busy = False
+        if turbo:
+            busy = turbo.poll()
+
         # 3. 系統維護
         now = time.ticks_ms()
         if time.ticks_diff(now, s["last_hb"]) > bus_sys["heartbeat_interval"]:
@@ -90,6 +105,10 @@ def task_loop(app):
             gc.collect()
             s["last_hb"] = now
             last_report = now
-        time.sleep_ms(bus_sys.get("refresh_rate_ms", 1))
+        
+        # 如果 Turbo 正在忙碌 (高速接收中)，則跳過 Sleep 以最大化吞吐
+        if not busy:
+            time.sleep_ms(bus_sys.get("refresh_rate_ms", 1))
     
     ctrl_bus.disconnect()
+    if turbo: turbo.stop()

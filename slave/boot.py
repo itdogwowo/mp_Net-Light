@@ -3,7 +3,7 @@ from lib.LEDController import *
 from lib.ConfigManager import *
 from lib.sys_bus import bus
 import machine, os
-from esp32 import LDO
+
 
 def exists(path):
     try:
@@ -133,6 +133,7 @@ def init_sd(sysBus):
     _phat = ''
     if config['enable'] and not exists(config["phat"]):
         try:
+            from esp32 import LDO
             _phat = config["phat"]
             ldo = LDO(config['LDO']['id'], config['LDO']['mv'], adjustable=True)
             sd = machine.SDCard(slot=config['config']['slot'], width=config['config']['width'],

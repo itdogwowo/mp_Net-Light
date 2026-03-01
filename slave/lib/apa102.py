@@ -17,34 +17,53 @@ class APA102:
         self.buf = bytearray(self.buf_length)
         
         # 2. SPI 物理傳輸數據區 (原生 APA102 格式)
-        self.spi_buffer = bytearray(self.buf_length)
+        # 整合 Start + Data + End 為單一緩衝區以避免 SPI 分段寫入造成的時序問題
+        self.start_len = 4
+        self.end_len = max(4, (num_leds + 15) // 16)
+        self.spi_total_len = self.start_len + self.buf_length + self.end_len
+        self.spi_buffer = bytearray(self.spi_total_len)
         
         # 3. SPI 硬體初始化
         self.spi = spi
         
-        # 協議控制幀
-        self.start_frame = bytearray([0x00, 0x00, 0x00, 0x00])
-        end_len = max(4, (num_leds + 15) // 16)
-        self.end_frame = bytearray([0xFF] * end_len)
-        
+        # 初始化 SPI 緩衝區 (Start=0x00, End=0xFF, Data Header=0xE0)
         self._init_spi_buffer()
 
     @micropython.viper
     def _init_spi_buffer(self):
-        """初始化物理緩衝區的亮度標頭 0xE0"""
+        """初始化物理緩衝區：Start(0x00) + Data(0xE0) + End(0xFF)"""
         p_spi: ptr8 = ptr8(self.spi_buffer)
-        for i in range(0, int(self.buf_length), 4):
-            p_spi[i] = 0xE0
+        buf_len: int = int(self.buf_length)
+        start_len: int = int(self.start_len)
+        end_len: int = int(self.end_len)
+        
+        # 1. Start Frame (0x00)
+        for i in range(start_len):
+            p_spi[i] = 0x00
+            
+        # 2. Data Frame Headers (0xE0)
+        # Data starts at offset start_len
+        for i in range(0, buf_len, 4):
+            p_spi[start_len + i] = 0xE0
+            
+        # 3. End Frame (0x00)
+        # End starts at start_len + buf_len
+        # 修正：使用 0x00 替代 0xFF，避免下一顆未使用的燈珠將其誤判為全亮信號 (Phantom White Pixel)
+        end_start: int = start_len + buf_len
+        for i in range(end_len):
+            p_spi[end_start + i] = 0x00
 
     @micropython.viper
     def _convert(self):
         """
         Viper 內核：將 LEDcontroller 寫入的 [G, R, B, W] 轉換為 [0xE0|W, B, G, R]
+        寫入到 spi_buffer 的中間數據區
         直接由 show() 調用
         """
         p_in: ptr8 = ptr8(self.buf)
         p_out: ptr8 = ptr8(self.spi_buffer)
         n: int = int(self.buf_length)
+        offset: int = int(self.start_len) # Offset for data in spi_buffer
         
         for i in range(0, n, 4):
             # 讀取 LEDcontroller 規範的四字節 (假設最後一字節為亮度)
@@ -54,20 +73,18 @@ class APA102:
             w = p_in[i+3]
             
             # 寫入 APA102 格式 (亮度位 0xE0 + 5-bit)
-            p_out[i]     = 0xE0 | (w >> 3) 
-            p_out[i + 1] = b
-            p_out[i + 2] = g
-            p_out[i + 3] = r
+            p_out[offset + i]     = 0xE0 | (w >> 3) 
+            p_out[offset + i + 1] = b
+            p_out[offset + i + 2] = g
+            p_out[offset + i + 3] = r
 
     def show_raw(self):
         """
-        🚀 快車道：零轉換直接輸出
-        前提：self.buf 中的數據必須已經是 APA102 的硬體字節流
+        🚀 快車道：直接輸出整合後的緩衝區
+        前提：self.spi_buffer 已準備好 (通常由 _convert 或外部直接寫入)
         """
-        # 直接調用底層寫入，避開 Python 緩慢的 slice 操作
-        self.spi.write(self.start_frame)
-        self.spi.write(self.buf)
-        self.spi.write(self.end_frame)
+        # 單次調用底層寫入，解決分段寫入導致的時序問題
+        self.spi.write(self.spi_buffer)
             
     def show(self):
         """物理輸出"""

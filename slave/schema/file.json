@@ -18,6 +18,10 @@
           "type": "u16"
         },
         {
+          "name": "save_mode",
+          "type": "u8"
+        },
+        {
           "name": "sha256",
           "type": "bytes_fixed",
           "len": 32
@@ -67,6 +71,10 @@
         {
           "name": "offset",
           "type": "u32"
+        },
+        {
+          "name": "status",
+          "type": "u8"
         }
       ]
     },
