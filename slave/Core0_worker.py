@@ -2,16 +2,22 @@
 import time, gc
 from lib.sys_bus import bus
 from lib.net_bus import NetBus
-
+from app import App
 def task_loop(app):
     # 初始化網路狀態追蹤器
     bus_sys = bus.shared["System"]
     
-    # 獲取 NetworkManager
+    # 獲取 NetworkManager 並讀取緩衝區大小
     nm = bus.get_service("network_manager")
-    
-    ctrl_bus = NetBus(NetBus.TYPE_WS, app=app, label="CTRL-WS")
-    discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCV")
+    net_buf_size = getattr(nm, 'buffer_size', 16384) # 默認 16KB
+
+    # 1. 啟動應用層 (App Layer)
+    # 傳入 buffer_size，確保 FileRx 和 NetBus 共享同樣的緩衝策略
+    app = App(buf_size=net_buf_size)
+
+    # 2. 啟動網絡總線 (Transport Layer)
+    ctrl_bus = NetBus(NetBus.TYPE_WS, app=app, label="CTRL-WS", buf_size=net_buf_size)
+    discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCOVER", buf_size=2048) # UDP 保持小包
     discovery_bus.connect(None, bus_sys["discovery_port"])
 
 

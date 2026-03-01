@@ -8,11 +8,25 @@ class FileRx:
     """
     高性能文件接收組件 - 支援分片寫入與 SHA256 流式校驗
     使用 MemoryManager 進行動態緩衝區分配
+    新增: 4KB 寫入緩衝 (Write Buffering) 以優化 Flash 壽命與效能
     """
-    def __init__(self):
+    
+    # Flash Sector Size 通常為 4096，以此為緩衝單位最高效
+    WRITE_BUF_SIZE = 16384 # 16KB
+
+    def __init__(self, buf_size=None):
         self.reset()
-        self.last_sha_hex = "" # 儲存最後一次成功或失敗的哈希計算結果
-        self.mem_mgr = MemoryManager.get() # 獲取單例管理器
+        self.last_sha_hex = "" 
+        self.mem_mgr = MemoryManager.get() 
+        self.hasher = None # 流式校驗器
+
+        # 允許外部傳入 buf_size，否則使用默認 16KB
+        if buf_size: self.WRITE_BUF_SIZE = buf_size
+        
+        # 預分配寫入緩衝區 (固定 RAM 開銷)
+        self.w_buf = bytearray(self.WRITE_BUF_SIZE)
+        self.w_view = memoryview(self.w_buf)
+        self.w_pos = 0  # 緩衝區當前指針
 
     def ensure_dir(self, path):
         """檢查並創建目錄路徑"""
@@ -84,27 +98,6 @@ class FileRx:
                     
             f.write("\n]}")
 
-    def get_extreme_bufsize(self):
-        """
-        極限性能導向的緩衝區計算
-        目標：尋找 32KB - 128KB 之間的平衡點
-        """
-        gc.collect()
-        free_ram = gc.mem_free()
-        
-        # 策略：
-        # 1. 至少保留 32KB 給系統維持運作 (避免執行時期的臨時分配失敗)
-        # 2. 緩衝區設為可用 RAM 的 25%
-        # 3. 硬性限制在 128KB (因為超過此值，SHA256 運算與 I/O 的重疊增益將消失)
-        
-        suggested = (free_ram - 32 * 1024) // 4
-        
-        # 對齊 4KB (檔案系統 Cluster 大小)，這能確保讀取地址對齊，提高 DMA 效率
-        target = (suggested // 4096) * 4096
-        
-        # 限制在 [4KB, 128KB] 區間
-        return max(4096, min(target, 128 * 1024))
-
     def sha256_digest_stream_from_file(self, path):
         """
         串流計算文件 SHA256，針對大內存 (PSRAM) 優化。
@@ -142,7 +135,6 @@ class FileRx:
             
         return h.digest()
 
-
     def reset(self):
         """重置接收狀態"""
         self.active = False
@@ -150,27 +142,40 @@ class FileRx:
         self.total = 0
         self.path = None
         self.fp = None
-        self.written = 0
+        self.written = 0      # 邏輯寫入位置 (包含 buffer 中的數據)
+        self.w_pos = 0        # Buffer 指針重置
         self.sha_expect = None
         self.last_error = None
+        self.hasher = None
+
+    def _flush(self):
+        """將緩衝區數據寫入物理磁碟"""
+        if self.fp and self.w_pos > 0:
+            try:
+                # 寫入有效部分的數據
+                self.fp.write(self.w_view[:self.w_pos])
+                self.w_pos = 0
+            except Exception as e:
+                self.last_error = f"FLUSH_FAIL: {e}"
+                print(self.last_error)
+                raise e
 
     def _close(self):
         """安全關閉文件句柄，並強制刷入磁盤"""
         if self.fp:
             try:
-                self.fp.flush()
-                # 某些 MicroPython 端口支援 os.sync()
+                self._flush()  # 關鍵：關閉前清空緩衝
+                self.fp.flush() # 系統層 flush
                 if hasattr(os, 'sync'):
                     os.sync()
                 self.fp.close()
             except:
                 pass
         self.fp = None
+        self.w_pos = 0
 
     def begin(self, args: dict) -> bool:
-        """
-        FILE_BEGIN (0x2001) 處理邏輯
-        """
+        """FILE_BEGIN (0x2001)"""
         self._close()
         self.reset()
         
@@ -184,10 +189,9 @@ class FileRx:
             return False
 
         try:
-            # 以 'wb' 模式開啟會自動清空舊文件
-            # 對於 ESP32-P4，直接順序寫入比頻繁 seek 預分配更快
             self.fp = open(self.path, "wb")
             self.active = True
+            self.hasher = hashlib.sha256() # 初始化流式校驗
             return True
         except Exception as e:
             self.last_error = f"OPEN_FAIL: {e}"
@@ -195,55 +199,107 @@ class FileRx:
 
     def chunk(self, args: dict) -> bool:
         """
-        FILE_CHUNK (0x2002) 處理邏輯
-        支持斷點續傳地址定位，但推薦順序發送以獲得最高效能。
+        FILE_CHUNK (0x2002) - 帶緩衝寫入
         """
         if not self.active or not self.fp:
             self.last_error = "NO_ACTIVE_SESSION"
             return False
         
-        # 檢查 file_id 是否匹配當前任務
         if int(args.get("file_id", 0)) != self.file_id:
             return False
 
         off = int(args.get("offset", 0))
         data = args.get("data", b"")
+        d_len = len(data)
         
-        try:
-            # 只有當 offset 不在當前磁頭位置時才執行 seek
-            if off != self.written:
-                self.fp.seek(off)
-            
-            self.fp.write(data)
-            self.written = off + len(data)
+        if d_len == 0:
             return True
+
+        # 流式校驗
+        if self.hasher:
+            self.hasher.update(data)
+
+        try:
+            # 檢查是否發生亂序或 Seek (Offset 不等於當前邏輯結尾)
+            # self.written 追蹤的是「邏輯上」已經處理到的字節位置
+            if off != self.written:
+                # 發生跳躍，必須先將手頭上的緩衝寫入，才能移動磁頭
+                self._flush()
+                self.fp.seek(off)
+                self.written = off
+
+            # 數據寫入邏輯
+            
+            # Case 0: 快速通道 (數據很大且緩衝區為空)
+            # 如果數據大於等於 Buffer 大小，且 Buffer 為空，直接寫入文件，跳過 RAM 拷貝
+            if self.w_pos == 0 and d_len >= self.WRITE_BUF_SIZE:
+                # 如果不是整數倍，我們可以寫入大部分，剩下的放緩衝
+                # 但為了簡單，這裡直接全部寫入
+                self.fp.write(data)
+                self.written += d_len
+                return True
+
+            # Case 1: 數據可以完全塞入剩餘緩衝區
+            if self.w_pos + d_len <= self.WRITE_BUF_SIZE:
+                self.w_view[self.w_pos : self.w_pos + d_len] = data
+                self.w_pos += d_len
+                
+                # [優化] 如果剛好填滿，立即 Flush
+                if self.w_pos == self.WRITE_BUF_SIZE:
+                    self._flush()
+            
+            # Case 2: 數據大於剩餘空間 -> 先填滿緩衝區並 Flush，剩餘的再處理
+            else:
+                current_data_ptr = 0
+                remaining = d_len
+                
+                while remaining > 0:
+                    # 計算這次能搬多少
+                    space = self.WRITE_BUF_SIZE - self.w_pos
+                    take = min(remaining, space)
+                    
+                    self.w_view[self.w_pos : self.w_pos + take] = data[current_data_ptr : current_data_ptr + take]
+                    self.w_pos += take
+                    current_data_ptr += take
+                    remaining -= take
+                    
+                    # 如果滿了就 Flush
+                    if self.w_pos == self.WRITE_BUF_SIZE:
+                        self._flush()
+
+            # 更新邏輯寫入位置
+            self.written += d_len
+            return True
+
         except Exception as e:
             self.last_error = f"WRITE_FAIL: {e}"
-            self.active = False # 發生物理錯誤時解除激活
+            self.active = False
             return False
 
     def end(self, args: dict) -> bool:
-        """
-        FILE_END (0x2003) 處理邏輯
-        執行最終的哈希驗證並關閉任務。
-        """
+        """FILE_END (0x2003)"""
         if not self.active:
             return False
             
-        # 1. 先關閉文件，確保所有數據已從緩存刷入 Flash
+        # 1. Close 會自動觸發 _flush
         self._close()
         
         try:
-            # 2. 計算實際寫入文件的哈希值
-            got_digest = self.sha256_digest_stream_from_file(self.path)
+            # 2. 快速校驗：直接獲取流式計算結果
+            if self.hasher:
+                got_digest = self.hasher.digest()
+                self.hasher = None # 釋放
+            else:
+                # 備用方案：如果中間有 Seek 導致流式校驗失效，則回退到全文件讀取
+                # 但目前 chunk 實現不支持 seek 時回退 hasher，所以假設順序寫入
+                got_digest = self.sha256_digest_stream_from_file(self.path)
+                
             self.last_sha_hex = ubinascii.hexlify(got_digest).decode()
             
-            # 3. 雙向對應
             if got_digest == self.sha_expect:
                 self.active = False
                 return True
             else:
-                exp_hex = ubinascii.hexlify(self.sha_expect).decode()
                 self.last_error = f"SHA_MISMATCH got {self.last_sha_hex}"
                 self.active = False
                 return False

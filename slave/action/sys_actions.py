@@ -13,33 +13,39 @@ CMD_SYS_INFO_GET = 0x1003
 # --- 處理函數 (嚴格遵循 ctx, args 兩個參數) ---
 
 def on_connect_request(bus_manager, url):
-    """
-    處理連線請求
-    bus_manager: 傳入 ctrl_bus 實例
-    url: 完整的 ws://... 網址
-    """
-    try:
-        # 1. 解析 URL
-        parts = url.replace("ws://", "").split("/", 1)
-        hp = parts[0].split(":")
-        h = hp[0]
-        p = int(hp[1]) if len(hp) > 1 else 80
-        path = "/" + parts[1] if len(parts) > 1 else "/"
+    """處理連接請求 (0x1002) 或來自 Discovery 的間接調用"""
+    
+    # 解析 ws://host:port/path
+    parts = url.split("://")
+    if len(parts) > 1:
+        addr_part = parts[1]
+    else:
+        addr_part = parts[0]
         
-        # 2. 🚀 重連邏輯：如果已經在線，強制斷開
-        if bus_manager.connected:
-            print(f"🔄 [Network] Active connection detected, resetting for: {h}")
-            bus_manager.disconnect()
-            time.sleep_ms(50) # 短暫休眠確保底層資源釋放
+    path_idx = addr_part.find("/")
+    if path_idx != -1:
+        path = addr_part[path_idx:]
+        hp = addr_part[:path_idx]
+    else:
+        path = "/ws"
+        hp = addr_part
+        
+    hp_parts = hp.split(":")
+    h = hp_parts[0]
+    p = int(hp_parts[1]) if len(hp_parts) > 1 else 80
+
+    # 🚀 智能重連檢查：如果已經連到同一個目標，則忽略
+    if bus_manager.connected:
+        if bus_manager.host == h and bus_manager.port == p:
+            # 已經連接到相同的 Host:Port，無需動作
+            # print(f"ℹ️ [Network] Already connected to {h}:{p}, ignoring.")
+            return True
             
-        # 3. 執行新連接
-        # 注意: bus_manager.connect 內部的 settimeout(5) 會阻塞 Core0 少許時間
-        # 但對於控制信道切換這是必要的。
-        return bus_manager.connect(h, p, path=path)
+        print(f"🔄 [Network] Connection change detected ({bus_manager.host}:{bus_manager.port} -> {h}:{p}), resetting...")
+        bus_manager.disconnect()
+        time.sleep_ms(50)
         
-    except Exception as e:
-        print(f"❌ [sys_actions] Connect Error: {e}")
-        return False
+    return bus_manager.connect(h, p, path=path)
 
 def on_discover(ctx, args):
     """

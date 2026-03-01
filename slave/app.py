@@ -6,12 +6,12 @@ from lib.file_rx import FileRx
 from action.registry import register_all
 
 class App:
-    def __init__(self):
+    def __init__(self, buf_size=None):
         # 1. 核心組件
         self.store = SchemaStore()
         self.store.load_dir("/schema")
         self.disp = Dispatcher(self.store)
-        self.file_rx = FileRx()
+        self.file_rx = FileRx(buf_size=buf_size) # 傳入 buffer size
    
         # 3. 註冊行為
         register_all(self)
