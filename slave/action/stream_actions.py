@@ -19,13 +19,15 @@ def handle_supply_chain(hub, s, ctx):
     """由 Core 0 定時調用，負責加載與 READY 回報"""
     if bus.shared.get("is_seeking"):
         try:
+            hub.flush()
             if s.get("f_local"): s["f_local"].close()
             s["f_local"] = open(bus.shared["active_file"], "rb")
             
             # 預填第一幀
             view = hub.get_write_view()
-            if s["f_local"].readinto(view) > 0:
-                hub.commit()
+            if view is not None:
+                if s["f_local"].readinto(view) > 0:
+                    hub.commit()
             
             bus.shared["is_seeking"] = False
             bus.shared["is_ready"] = True
@@ -44,11 +46,12 @@ def handle_supply_chain(hub, s, ctx):
         # 利用 Hub 自帶 dirty 位檢查供給
         if not hub.dirty and s.get("f_local"):
             view = hub.get_write_view()
-            if s["f_local"].readinto(view) == 0:
-                if bus.shared.get("play_mode") == 1: s["f_local"].seek(0)
-                else: bus.shared["is_streaming"] = False
-            else:
-                hub.commit()
+            if view is not None:
+                if s["f_local"].readinto(view) == 0:
+                    if bus.shared.get("play_mode") == 1: s["f_local"].seek(0)
+                    else: bus.shared["is_streaming"] = False
+                else:
+                    hub.commit()
 
 def register(app):
     # 播放控制
@@ -57,4 +60,4 @@ def register(app):
     app.disp.on(0x3005, lambda c,a: bus.shared.update({"is_paused": bool(a["pause"])})) # PAUSE
     app.disp.on(0x3002, lambda c,a: bus.shared.update({"is_streaming": False, "is_ready": False})) # STOP
     # 0x3003 Direct Mode
-    app.disp.on(0x3003, lambda c,a: (bus.get_service("pixel_stream").get_write_view().__setitem__(slice(None), a["pixel_data"]), bus.get_service("pixel_stream").commit()))
+    app.disp.on(0x3003, lambda c,a: bus.get_service("pixel_stream").write_from(a["pixel_data"]))
