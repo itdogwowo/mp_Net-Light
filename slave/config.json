@@ -3,6 +3,8 @@
         "c_lum": 1.0,
         "hostname": "",
         "refresh_rate_ms": 1,
+        "master_IP": "",
+        "master_port": 0,
         "discovery_port": 9000,
         "heartbeat_interval": 10000,
         "local_fps": 40,

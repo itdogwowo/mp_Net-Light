@@ -2,6 +2,8 @@
 import time, gc
 from lib.sys_bus import bus
 from lib.net_bus import NetBus
+from action.sys_actions import on_connect_request
+from lib.ConfigManager import cfg_manager
 
 def check_network(lan, state):
     """
@@ -45,12 +47,38 @@ def task_loop(app):
     discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCV")
     discovery_bus.connect(None, bus_sys["discovery_port"])
 
+    def on_connect_wrapper(url):
+        # 嘗試連接並在成功時更新配置
+        res = on_connect_request(ctrl_bus, url)
+        if res:
+            try:
+                parts = url.replace("ws://", "").split("/", 1)
+                hp = parts[0].split(":")
+                h = hp[0]
+                p = int(hp[1]) if len(hp) > 1 else 80
+                
+                updated = False
+                if bus_sys.get("master_IP") != h:
+                    bus_sys["master_IP"] = h
+                    updated = True
+                if bus_sys.get("master_port") != p:
+                    bus_sys["master_port"] = p
+                    updated = True
+                
+                if updated:
+                    print(f"💾 Saving Master Config: {h}:{p}")
+                    cfg_manager.save_from_bus()
+            except Exception as e:
+                print(f"⚠️ Config update error: {e}")
+        return res
 
     ctx_extra = {
         "app": app, 
         "ctrl_bus": ctrl_bus,
-        "on_connect": lambda url: on_connect_request(ctrl_bus, url)
+        "on_connect": on_connect_wrapper
     }
+    
+    tried_config_connect = False
     
     # --- 供應鏈狀態 ---
     last_report = time.ticks_ms()
@@ -62,6 +90,20 @@ def task_loop(app):
         # 1. 網路守護：確保底層網路可用
         network_ok = check_network(lan, net_state)
         if network_ok:
+            # 啟動時嘗試讀取配置並連接一次
+            if not tried_config_connect and not ctrl_bus.connected:
+                tried_config_connect = True
+                m_ip = bus_sys.get("master_IP", "")
+                m_port = bus_sys.get("master_port", 0)
+                if m_ip and m_port:
+                    print(f"🔄 Auto-Connecting to stored Master: {m_ip}:{m_port}")
+                    # 必須附帶 slave_id 作為 path
+                    full_url = f"ws://{m_ip}:{m_port}/ws/{bus.slave_id}"
+                    if on_connect_wrapper(full_url):
+                        print("✅ Auto-Connect Success!")
+                    else:
+                        print("⚠️ Auto-Connect Failed, waiting for discovery...")
+
             try:
                 discovery_bus.poll(**ctx_extra)
                 if ctrl_bus.connected: 
