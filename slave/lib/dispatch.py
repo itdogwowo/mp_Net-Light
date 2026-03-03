@@ -1,8 +1,24 @@
 import time
 
+from lib.sys_bus import bus
+
+def dprint(msg, level=1):
+    """
+    統一的簡短日誌入口 (Dispatcher.log 的別名)
+    Usage: dprint("Hello")
+    """
+    if Dispatcher.debug_level >= level:
+        print(msg)
+
 class Dispatcher:
     # 調試等級：0: 關閉, 1: 僅指令, 2: 完整 Payload
     debug_level = 1 
+
+    @staticmethod
+    def log(msg, level=1):
+        """統一的日誌入口，取代 debugPrint"""
+        if Dispatcher.debug_level >= level:
+            print(msg)
 
     def __init__(self, store):
         self.store = store

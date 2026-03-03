@@ -1,8 +1,7 @@
 import network
 import time
 import machine
-import webrepl
-from lib.globalMethod import debugPrint
+from lib.dispatch import dprint
 
 # 定義 Active Mode 常量
 MODE_OFF = 0
@@ -69,7 +68,7 @@ class NetworkManager:
             
             if is_spi:
                 # SPI LAN (W5500)
-                debugPrint("🔌 初始化 SPI LAN (W5500)...")
+                dprint("🔌 初始化 SPI LAN (W5500)...")
                 spi_list = self.bus.get_service("spi_list")
                 if not spi_list:
                     raise Exception("SPI service not available")
@@ -98,11 +97,11 @@ class NetworkManager:
                     lan.ifconfig(tuple(config['static_ip']))
                     
                 self.interfaces['lan'] = lan
-                debugPrint("✓ SPI LAN 已初始化")
+                dprint("✓ SPI LAN 已初始化")
                 
             else:
                 # RMII LAN (原生 ETH)
-                debugPrint("🔌 初始化 RMII LAN...")
+                dprint("🔌 初始化 RMII LAN...")
                 # 處理配置列表或單一配置
                 eth_cfg = config
                 if 'list' in config: # 兼容舊結構
@@ -124,13 +123,17 @@ class NetworkManager:
                 )
                 lan.active(True)
                 self.interfaces['lan'] = lan
-                debugPrint("✓ RMII LAN 已初始化")
+                dprint("✓ RMII LAN 已初始化")
                 
         except Exception as e:
-            debugPrint(f"✗ LAN 初始化失敗: {e}")
+            dprint(f"✗ LAN 初始化失敗: {e}")
 
     def _init_wifi(self, config):
         """初始化 WiFi 接口"""
+        if not hasattr(network, 'WLAN'):
+            dprint("⚠️ 此固件/硬體不支持 WLAN，跳過 WiFi 初始化")
+            return
+
         mode = config.get('active_mode', MODE_BOOT_ONLY)
         if not config.get('enable', False) or mode == MODE_OFF:
             return
@@ -140,7 +143,7 @@ class NetworkManager:
         self.wifi_timeout = config.get('timeout', 300)
         
         try:
-            debugPrint("📡 初始化 WiFi...")
+            dprint("📡 初始化 WiFi...")
             wlan = network.WLAN(network.STA_IF)
             wlan.active(True)
             
@@ -153,20 +156,36 @@ class NetworkManager:
             
             # 連接
             ssid = config.get('ssid')
-            password = config.get('password') or config.get('password_pw')
+            password = config.get('password') or config.get('password_pw') or config.get('ssid_pw') 
             
             if ssid:
                 if not wlan.isconnected():
-                    debugPrint(f"   連接到: {ssid}")
+                    dprint(f"   連接到: {ssid}")
                     wlan.connect(ssid, password)
+                    
+                    # 簡單的連接等待與重試邏輯
+                    for _ in range(5):
+                        if wlan.isconnected(): break
+                        time.sleep(1)
+                    
+                    if not wlan.isconnected():
+                        dprint("   ⚠️ WiFi 連接超時/失敗")
+                        try:
+                            scan_res = wlan.scan()
+                            dprint("   🔍 掃描到的網絡:")
+                            for ap in scan_res:
+                                # ssid, bssid, channel, RSSI, authmode, hidden
+                                dprint(f"     - {ap[0].decode('utf-8', 'ignore')} (RSSI: {ap[3]})")
+                        except Exception as scan_err:
+                            dprint(f"   🔍 掃描失敗: {scan_err}")
                 else:
-                    debugPrint(f"   已連接到 WiFi")
+                    dprint(f"   已連接到 WiFi")
             
             self.interfaces['wifi'] = wlan
-            debugPrint("✓ WiFi 接口已就緒")
+            dprint("✓ WiFi 接口已就緒")
             
         except Exception as e:
-            debugPrint(f"✗ WiFi 初始化失敗: {e}")
+            dprint(f"✗ WiFi 初始化失敗: {e}")
 
     def check_network(self, force=False):
         """
@@ -191,7 +210,7 @@ class NetworkManager:
                 timeout = getattr(self, 'wifi_timeout', 300)
                 if now - self.boot_time > timeout: 
                     if iface.active():
-                        debugPrint(f"💤 {name.upper()} 達到運行時間限制 ({timeout}s)，關閉接口")
+                        dprint(f"💤 {name.upper()} 達到運行時間限制 ({timeout}s)，關閉接口")
                         iface.active(False)
                     continue
             
@@ -214,7 +233,7 @@ class NetworkManager:
                         pass
                         
             except Exception as e:
-                debugPrint(f"⚠ 檢查 {name} 狀態錯誤: {e}")
+                dprint(f"⚠ 檢查 {name} 狀態錯誤: {e}")
 
         # 更新狀態
         self._state['connected_interfaces'] = current_connected
@@ -230,9 +249,9 @@ class NetworkManager:
         """當接口連接成功時"""
         try:
             cfg = iface.ifconfig()
-            debugPrint(f"🌐 {name.upper()} 連接成功 | IP: {cfg[0]}")
+            dprint(f"🌐 {name.upper()} 連接成功 | IP: {cfg[0]}")
         except:
-            debugPrint(f"🌐 {name.upper()} 連接成功")
+            dprint(f"🌐 {name.upper()} 連接成功")
 
     def _start_webrepl(self):
         """啟動 WebREPL"""
@@ -242,9 +261,9 @@ class NetworkManager:
             # 這裡我們嘗試傳入 password 參數 (MicroPython 標準庫通常支持)
             webrepl.start(password='12345678') 
             self.webrepl_started = True
-            debugPrint("💻 WebREPL 服務已啟動")
+            dprint("💻 WebREPL 服務已啟動")
         except Exception as e:
-            debugPrint(f"✗ WebREPL 啟動失敗: {e}")
+            dprint(f"✗ WebREPL 啟動失敗: {e}")
 
     def get_active_interface(self):
         """獲取當前首選的活躍接口 (根據優先級)"""

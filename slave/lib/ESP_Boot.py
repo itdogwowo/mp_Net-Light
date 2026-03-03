@@ -4,7 +4,7 @@ from lib.LEDController import *
 from lib.ConfigManager import *
 from lib.pca9685 import *    
 from lib.apa102 import *
-from lib.globalMethod import debugPrint
+from lib.dispatch import dprint
 
 def init_i2c_led(i2c_led):
     re_ledPwm = []
@@ -24,11 +24,11 @@ def init_i2c(led_io):
     i2c_led_list = []
     if led_io['enable'] :
         for i2cc in led_io['i2c_List']:
-            debugPrint(i2cc['GPIO']['scl'],i2cc['GPIO']['sda'])
+            dprint(f"I2C Init: SCL={i2cc['GPIO']['scl']}, SDA={i2cc['GPIO']['sda']}")
             i2c = I2C(scl=i2cc['GPIO']['scl'], sda=i2cc['GPIO']['sda'])
-            #debugPrint(i2c.scan())
+            #dprint(i2c.scan())
             for i in i2c.scan():
-                debugPrint(hex(i))
+                dprint(f"Found I2C Device: {hex(i)}")
             for i in i2cc['address']:
                 try:
                     pca = PCA9685(i2c,address=int(i,16))
@@ -41,7 +41,7 @@ def init_i2c(led_io):
                     i2c_led_list.append(ledPwm)
 
                 except BaseException as e:
-                    debugPrint(f'missing address : {i}')
+                    dprint(f'missing address : {i}')
                     led_IO = {'led_IO':None,'Q':16}
                     ledPwm = LEDcontroller('v_i2c_LED',led_IO)
                     i2c_led_list.append(ledPwm)

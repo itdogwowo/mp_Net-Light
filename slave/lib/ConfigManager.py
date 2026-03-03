@@ -1,7 +1,7 @@
 import btree
 import json
 import os
-from lib.globalMethod import debugPrint
+from lib.dispatch import dprint
 from lib.sys_bus import bus
 
 class ConfigManager:
@@ -76,7 +76,7 @@ class ConfigManager:
                 content = f.read().strip()
                 data = json.loads(content) if content else {}
         except Exception as e:
-            debugPrint(f"[Config] 讀取解析出錯: {e}")
+            dprint(f"[Config] 讀取解析出錯: {e}")
             data = {}
 
         needs_cleaning = False
@@ -91,7 +91,7 @@ class ConfigManager:
                         sync_node(value, prefix=db_key + ".")
                     elif key.endswith('_pw'):
                         if value not in (None, "", "null"):
-                            debugPrint(f"[Config] 🔐 入庫密碼: {key}")
+                            dprint(f"[Config] 🔐 入庫密碼: {key}")
                             self._db[db_key.encode()] = json.dumps(value).encode()
                             needs_cleaning = True
                         else:
@@ -119,9 +119,9 @@ class ConfigManager:
                 self._update_btree_only(self.bus.shared)
                 self._pretty_dump(self.bus.shared, f)
             self._db.flush()
-            debugPrint(f"[Config] ✓ 配置已同步 (已自動忽略 _obj 對象)")
+            dprint(f"[Config] ✓ 配置已同步 (已自動忽略 _obj 對象)")
         except Exception as e:
-            debugPrint(f"[Config] ✗ 保存出錯: {e}")
+            dprint(f"[Config] ✗ 保存出錯: {e}")
 
     def _update_btree_only(self, node, prefix=""):
         """單純提取密碼到 BTree，不處理 JSON"""
