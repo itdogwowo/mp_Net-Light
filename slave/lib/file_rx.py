@@ -8,15 +8,17 @@ class FileRx:
     """
     高性能文件接收組件 - 支援分片寫入與 SHA256 流式校驗
     """
-    def __init__(self):
+    def __init__(self, buf_size=2048):
+        self.buf_size = buf_size
         self.reset()
         self.last_sha_hex = "" # 儲存最後一次成功或失敗的哈希計算結果
 
-    def sha256_digest_stream_from_file(self, path, bufsize=2048):
+    def sha256_digest_stream_from_file(self, path, bufsize=None):
         """
         串流計算文件 SHA256，避免將大文件一次性載入記憶體導致 OOM。
         使用 memoryview 優化字節切片效能。
         """
+        if bufsize is None: bufsize = self.buf_size
         h = hashlib.sha256()
         buf = bytearray(bufsize)
         with open(str(path), "rb") as f:

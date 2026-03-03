@@ -4,6 +4,7 @@ from lib.dispatch import Dispatcher
 from lib.proto import StreamParser
 from lib.file_rx import FileRx
 from action.registry import register_all
+from lib.sys_bus import bus
 
 class App:
     def __init__(self):
@@ -11,13 +12,18 @@ class App:
         self.store = SchemaStore()
         self.store.load_dir("/schema")
         self.disp = Dispatcher(self.store)
-        self.file_rx = FileRx()
+        
+        # 統一緩衝區管理
+        buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
+        self.file_rx = FileRx(buf_size=buf_size)
    
         # 3. 註冊行為
         register_all(self)
 
     def create_parser(self):
-        return StreamParser()
+        # 協議緩衝區上限設為基礎緩衝的 2 倍，以容納跨包重組
+        base_size = bus.shared.get('Buffer', {}).get('size', 4096)
+        return StreamParser(max_len=base_size * 2)
 
     def handle_stream(self, parser, data, transport_name="Bus", send_func=None, **kwargs):
         """

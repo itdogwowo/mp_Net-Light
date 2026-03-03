@@ -4,44 +4,19 @@ from lib.sys_bus import bus
 from lib.net_bus import NetBus
 from action.sys_actions import on_connect_request
 from lib.ConfigManager import cfg_manager
-
-def check_network(lan, state):
-    """
-    優雅的網路檢查守護
-    state: 傳入一個字典來記錄上一次的狀態，避免重複 print
-    """
-    is_connected = lan.isconnected()
-    
-    if is_connected and not state.get("was_connected", False):
-        # 剛連上線
-        ip_info = lan.ipconfig("addr4")
-        print(f"🌐 LAN Connected! IP: {ip_info[0]}")
-        state["was_connected"] = True
-        state["retry_count"] = 0
-        return True
-        
-    elif not is_connected:
-        if state.get("was_connected", True):
-            print("⚠️ LAN Disconnected! Attempting to recover...")
-            state["was_connected"] = False
-        
-        # 這裡可以根據需要執行重新激活邏輯
-        now = time.ticks_ms()
-        if time.ticks_diff(now, state.get("last_retry", 0)) > 5000:
-            lan.active(False)
-            time.sleep_ms(100)
-            lan.active(True)
-            state["last_retry"] = now
-            print("🔄 LAN Interface Reset...")
-            
-    return is_connected
+from lib.network_manager import NetworkManager
 
 def task_loop(app):
     # 初始化網路狀態追蹤器
     bus_sys = bus.shared["System"]
-    net_state = {"was_connected": False, "last_retry": 0, "retry_count": 0}
     
-    lan = bus.get_service("lan")
+    nm = bus.get_service("network_manager")
+    if not nm:
+        print("⚠️ NetworkManager not found in bus, creating new instance...")
+        nm = NetworkManager(bus)
+        nm.init_from_config()
+
+    lan = bus.get_service("lan") # 兼容舊代碼引用 (如果需要)
     
     ctrl_bus = NetBus(NetBus.TYPE_WS, app=app, label="CTRL-WS")
     discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCV")
@@ -88,7 +63,7 @@ def task_loop(app):
     print("🚀 [Core 0] Data Router Active")
     while bus.shared.get("engine_run", True):
         # 1. 網路守護：確保底層網路可用
-        network_ok = check_network(lan, net_state)
+        network_ok = nm.check_network()
         if network_ok:
             # 啟動時嘗試讀取配置並連接一次
             if not tried_config_connect and not ctrl_bus.connected:

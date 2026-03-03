@@ -2,6 +2,7 @@ from lib.ESP_Boot import *
 from lib.LEDController import *
 from lib.ConfigManager import *
 from lib.sys_bus import bus
+from lib.network_manager import NetworkManager
 import machine, os
 from esp32 import LDO
 
@@ -13,19 +14,19 @@ def exists(path):
     return True
 
 
-def init_lan(sysBus):
-    """初始化 LAN 硬件，但不阻塞等待連接"""
-    # 這裡保持你的硬體配置
-    config = sysBus.shared['ETH_Network']
-    if config['enable']:
-        for i in config['list']:
-            lan = network.LAN(mdc=i['GPIO']['mdc'], mdio=i['GPIO']['mdio'],
-                          ref_clk=i['GPIO']['ref_clk'], phy_addr=i['phy_addr'],
-                          phy_type=i['phy_type'] )
-#             lan = network.LAN(mdc=31, mdio=52, phy_addr=1, phy_type=network.PHY_IP101, ref_clk=50)
+def init_network_manager(sysBus):
+    """使用 NetworkManager 統一初始化網絡"""
+    try:
+        nm = NetworkManager(sysBus)
+        nm.init_from_config()
+        sysBus.register_service("network_manager", nm)
+        
+        # 兼容性註冊：如果 LAN 存在，註冊為 "lan" 服務
+        if 'lan' in nm.interfaces:
+            sysBus.register_service("lan", nm.interfaces['lan'])
             
-        lan.active(True)
-        sysBus.register_service("lan", lan)
+    except Exception as e:
+        print(f"❌ Network Init Error: {e}")
     return
 
 def init_bus(sysBus):
@@ -146,7 +147,7 @@ def init_sd(sysBus):
     sysBus.register_service("data_Phat", _phat)
     return
 
-init_lan(bus)
+init_network_manager(bus)
 init_bus(bus)
 init_led(bus)
 init_st(bus)

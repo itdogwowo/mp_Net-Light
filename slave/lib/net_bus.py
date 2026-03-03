@@ -1,6 +1,7 @@
 import socket
 import struct
 import time
+from lib.sys_bus import bus
 
 class NetBus:
     """
@@ -20,7 +21,9 @@ class NetBus:
         self.target_addr = None # UDP 發送對象
         
         # 內存隔離：每個 Bus 實例擁有獨立的緩衝區與解析器
-        self._buf = bytearray(4096)
+        # 統一使用 Buffer.size 作為接收緩衝區大小
+        buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
+        self._buf = bytearray(buf_size)
         self._ptr = 0
         self.parser = app.create_parser() if app else None
 
@@ -91,11 +94,13 @@ class NetBus:
         if not self.connected or not self.sock: return
         
         try:
+            # 確保接收大小與緩衝區一致
+            recv_size = bus.shared.get('Buffer', {}).get('size', 4096)
             if self.type == self.TYPE_UDP:
-                raw, addr = self.sock.recvfrom(2048)
+                raw, addr = self.sock.recvfrom(recv_size)
                 self.target_addr = addr # 自動鎖定最後一個來源
             else:
-                raw = self.sock.recv(2048)
+                raw = self.sock.recv(recv_size)
                 if not raw: 
                     self.connected = False
                     return
