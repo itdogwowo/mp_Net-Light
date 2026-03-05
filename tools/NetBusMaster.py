@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from collections import defaultdict, deque
 
+import msvcrt
+
 # ==================== 音頻模式自動檢測 (修復導入) ====================
 AUDIO_MODE = 'miniaudio'
 mixer = None  # 全局變量
@@ -315,19 +317,126 @@ class MonitorPanel:
         print(line)
 
 
+class DeviceManager:
+    """
+    設備管理器: 統籌 DeviceMonitor 和 Connection
+    負責:
+    1. 管理 slaves 連接字典
+    2. 處理設備重連/註冊
+    3. 執行健康檢查 (Heartbeat)
+    4. 提供設備統計數據
+    """
+    def __init__(self, panel: MonitorPanel):
+        self.panel = panel
+        self.slaves = {}  # {device_id: {conn, addr, parser, ...}}
+        self.lock = threading.Lock()
+        self.running = True
+        
+        # 啟動健康檢查線程
+        self.health_thread = threading.Thread(target=self._health_check_loop, daemon=True)
+        self.health_thread.start()
+
+    def register_connection(self, cid, conn, addr, parser):
+        """處理新連接/重連"""
+        with self.lock:
+            # 如果設備已存在，先清理舊連接
+            if cid in self.slaves:
+                old_node = self.slaves[cid]
+                try:
+                    print(f"🔄 [DeviceManager] 設備 {cid} 重連，關閉舊連接...")
+                    old_node["conn"].close()
+                    # 通知舊的 handle_client 線程退出 (通過關閉 socket 觸發異常)
+                except:
+                    pass
+            
+            # 註冊新連接
+            self.slaves[cid] = {
+                "conn": conn,
+                "addr": addr,
+                "parser": parser,
+                "ack_event": threading.Event(),
+                "query_event": threading.Event(),
+                "remote_sha": None,
+                "last_seen": time.time()  # 用於內部連接保活檢查
+            }
+            
+            # 更新面板狀態
+            self.panel.update_device(cid, status="待機")
+
+    def unregister_connection(self, cid):
+        """移除連接"""
+        with self.lock:
+            if cid in self.slaves:
+                del self.slaves[cid]
+            self.panel.remove_device(cid)
+
+    def update_heartbeat(self, cid):
+        """更新心跳時間"""
+        if cid in self.slaves:
+            self.slaves[cid]["last_seen"] = time.time()
+            # 同時更新 Monitor 的 last_update (雖然 MonitorPanel 也有 update_device)
+            # 這裡主要確保 DeviceManager 內部的 last_seen 也更新
+
+    def get_slave(self, cid):
+        return self.slaves.get(cid)
+
+    def get_all_slaves(self):
+        return self.slaves
+
+    def _health_check_loop(self):
+        """每 5 秒檢查一次設備健康狀態"""
+        while self.running:
+            time.sleep(5)
+            now = time.time()
+            timeout = 30.0  # 30秒超時
+            
+            # 複製 keys 避免遍歷時修改
+            with self.lock:
+                current_cids = list(self.slaves.keys())
+            
+            for cid in current_cids:
+                # 檢查 MonitorPanel 中的 last_update
+                # 因為 update_device 會更新 monitor.last_update
+                monitor = self.panel.monitors.get(cid)
+                if monitor:
+                    if now - monitor.last_update > timeout:
+                        if monitor.status != "離線":
+                            monitor.status = "離線"
+                            # 也可以選擇在這裡主動斷開 socket
+                            # self.unregister_connection(cid) 
+                            # 但有時候只是心跳包丟失，socket 還活著，保留 socket 讓它有機會恢復?
+                            # 用戶要求 "30秒沒有收到就標記離線"
+                            
+    def get_counts(self):
+        """返回 (在線總數, 離線總數)"""
+        online = 0
+        offline = 0
+        with self.lock:
+            for m in self.panel.monitors.values():
+                if m.status == "離線":
+                    offline += 1
+                else:
+                    online += 1
+        return online, offline
+
+    def stop(self):
+        self.running = False
+
+
 # ==================== NetBusMaster 主類 ====================
 class NetBusMaster:
     def __init__(self, config_file="slave_map.json"):
         self.store = SchemaStore(dir_path=f"{PROJECT_ROOT}/slave/schema")
-        self.slaves = {}
+        self.panel = MonitorPanel()
+        self.device_manager = DeviceManager(self.panel)
+        self.slaves = self.device_manager.slaves  # 兼容舊代碼，指向 Manager 的字典
+        
         self.running = True
         self.local_ip = self.get_local_ip()
         
         self.is_playing = False
         self.is_paused = False
         self.play_lock = threading.Lock()
-        
-        self.panel = MonitorPanel()
         
         self.config_file = config_file
         self.config = self.load_config()
@@ -360,7 +469,7 @@ class NetBusMaster:
     def start_ws_server(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(('0.0.0.0', 8000))
+        s.bind(('0.0.0.0', 9000))
         s.listen(20)
         print(f"[WS Server] 監聽 0.0.0.0:8000")
         
@@ -404,14 +513,10 @@ class NetBusMaster:
             
             self.panel.register_device(cid, play_id, total_frames)
             
-            self.slaves[cid] = {
-                "conn": conn,
-                "addr": addr,
-                "parser": StreamParser(),
-                "ack_event": threading.Event(),
-                "query_event": threading.Event(),
-                "remote_sha": None
-            }
+            # 使用 DeviceManager 註冊連接 (自動處理重連)
+            self.device_manager.register_connection(
+                cid, conn, addr, StreamParser()
+            )
             
             parser = self.slaves[cid]["parser"]
             while self.running:
@@ -431,16 +536,24 @@ class NetBusMaster:
                     parser.feed(raw)
                 
                 for ver, addr_pkt, cmd, payload in parser.pop():
+                    # 收到任何數據都視為心跳
+                    self.device_manager.update_heartbeat(cid)
                     cid = self.dispatch_logic(cid, cmd, payload)
         
         except Exception as e:
             self.panel.update_device(cid, status="錯誤", error_msg=str(e))
         
         finally:
-            if cid in self.slaves:
-                del self.slaves[cid]
-            self.panel.remove_device(cid)
-            conn.close()
+            # 智能清理: 只有當前連接是自己的時候才移除
+            # 避免重連時新連接剛建立就被舊連接的 finally 刪除
+            current_node = self.device_manager.get_slave(cid)
+            if current_node and current_node["conn"] == conn:
+                self.device_manager.unregister_connection(cid)
+            
+            try:
+                conn.close()
+            except:
+                pass
     
     def dispatch_logic(self, cid, cmd, payload):
         c_def = self.store.get(cmd)
@@ -525,66 +638,135 @@ class NetBusMaster:
                 except:
                     pass
     
-    # ==================== Step 1: 選擇設備 ====================
-    def step_1_select_slaves(self):
+    # ==================== New Step 1: 掃描與選擇 ====================
+    def scan_devices(self):
+        """僅掃描 (發送廣播包)"""
         self.panel.stop()
         ConsoleUI.clear_screen()
         ConsoleUI.show_cursor()
         
-        print("\n[Step 1] 正在廣播發現包...")
+        print("\n[Scan] 正在廣播發現包...")
         
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            
+            p_data = SchemaCodec.encode(
+                self.store.get(0x1001),
+                {"server_ip": self.local_ip, "ws_url": f"ws://{self.local_ip}:8000"}
+            )
+            s.sendto(Proto.pack(0x1001, p_data), ('255.255.255.255', 9000))
+            s.close()
+            print("✅ 廣播已發送，請等待設備連線...")
+        except Exception as e:
+            print(f"❌ 廣播失敗: {e}")
+            
+        time.sleep(1)
+        input("\n按 Enter 返回主菜單...")
+        self.panel.start()
+
+    def select_devices(self):
+        """選擇設備"""
+        self.panel.stop()
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
         
-        p_data = SchemaCodec.encode(
-            self.store.get(0x1001),
-            {"server_ip": self.local_ip, "ws_url": f"ws://{self.local_ip}:8000"}
-        )
-        s.sendto(Proto.pack(0x1001, p_data), ('255.255.255.255', 9000))
-        s.close()
-        
-        time.sleep(3)
-        
-        # --- 修改排序邏輯 ---
         # 取得所有在線設備 ID
         online_ids = list(self.slaves.keys())
         
         if not online_ids:
-            print("❌ 未發現任何在線設備")
-            input("\n按 Enter 繼續...")
+            print("❌ 當前無在線設備，請先執行 [Scan]")
+            input("\n按 Enter 返回...")
             self.panel.start()
             return
 
-        # 根據 PlayID 進行排序 (如果沒定義 PlayID 則排最後，預設給個很大的數字 999)
+        # 根據 PlayID 進行排序
         sorted_ids = sorted(
             online_ids, 
             key=lambda sid: self.config["mapping"].get(sid, {}).get("play_id", 999)
         )
-        # ------------------
 
-        print(f"\n✅ 發現 {len(sorted_ids)} 個設備 (按 PlayID 排序):")
+        print(f"\n✅ 當前在線 {len(sorted_ids)} 個設備:")
         print("-" * 50)
         for i, sid in enumerate(sorted_ids):
             pid = self.config["mapping"].get(sid, {}).get("play_id", "N/A")
-            print(f"  {i+1:2d}. {sid:15} (PlayID: {pid})")
+            mark = "*" if sid in self.selected_targets else " "
+            print(f" {mark} {i+1:2d}. {sid:15} (PlayID: {pid})")
         
-        choice = input("\n👉 選擇目標 (a=全選 / 逗號分隔編號): ").lower()
+        print("-" * 50)
+        print("操作說明:")
+        print(" - 輸入編號 (例: 1,3,5) 選擇/取消選擇")
+        print(" - 輸入 'a' 全選")
+        print(" - 輸入 'c' 清空選擇")
+        print(" - 直接按 Enter 完成並返回")
         
+        choice = input("\n👉 請輸入: ").strip().lower()
+        
+        if not choice:
+            self.panel.start()
+            return
+            
         if choice == 'a':
-            self.selected_targets = sorted_ids  # 使用排序後的列表
+            self.selected_targets = sorted_ids[:]
+            print("✅ 已全選")
+        elif choice == 'c':
+            self.selected_targets = []
+            print("✅ 已清空選擇")
         else:
             try:
-                # 根據用戶輸入的編號從排序後的 sorted_ids 中提取
                 indices = [int(x.strip()) - 1 for x in choice.split(',')]
-                self.selected_targets = [sorted_ids[i] for i in indices if 0 <= i < len(sorted_ids)]
+                current_set = set(self.selected_targets)
+                
+                for i in indices:
+                    if 0 <= i < len(sorted_ids):
+                        target = sorted_ids[i]
+                        if target in current_set:
+                            current_set.remove(target)
+                        else:
+                            current_set.add(target)
+                
+                # 保持排序順序
+                self.selected_targets = [tid for tid in sorted_ids if tid in current_set]
+                print(f"✅ 更新選擇: {len(self.selected_targets)} 個設備")
             except:
                 print("❌ 輸入無效")
-                input("\n按 Enter 繼續...")
-                self.panel.start()
-                return
         
-        print(f"\n✅ 已選中 {len(self.selected_targets)} 個設備")
-        input("\n按 Enter 繼續...")
+        time.sleep(1)
+        self.panel.start()
+
+    def clear_device_list(self):
+        """清除設備列表 (斷開所有連接)"""
+        self.panel.stop()
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
+        
+        count = len(self.slaves)
+        print(f"\n⚠️ 即將斷開 {count} 個設備的連接並清除列表。")
+        confirm = input("👉 確認? (y/n): ").lower()
+        
+        if confirm == 'y':
+            # 複製一份列表進行操作，避免遍歷時修改錯誤
+            targets = list(self.slaves.values())
+            for node in targets:
+                try:
+                    node["conn"].close()
+                except:
+                    pass
+            
+            # 等待線程清理
+            print("⏳ 正在清理連接...")
+            time.sleep(1)
+            
+            # 強制清理殘留
+            self.slaves.clear()
+            self.panel.monitors.clear()
+            self.selected_targets.clear()
+            
+            print("✅ 列表已清除")
+        else:
+            print("已取消")
+            
+        time.sleep(1)
         self.panel.start()
     
     # ==================== Step 2: 準備數據 (修復版) ====================
@@ -1120,37 +1302,123 @@ class NetBusMaster:
             except:
                 pass
     
+    def _print_menu(self):
+        self.panel.stop()
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
+        
+        print("\n" + "=" * 60)
+        print(" 🎬 NetBus Master Control Panel")
+        print("=" * 60)
+        online, offline = self.device_manager.get_counts()
+        print(" 1. Scan Devices       | 掃描設備 (廣播)")
+        print(" 2. Select Devices     | 選擇目標設備 (已選/總數: {}/{})".format(len(self.selected_targets), online))
+        print(" 3. Clear List         | 清除設備列表 (離線: {})".format(offline))
+        print(" ----------------------------------------")
+        print(" 4. Slice Animation    | 切分動畫數據")
+        print(" 5. Deploy Data        | 部署到設備 (帶監控)")
+        print(" 6. Sync Play          | 同步播放 (支持暫停)")
+        print(" s. STOP ALL           | 緊急停止")
+        print(" q. Exit               | 退出程序")
+        print("=" * 60)
+        # 提示符會在 input_with_refresh 中處理，這裡不打印
+
+    def input_with_refresh(self, prompt):
+        """
+        帶自動刷新的輸入函數
+        - 模擬標準 input() 行為 (支持回顯、Backspace、Enter確認)
+        - 等待期間若設備狀態變化，自動重繪界面並恢復輸入緩衝區
+        """
+        print(f"\n{prompt}", end="", flush=True)
+        
+        input_buf = []
+        last_online = -1
+        last_offline = -1
+        
+        while True:
+            # 1. 檢查狀態更新
+            curr_online, curr_offline = self.device_manager.get_counts()
+            
+            # 初始化狀態記錄
+            if last_online == -1:
+                last_online, last_offline = curr_online, curr_offline
+                
+            if curr_online != last_online or curr_offline != last_offline:
+                # 狀態變化，重繪界面
+                self._print_menu()
+                # 恢復輸入行
+                current_str = "".join(input_buf)
+                print(f"\n{prompt}{current_str}", end="", flush=True)
+                
+                last_online = curr_online
+                last_offline = curr_offline
+            
+            # 2. 非阻塞鍵盤檢測
+            if msvcrt.kbhit():
+                try:
+                    ch = msvcrt.getwch() # 獲取字符 (寬字符支持)
+                    
+                    if ch == '\r' or ch == '\n': # Enter
+                        print() # 換行
+                        return "".join(input_buf)
+                    
+                    elif ch == '\x08': # Backspace
+                        if input_buf:
+                            input_buf.pop()
+                            # 清除並重繪當前行
+                            # \r 回到行首 -> 打印提示符和內容 -> 清除剩餘部分
+                            current_str = "".join(input_buf)
+                            print(f"\r{prompt}{current_str} ", end="", flush=True) # 多印一個空格覆蓋
+                            print(f"\r{prompt}{current_str}", end="", flush=True) # 再回退
+                            
+                    elif ch == '\x03': # Ctrl+C
+                        raise KeyboardInterrupt
+                        
+                    elif ch and ch.isprintable():
+                        input_buf.append(ch)
+                        print(ch, end="", flush=True)
+                        
+                except KeyboardInterrupt:
+                    raise
+                except:
+                    pass
+            
+            time.sleep(0.05)
+
     def main_loop(self):
+        self._print_menu()
+        
         while self.running:
-            self.panel.stop()
-            ConsoleUI.clear_screen()
-            ConsoleUI.show_cursor()
+            # 使用自定義輸入函數替代 input()
+            # 注意: 這裡會阻塞直到用戶按 Enter，但內部會處理刷新
+            ch = self.input_with_refresh("👉 請選擇操作: ").lower().strip()
             
-            print("\n" + "=" * 60)
-            print(" 🎬 NetBus Master Control Panel")
-            print("=" * 60)
-            print(" 1. Select Devices     | 掃描並選擇設備")
-            print(" 2. Slice Animation    | 切分動畫數據")
-            print(" 3. Deploy Data        | 部署到設備 (帶監控)")
-            print(" 4. Sync Play          | 同步播放 (支持暫停)")
-            print(" s. STOP ALL           | 緊急停止")
-            print(" q. Exit               | 退出程序")
-            print("=" * 60)
-            
-            ch = input("\n👉 請選擇操作: ").lower()
-            
+            if not ch:
+                continue
+                
             if ch == '1':
-                self.step_1_select_slaves()
+                self.scan_devices()
+                self._print_menu()
             elif ch == '2':
-                self.step_2_prepare_data()
+                self.select_devices()
+                self._print_menu()
             elif ch == '3':
-                self.step_3_deploy()
+                self.clear_device_list()
+                self._print_menu()
             elif ch == '4':
+                self.step_2_prepare_data()
+                self._print_menu()
+            elif ch == '5':
+                self.step_3_deploy()
+                self._print_menu()
+            elif ch == '6':
                 self.step_4_sync_play()
+                self._print_menu()
             elif ch == 's':
                 self.stop_all()
                 print("✅ 已發送停止信號")
-                input("\n按 Enter 繼續...")
+                time.sleep(1)
+                self._print_menu()
             elif ch == 'q':
                 self.stop_all()
                 self.running = False

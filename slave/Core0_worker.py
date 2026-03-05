@@ -32,17 +32,17 @@ def task_loop(app):
                 h = hp[0]
                 p = int(hp[1]) if len(hp) > 1 else 80
                 
-                updated = False
+                # 針對性無損更新
                 if bus_sys.get("master_IP") != h:
                     bus_sys["master_IP"] = h
-                    updated = True
+                    print(f"💾 Updating Master IP: {h}")
+                    cfg_manager.save_from_bus(update_key="System.master_IP")
+                    
                 if bus_sys.get("master_port") != p:
                     bus_sys["master_port"] = p
-                    updated = True
+                    print(f"💾 Updating Master Port: {p}")
+                    cfg_manager.save_from_bus(update_key="System.master_port")
                 
-                if updated:
-                    print(f"💾 Saving Master Config: {h}:{p}")
-                    cfg_manager.save_from_bus()
             except Exception as e:
                 print(f"⚠️ Config update error: {e}")
         return res

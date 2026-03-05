@@ -46,13 +46,15 @@ class LEDController:
     @micropython.viper
     def _convert(self, source, offset: int, n: int, tid: int):
         src = ptr8(source)
-        dst = self.led.buf
+        
         bpp = int(self.bpp)
         
         if tid == 1:  # WS2812 (RGB/GRB)
+            dst = self.led.buf
             ro = int(self._r)
             go = int(self._g)
             bo = int(self._b)
+            wo = int(self._w)
             for i in range(n):
                 s_idx = offset + (i << 2) # i * 4
                 d_idx = i * bpp
@@ -61,7 +63,11 @@ class LEDController:
                 dst[d_idx + bo] = src[s_idx + 2] # B
                 
         elif tid == 2: # APA102 (Frame: Header[0xE1] + BGR)
-            ro = int(self._r); go = int(self._g); bo = int(self._b); wo = int(self._w)
+            dst = self.led.spi_buffer
+            ro = int(self._r)
+            go = int(self._g)
+            bo = int(self._b)
+            wo = int(self._w)
             for i in range(n):
                 s_idx = offset + (i << 2)
                 d_idx = 4 + (i << 2)
@@ -72,6 +78,11 @@ class LEDController:
 
         elif tid == 3: # i2c_LED (PCA9685)
             # 專門提取 W 通道 (src[+3]) 給 PWM 控制器
+            dst = self.led.buf
+            ro = int(self._r)
+            go = int(self._g)
+            bo = int(self._b)
+            wo = int(self._w)
             for i in range(n):
                 s_idx = offset + (i << 2)
                 dst[i] = src[s_idx + 3]          # 直接映射亮度

@@ -24,17 +24,29 @@ def on_connect_request(bus_manager, url):
         hp = parts[0].split(":")
         h = hp[0]
         p = int(hp[1]) if len(hp) > 1 else 80
-        path = "/" + parts[1] if len(parts) > 1 else "/"
         
+        # 修正: 確保 path 正確解析
+        if len(parts) > 1:
+            path = "/" + parts[1]
+        else:
+            path = "/"
+
         # 2. 🚀 重連邏輯：如果已經在線，強制斷開
         if bus_manager.connected:
-            print(f"🔄 [Network] Active connection detected, resetting for: {h}")
+            # 檢查是否連到同一個目標
+            # 如果 IP, Port 和 Path 都一樣，且連線狀態良好，則不需要重連
+            # 注意: 這裡簡化檢查，如果已經連接且目標相同，直接返回 True
+            # 但為了保證狀態同步，通常還是建議重連一次，或者至少發送一個 ping
+            
+            # 目前策略：總是重連以確保乾淨狀態
+            print(f"🔄 [Network] Active connection detected, resetting for: {h}:{p}{path}")
             bus_manager.disconnect()
             time.sleep_ms(50) # 短暫休眠確保底層資源釋放
             
         # 3. 執行新連接
         # 注意: bus_manager.connect 內部的 settimeout(5) 會阻塞 Core0 少許時間
         # 但對於控制信道切換這是必要的。
+        # 這裡呼叫 NetBus.connect(host, port, path)
         return bus_manager.connect(h, p, path=path)
         
     except Exception as e:
