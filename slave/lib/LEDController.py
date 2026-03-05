@@ -64,7 +64,7 @@ class LEDController:
             ro = int(self._r); go = int(self._g); bo = int(self._b); wo = int(self._w)
             for i in range(n):
                 s_idx = offset + (i << 2)
-                d_idx = i << 2
+                d_idx = 4 + (i << 2)
                 dst[d_idx + wo] = 0xEF           # 亮度頭部
                 dst[d_idx + ro] = src[s_idx]     # R
                 dst[d_idx + go] = src[s_idx + 1] # G
