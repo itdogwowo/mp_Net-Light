@@ -1,6 +1,6 @@
 import network
 import time
-import machine
+import machine, webrepl
 from lib.dispatch import dprint
 
 # 定義 Active Mode 常量
@@ -162,7 +162,6 @@ class NetworkManager:
                 if not wlan.isconnected():
                     dprint(f"   連接到: {ssid}")
                     wlan.connect(ssid, password)
-                    
                     # 簡單的連接等待與重試邏輯
                     for _ in range(5):
                         if wlan.isconnected(): break

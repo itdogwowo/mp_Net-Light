@@ -4,7 +4,7 @@ from lib.ConfigManager import *
 from lib.sys_bus import bus
 from lib.network_manager import NetworkManager
 import machine, os
-from esp32 import LDO
+
 
 def exists(path):
     try:
@@ -49,7 +49,7 @@ def init_bus(sysBus):
         
     I2C_config = sysBus.shared['I2C']
     i2c_list = []
-    if SPI_config['enable']:
+    if I2C_config['enable']:
         for i in I2C_config['list']:
             i2c = machine.I2C(i['id'],
                 freq=i['freq'] if i['freq'] else None,
@@ -134,6 +134,7 @@ def init_sd(sysBus):
     _phat = ''
     if config['enable'] and not exists(config["phat"]):
         try:
+            from esp32 import LDO
             _phat = config["phat"]
             ldo = LDO(config['LDO']['id'], config['LDO']['mv'], adjustable=True)
             sd = machine.SDCard(slot=config['config']['slot'], width=config['config']['width'],
