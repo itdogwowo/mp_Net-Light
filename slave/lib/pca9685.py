@@ -26,11 +26,14 @@ class PCA9685:
             print(f"PCA9685 Init Error: {e}")
 
     def freq(self, freq):
-        prescale = int(25000000.0 / 4096.0 / freq + 0.5)
-        self.i2c.writeto_mem(self.address, 0x00, b'\x10') 
-        self.i2c.writeto_mem(self.address, 0xFE, bytearray([prescale]))
-        self.i2c.writeto_mem(self.address, 0x00, b'\xa1')
-        time.sleep_us(500)
+        try:
+            prescale = int(25000000.0 / 4096.0 / freq + 0.5)
+            self.i2c.writeto_mem(self.address, 0x00, b'\x10') 
+            self.i2c.writeto_mem(self.address, 0xFE, bytearray([prescale]))
+            self.i2c.writeto_mem(self.address, 0x00, b'\xa1')
+            time.sleep_us(500)
+        except Exception as e:
+            print(f"PCA9685 Freq Error: {e}")
 
     # ========================================
     # 內部 LED 類 - 保留並優化你的語法糖
@@ -126,8 +129,11 @@ class PCA9685:
                 p_reg[idx+3] = val >> 8
 
     def show(self):
-        self._prepare_reg_buf()
-        self.i2c.writeto_mem(self.address, 0x06, self.reg_buf)
+        try:
+            self._prepare_reg_buf()
+            self.i2c.writeto_mem(self.address, 0x06, self.reg_buf)
+        except Exception as e:
+            print(f"PCA9685 Show Error: {e}")
 
 # ==================== 用法範例 ====================
 # i2c = machine.I2C(0, scl=machine.Pin(9), sda=machine.Pin(8))
