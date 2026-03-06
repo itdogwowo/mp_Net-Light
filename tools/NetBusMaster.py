@@ -5,12 +5,60 @@ import os, sys
 import hashlib
 import struct
 import json
+import copy
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from collections import defaultdict, deque
 
-import msvcrt
+# ==================== 全局默認配置 ====================
+DEFAULT_CONFIG = {
+    "sync_delay_ms": 150,
+    "mapping": {},
+    "ws_port": 8000,
+    "upt_port": 9000,
+    "deploy_timeout": 120,
+    "max_workers": 50
+}
+
+# ==================== 跨平台輸入處理 ====================
+class InputHandler:
+    def __init__(self):
+        self.is_windows = os.name == 'nt'
+        if self.is_windows:
+            import msvcrt
+            self.msvcrt = msvcrt
+        else:
+            import select
+            import tty
+            import termios
+            self.select = select
+            self.tty = tty
+            self.termios = termios
+
+    def kbhit(self):
+        if self.is_windows:
+            return self.msvcrt.kbhit()
+        else:
+            dr, dw, de = self.select.select([sys.stdin], [], [], 0)
+            return dr != []
+
+    def getch(self):
+        if self.is_windows:
+            # getwch returns Unicode char, compatible with non-ascii
+            return self.msvcrt.getwch()
+        else:
+            # Unix-like raw input handling
+            fd = sys.stdin.fileno()
+            old_settings = self.termios.tcgetattr(fd)
+            try:
+                self.tty.setraw(sys.stdin.fileno())
+                ch = sys.stdin.read(1)
+            finally:
+                self.termios.tcsetattr(fd, self.termios.TCSADRAIN, old_settings)
+            return ch
+
+input_handler = InputHandler()
 
 # ==================== 音頻模式自動檢測 (修復導入) ====================
 AUDIO_MODE = 'miniaudio'
@@ -439,7 +487,8 @@ class NetBusMaster:
         self.play_lock = threading.Lock()
         
         self.config_file = config_file
-        self.config = self.load_config()
+        self.config = copy.deepcopy(DEFAULT_CONFIG)
+        self.load_config()
         self.selected_targets = []
         self.prepared_data = {}
         self.pxld_metadata = {}
@@ -447,14 +496,55 @@ class NetBusMaster:
         threading.Thread(target=self.start_ws_server, daemon=True).start()
     
     def load_config(self):
+        """載入配置，支持熱更新，並自動補全缺失的默認值"""
+        needs_save = False
+        
         if os.path.exists(self.config_file):
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return {"sync_delay_ms": 150, "mapping": {}}
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    file_data = json.load(f)
+                
+                # 1. 檢查是否有缺失的默認 Key
+                for k in DEFAULT_CONFIG:
+                    if k not in file_data:
+                        needs_save = True
+                
+                # 2. 更新內存配置 (File -> Memory)
+                # 先從 DEFAULT_CONFIG 重新初始化，確保有最新的 defaults
+                self.config = copy.deepcopy(DEFAULT_CONFIG)
+                
+                # 再用 file_data 覆蓋
+                for k, v in file_data.items():
+                    if k in self.config and isinstance(self.config[k], dict) and isinstance(v, dict):
+                        self.config[k].update(v)
+                    else:
+                        self.config[k] = v
+                            
+                print(f"✅ Config loaded: {self.config_file}")
+            except Exception as e:
+                print(f"❌ Config load error: {e}")
+        else:
+            needs_save = True
+        
+        if needs_save:
+            print("💾 自動補全缺失的配置項...")
+            self.save_config()
+            
+        return self.config
     
     def save_config(self):
+        # 為了方便手動編輯，將 "mapping" 移到最後
+        ordered_config = {}
+        # 先加入所有非 mapping 的 key
+        for k, v in self.config.items():
+            if k != "mapping":
+                ordered_config[k] = v
+        # 最後再加入 mapping
+        if "mapping" in self.config:
+            ordered_config["mapping"] = self.config["mapping"]
+            
         with open(self.config_file, 'w', encoding='utf-8') as f:
-            json.dump(self.config, f, indent=4, ensure_ascii=False)
+            json.dump(ordered_config, f, indent=4, ensure_ascii=False)
     
     def get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -469,9 +559,10 @@ class NetBusMaster:
     def start_ws_server(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(('0.0.0.0', 9000))
+        port = self.config.get("ws_port", 8000)
+        s.bind(('0.0.0.0', port))
         s.listen(20)
-        print(f"[WS Server] 監聽 0.0.0.0:8000")
+        print(f"[WS Server] 監聽 0.0.0.0:{port}")
         
         while self.running:
             try:
@@ -494,13 +585,20 @@ class NetBusMaster:
             if len(parts) >= 2:
                 path = parts[1].strip('/')
                 if path and path != 'ws':
-                    cid = path
+                    # Fix: 取最後一段作為 ID (去除路徑前綴如 ws/)
+                    cid = path.split('/')[-1]
             
             resp = ("HTTP/1.1 101 Switching Protocols\r\n"
                     "Upgrade: websocket\r\n"
                     "Connection: Upgrade\r\n"
                     "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n")
             conn.send(resp.encode())
+            
+            # 自動遷移舊配置格式 (ws/ID -> ID)
+            if cid not in self.config["mapping"] and f"ws/{cid}" in self.config["mapping"]:
+                print(f"🔄 Migrating config: ws/{cid} -> {cid}")
+                self.config["mapping"][cid] = self.config["mapping"].pop(f"ws/{cid}")
+                self.save_config()
             
             if cid not in self.config["mapping"]:
                 pids = [v["play_id"] for v in self.config["mapping"].values() if "play_id" in v]
@@ -641,6 +739,7 @@ class NetBusMaster:
     # ==================== New Step 1: 掃描與選擇 ====================
     def scan_devices(self):
         """僅掃描 (發送廣播包)"""
+        self.load_config()  # Reload config
         self.panel.stop()
         ConsoleUI.clear_screen()
         ConsoleUI.show_cursor()
@@ -651,11 +750,13 @@ class NetBusMaster:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             
+            port = self.config.get("ws_port", 8000)
+            udp_port = self.config.get("upt_port", 9000)
             p_data = SchemaCodec.encode(
                 self.store.get(0x1001),
-                {"server_ip": self.local_ip, "ws_url": f"ws://{self.local_ip}:8000"}
+                {"server_ip": self.local_ip, "ws_url": f"ws://{self.local_ip}:{port}"}
             )
-            s.sendto(Proto.pack(0x1001, p_data), ('255.255.255.255', 9000))
+            s.sendto(Proto.pack(0x1001, p_data), ('255.255.255.255', udp_port)) # UDP Port 9000 fixed?
             s.close()
             print("✅ 廣播已發送，請等待設備連線...")
         except Exception as e:
@@ -667,6 +768,7 @@ class NetBusMaster:
 
     def select_devices(self):
         """選擇設備"""
+        self.load_config()  # Reload config
         self.panel.stop()
         ConsoleUI.clear_screen()
         ConsoleUI.show_cursor()
@@ -809,6 +911,7 @@ class NetBusMaster:
 
     def step_2_prepare_data(self):
         """切分 PXLD 動畫數據"""
+        self.load_config()  # Reload config
         self.panel.stop()
         ConsoleUI.clear_screen()
         ConsoleUI.show_cursor()
@@ -897,6 +1000,30 @@ class NetBusMaster:
                 
                 print(f"  📊 總幀數: {total_frames}")
                 
+                # Ask for frame range
+                start_frame = 0
+                end_frame = total_frames
+                
+                print(f"\n✂️  [切分範圍設置] (預設: 0 - {total_frames})")
+                try:
+                    s_in = input(f"👉 起始幀 [Enter=0]: ").strip()
+                    if s_in:
+                        start_frame = int(s_in)
+                    
+                    e_in = input(f"👉 結束幀 [Enter={total_frames}]: ").strip()
+                    if e_in:
+                        end_frame = int(e_in)
+                        
+                    # Validate
+                    start_frame = max(0, start_frame)
+                    end_frame = min(total_frames, max(start_frame + 1, end_frame))
+                    
+                    print(f"✅ 設定範圍: {start_frame} -> {end_frame} (共 {end_frame - start_frame} 幀)")
+                except:
+                    print(f"⚠️  輸入無效, 使用預設範圍: 0 - {total_frames}")
+                    start_frame = 0
+                    end_frame = total_frames
+                
                 # 提取所需 PlayID 數據
                 needed_pids = {self.config["mapping"][tid].get("play_id") for tid in self.selected_targets}
                 
@@ -907,23 +1034,24 @@ class NetBusMaster:
                     print(f"  📦 提取 PlayID {pid}...", end="", flush=True)
                     
                     data = bytearray()
-                    frame_count = 0
                     
-                    for frame in decoder.iterate_frames():
+                    # Fix: Use iterate_frames with range
+                    for frame in decoder.iterate_frames(start_frame=start_frame, end_frame=end_frame):
                         slave_data = decoder.get_slave_data(frame, pid)
                         if slave_data:
                             data.extend(slave_data)
-                        frame_count += 1
                     
                     self.prepared_data[pid] = data
-                    self.pxld_metadata[pid] = {"total_frames": total_frames}
+                    # Update metadata with actual sliced frame count
+                    sliced_frames = end_frame - start_frame
+                    self.pxld_metadata[pid] = {"total_frames": sliced_frames}
                     
                     # 更新監控面板的 total_frames
                     for tid in self.selected_targets:
                         if self.config["mapping"][tid].get("play_id") == pid:
-                            self.panel.register_device(tid, pid, total_frames)
+                            self.panel.register_device(tid, pid, sliced_frames)
                     
-                    print(f" OK ({len(data)//1024} KB, {total_frames} Frames)")
+                    print(f" OK ({len(data)//1024} KB, {sliced_frames} Frames)")
         
         except Exception as e:
             print(f"\n❌ 解析失敗: {e}")
@@ -943,6 +1071,7 @@ class NetBusMaster:
     
     # ==================== Step 3: 部署數據 ====================
     def step_3_deploy(self):
+        self.load_config()
         if not self.prepared_data:
             print("⚠️ 無預備數據,請先執行 Step 2")
             time.sleep(1)
@@ -972,11 +1101,17 @@ class NetBusMaster:
                 node["remote_sha"] = None
                 valid_tids.append(tid)
                 self.send_pkt([tid], 0x2005, {"path": "/data.bin"})
-        tout = 120
+        
+        tout = self.config.get("deploy_timeout", 120)
         print(f"⏳ 等待設備回報 (Timeout: {tout}s)...")
         start_wait = time.time()
         while time.time() - start_wait < tout:
-            if all(self.slaves[tid]["query_event"].is_set() for tid in valid_tids):
+            # Fix KeyError: 僅檢查在線設備
+            current_valid = [t for t in valid_tids if t in self.slaves]
+            if not current_valid:
+                break
+            
+            if all(self.slaves[tid]["query_event"].is_set() for tid in current_valid):
                 break
             time.sleep(0.1)
         
@@ -1037,7 +1172,8 @@ class NetBusMaster:
             else:
                 self.panel.update_device(tid, status="傳輸中", upload_progress=0)
         
-        with ThreadPoolExecutor(max_workers=50) as executor:
+        max_workers = self.config.get("max_workers", 50)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
             
             for future in futures:
@@ -1114,6 +1250,7 @@ class NetBusMaster:
     
     # ==================== Step 4: 同步播放 (修復音訊) ====================
     def step_4_sync_play(self):
+        self.load_config()  # Reload config
         global mixer  # 使用全局 mixer 變量
         
         self.panel.stop()
@@ -1201,32 +1338,40 @@ class NetBusMaster:
         
         print("\n[控制提示] SPACE=暫停/繼續 | S=停止 | Q=退出")
         
-        import select
-        import sys
-        
         while self.is_playing:
-            if select.select([sys.stdin], [], [], 0.1)[0]:
-                key = sys.stdin.read(1).lower()
-                
-                if key == ' ':
-                    with self.play_lock:
-                        self.is_paused = not self.is_paused
-                        if self.is_paused:
-                            self.send_pkt(self.selected_targets, 0x3003, {})
-                            for tid in self.selected_targets:
-                                self.panel.update_device(tid, status="暫停")
-                        else:
-                            self.send_pkt(self.selected_targets, 0x3004, {})
-                            for tid in self.selected_targets:
-                                self.panel.update_device(tid, status="播放中")
-                
-                elif key == 's':
-                    self.stop_all()
-                    break
-                
-                elif key == 'q':
-                    self.stop_all()
-                    break
+            if input_handler.kbhit():
+                try:
+                    key = input_handler.getch()
+                    if isinstance(key, bytes):
+                        key = key.decode('utf-8', errors='ignore')
+                    key = key.lower()
+                    
+                    if key == ' ':
+                        with self.play_lock:
+                            self.is_paused = not self.is_paused
+                            if self.is_paused:
+                                self.send_pkt(self.selected_targets, 0x3003, {})
+                                for tid in self.selected_targets:
+                                    self.panel.update_device(tid, status="暫停")
+                            else:
+                                self.send_pkt(self.selected_targets, 0x3004, {})
+                                for tid in self.selected_targets:
+                                    self.panel.update_device(tid, status="播放中")
+                    
+                    elif key == 's':
+                        self.stop_all()
+                        break
+                    
+                    elif key == 'q':
+                        self.stop_all()
+                        break
+                    
+                    elif key == '\x03': # Ctrl+C
+                         self.stop_all()
+                         break
+                         
+                except Exception:
+                    pass
             
             time.sleep(0.1)
         
@@ -1354,19 +1499,18 @@ class NetBusMaster:
                 last_offline = curr_offline
             
             # 2. 非阻塞鍵盤檢測
-            if msvcrt.kbhit():
+            if input_handler.kbhit():
                 try:
-                    ch = msvcrt.getwch() # 獲取字符 (寬字符支持)
+                    ch = input_handler.getch() # 獲取字符
                     
                     if ch == '\r' or ch == '\n': # Enter
                         print() # 換行
                         return "".join(input_buf)
                     
-                    elif ch == '\x08': # Backspace
+                    elif ch == '\x08' or ch == '\x7f': # Backspace
                         if input_buf:
                             input_buf.pop()
                             # 清除並重繪當前行
-                            # \r 回到行首 -> 打印提示符和內容 -> 清除剩餘部分
                             current_str = "".join(input_buf)
                             print(f"\r{prompt}{current_str} ", end="", flush=True) # 多印一個空格覆蓋
                             print(f"\r{prompt}{current_str}", end="", flush=True) # 再回退
