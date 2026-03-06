@@ -33,7 +33,7 @@
             "timeout": 300,
             "ssid": "Home_WiFi",
             "ssid_pw": "",
-            "mdns_name": "esp32-led"
+            "mdns_name": "esp32-led-"
         }
     },
     "SDcard": {

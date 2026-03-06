@@ -1,6 +1,10 @@
 import network
 import time
-import machine, webrepl
+import machine
+try:
+    import webrepl
+except:
+    webrepl = None
 from lib.dispatch import dprint
 
 # 定義 Active Mode 常量
@@ -14,7 +18,6 @@ class NetworkManager:
     職責:
     - 管理多個網絡接口 (LAN/WiFi)
     - 處理不同的 Active Mode (長期開啟/限時開啟)
-    - 統一管理 WebREPL
     - 支持 RMII LAN 和 SPI LAN
     """
     def __init__(self, sys_bus):
@@ -22,8 +25,6 @@ class NetworkManager:
         self.interfaces = {}  # {'lan': obj, 'wifi': obj}
         self.active_modes = {} # {'lan': 1, 'wifi': 2}
         self.boot_time = time.time()
-        self.webrepl_started = False
-        
         # 狀態追蹤
         self._state = {
             "connected_interfaces": set(), # 當前已連接的接口名稱集合
@@ -129,7 +130,7 @@ class NetworkManager:
             dprint(f"✗ LAN 初始化失敗: {e}")
 
     def _init_wifi(self, config):
-        """初始化 WiFi 接口"""
+        """初始化 WiFi 接口 (STA -> Fail -> AP)"""
         if not hasattr(network, 'WLAN'):
             dprint("⚠️ 此固件/硬體不支持 WLAN，跳過 WiFi 初始化")
             return
@@ -143,48 +144,113 @@ class NetworkManager:
         self.wifi_timeout = config.get('timeout', 300)
         
         try:
-            dprint("📡 初始化 WiFi...")
+            dprint("📡 初始化 WiFi STA...")
             wlan = network.WLAN(network.STA_IF)
             wlan.active(True)
             
             # 設置 mDNS 名稱 (如果支持)
             if hasattr(wlan, 'config') and 'mdns_name' in config:
-                try:
-                    wlan.config(mdns_name=config['mdns_name'])
-                except:
-                    pass
+                try: 
+                    mdns_val = config['mdns_name']
+                    # 如果配置中明確要求加後綴，或名稱以 '-' 結尾
+                    if config.get('mdns_suffix', False) or mdns_val.endswith("-"):
+                        if not mdns_val.endswith("-"): mdns_val += "-"
+                        mdns_val += str(self.bus.slave_id)
+                    wlan.config(mdns_name=mdns_val)
+                    dprint(f"   mDNS configured: {mdns_val}.local")
+                except: pass
             
-            # 連接
+            # 連接 STA
             ssid = config.get('ssid')
             password = config.get('password') or config.get('password_pw') or config.get('ssid_pw') 
             
+            connected_success = False
             if ssid:
                 if not wlan.isconnected():
                     dprint(f"   連接到: {ssid}")
-                    wlan.connect(ssid, password)
-                    # 簡單的連接等待與重試邏輯
-                    for _ in range(5):
-                        if wlan.isconnected(): break
-                        time.sleep(1)
-                    
-                    if not wlan.isconnected():
-                        dprint("   ⚠️ WiFi 連接超時/失敗")
-                        try:
-                            scan_res = wlan.scan()
-                            dprint("   🔍 掃描到的網絡:")
-                            for ap in scan_res:
-                                # ssid, bssid, channel, RSSI, authmode, hidden
-                                dprint(f"     - {ap[0].decode('utf-8', 'ignore')} (RSSI: {ap[3]})")
-                        except Exception as scan_err:
-                            dprint(f"   🔍 掃描失敗: {scan_err}")
+                    try:
+                        wlan.connect(ssid, password)
+                        # 簡單的連接等待與重試邏輯
+                        for _ in range(5):
+                            if wlan.isconnected(): break
+                            time.sleep(1)
+                        
+                        if not wlan.isconnected():
+                            dprint("   ⚠️ WiFi 連接超時/失敗")
+                        else:
+                            dprint(f"   已連接到 WiFi")
+                            connected_success = True
+                    except Exception as connect_err:
+                        dprint(f"   ⚠️ WiFi 連接過程異常: {connect_err}")
                 else:
                     dprint(f"   已連接到 WiFi")
+                    connected_success = True
             
-            self.interfaces['wifi'] = wlan
-            dprint("✓ WiFi 接口已就緒")
-            
+            if connected_success:
+                self.interfaces['wifi'] = wlan
+                dprint("✓ WiFi STA 接口已就緒")
+            else:
+                # STA 失敗，切換到 AP 模式
+                dprint("⚠️ STA 連接失敗，切換到 AP 模式...")
+                wlan.active(False) # 關閉 STA
+                self._start_ap_mode(config)
+
         except Exception as e:
             dprint(f"✗ WiFi 初始化失敗: {e}")
+
+    def _start_ap_mode(self, config):
+        """啟動 AP 模式並開啟 WebREPL"""
+        try:
+            ap = network.WLAN(network.AP_IF)
+            ap.active(True)
+            
+            # 讀取 AP 配置，如果沒有則使用默認值
+            ap_ssid = config.get('ap_ssid', f"NetLight-{self.bus.slave_id}")
+            ap_password = config.get('ap_password', '12345678')
+            
+            ap.config(essid=ap_ssid, password=ap_password, authmode=network.AUTH_WPA_WPA2_PSK)
+            
+            # 設置 AP mDNS 名稱
+            if hasattr(ap, 'config') and 'mdns_name' in config:
+                try: 
+                    mdns_val = config['mdns_name']
+                    # 如果配置中明確要求加後綴，或名稱以 '-' 結尾
+                    if config.get('mdns_suffix', False) or mdns_val.endswith("-"):
+                        if not mdns_val.endswith("-"): mdns_val += "-"
+                        mdns_val += str(self.bus.slave_id)
+                    
+                    ap.config(mdns_name=mdns_val)
+                    dprint(f"   mDNS configured: {mdns_val}.local")
+                except: pass
+
+            while not ap.active():
+                time.sleep(0.1)
+                
+            dprint(f"📡 AP 模式已啟動: {ap_ssid} / {ap_password}")
+            dprint(f"   IP: {ap.ifconfig()[0]}")
+            
+            self.interfaces['wifi'] = ap # 將 AP 註冊為 wifi 接口
+            
+            # 僅在 AP 模式下啟動 WebREPL
+            if webrepl:
+                try:
+                    webrepl.start(password='12345678')
+                    dprint("💻 WebREPL 服務已啟動 (AP Mode Only)")
+                except Exception as we_err:
+                    dprint(f"✗ WebREPL 啟動錯誤: {we_err}")
+                    
+        except Exception as e:
+            dprint(f"✗ AP 模式啟動失敗: {e}")
+
+    def set_app_connected(self, state=True):
+        """
+        [Command Method] 手動設置應用層連接狀態
+        用於 WebREPL 或其他非標準連接方式來保持 WiFi 接口開啟
+        """
+        self.bus.shared["manual_keep_alive"] = state
+        dprint(f"🔒 Manual Keep-Alive set to: {state}")
+        # 同步更新 app_connected 以立即生效 (雖然 Core0 會在下一輪循環覆蓋，但我們也修改 Core0)
+        self.bus.shared["app_connected"] = state
 
     def check_network(self, force=False):
         """
@@ -208,10 +274,34 @@ class NetworkManager:
                 # 獲取配置的超時時間，預設 300 秒 (5 分鐘)
                 timeout = getattr(self, 'wifi_timeout', 300)
                 if now - self.boot_time > timeout: 
-                    if iface.active():
-                        dprint(f"💤 {name.upper()} 達到運行時間限制 ({timeout}s)，關閉接口")
-                        iface.active(False)
-                    continue
+                    # 檢查是否已連接，若已連接則豁免關閉
+                    # 對於 WiFi，我們需要知道是否有應用層連接 (WS) 正在使用它
+                    # 但 NetworkManager 屬於底層，不應直接依賴上層狀態
+                    # 因此這裡我們透過 bus.shared 獲取一個標誌位 "app_connected"
+                    # 這個標誌位應該由 Core0_worker 在 WS 連接成功時設置
+                    
+                    app_connected = self.bus.shared.get("app_connected", False)
+                    
+                    connected_now = False
+                    try:
+                        if hasattr(iface, 'isconnected'): connected_now = iface.isconnected()
+                        elif hasattr(iface, 'status'): connected_now = (iface.status() == 2)
+                    except: pass
+
+                    # 如果底層沒連接，或者 (底層連接了 但 應用層沒連接)，則關閉
+                    # 換句話說：只有當 (底層連接 AND 應用層連接) 時才豁免
+                    # 但用戶原話是 "當有任何成功連接的時候就不需要關閉接口"
+                    # "成功連接" 可能指底層 WiFi 連接，也可能指 WS 連接
+                    # 用戶補充說明: "我是指這種連接,成功建立了一條ws"
+                    # 所以必須檢查 app_connected
+                    
+                    should_keep = connected_now and app_connected
+                    
+                    if not should_keep:
+                        if iface.active():
+                            dprint(f"💤 {name.upper()} 達到運行時間限制 ({timeout}s) 且無活躍 WS 連接，關閉接口")
+                            iface.active(False)
+                        continue
             
             try:
                 is_connected = False
@@ -237,11 +327,6 @@ class NetworkManager:
         # 更新狀態
         self._state['connected_interfaces'] = current_connected
         
-        # 2. WebREPL 管理
-        # 只要有任一接口連接，就確保 WebREPL 開啟
-        if current_connected and not self.webrepl_started:
-            self._start_webrepl()
-            
         return bool(current_connected)
 
     def _on_interface_up(self, name, iface):
@@ -251,18 +336,6 @@ class NetworkManager:
             dprint(f"🌐 {name.upper()} 連接成功 | IP: {cfg[0]}")
         except:
             dprint(f"🌐 {name.upper()} 連接成功")
-
-    def _start_webrepl(self):
-        """啟動 WebREPL"""
-        try:
-            # 嘗試從 config 讀取密碼，否則使用默認
-            # 注意: webrepl.start() 在某些版本可能不支持參數，需依賴 webrepl_cfg.py
-            # 這裡我們嘗試傳入 password 參數 (MicroPython 標準庫通常支持)
-            webrepl.start(password='12345678') 
-            self.webrepl_started = True
-            dprint("💻 WebREPL 服務已啟動")
-        except Exception as e:
-            dprint(f"✗ WebREPL 啟動失敗: {e}")
 
     def get_active_interface(self):
         """獲取當前首選的活躍接口 (根據優先級)"""

@@ -730,11 +730,15 @@ class NetBusMaster:
         pkt = hdr + data_pkt
         
         for tid in targets:
+            # Fix: 不檢查 self.slaves，直接嘗試發送
+            # 只要 tid 在 self.slaves 中有記錄 (即 socket 未被物理移除)，就嘗試發送
+            # 即使標記為 "離線" 也可以嘗試發送，因為 socket 可能只是暫時沒心跳
             if tid in self.slaves:
                 try:
                     self.slaves[tid]["conn"].sendall(pkt)
                 except:
                     pass
+            # 如果 tid 根本不在 slaves (socket 已 close/清除)，則無法發送，忽略
     
     # ==================== New Step 1: 掃描與選擇 ====================
     def scan_devices(self):
@@ -1083,6 +1087,7 @@ class NetBusMaster:
         
         print(f"\n🔍 [Step 3.1] 正在檢查 {len(self.selected_targets)} 個設備狀態...")
         
+        # 準備每個設備的 SHA (不管在線離線，只要選中且有數據就準備)
         local_sha_cache = {}
         for tid in self.selected_targets:
             pid = self.config["mapping"][tid].get("play_id")
@@ -1093,25 +1098,32 @@ class NetBusMaster:
             else:
                 local_sha_cache[tid] = None
         
+        # 嘗試向所有目標發送查詢，不管狀態
         valid_tids = []
         for tid in self.selected_targets:
-            node = self.slaves.get(tid)
-            if node and local_sha_cache[tid]:
+            if tid in self.slaves and local_sha_cache[tid]:
+                node = self.slaves[tid]
                 node["query_event"].clear()
                 node["remote_sha"] = None
                 valid_tids.append(tid)
-                self.send_pkt([tid], 0x2005, {"path": "/data.bin"})
+                
+        # 批量發送查詢
+        self.send_pkt(valid_tids, 0x2005, {"path": "/data.bin"})
         
         tout = self.config.get("deploy_timeout", 120)
         print(f"⏳ 等待設備回報 (Timeout: {tout}s)...")
         start_wait = time.time()
         while time.time() - start_wait < tout:
-            # Fix KeyError: 僅檢查在線設備
-            current_valid = [t for t in valid_tids if t in self.slaves]
-            if not current_valid:
-                break
+            # 只要有一個還沒回報，就繼續等 (除非超時)
+            # Fix: 不因為 socket 離線就中斷等待，因為可能只是心跳超時但 socket 還在
+            # Fix: 使用 get() 避免 KeyError，如果設備徹底斷開(不在slaves中)則不再等待
+            pending = []
+            for t in valid_tids:
+                node = self.slaves.get(t)
+                if node and not node["query_event"].is_set():
+                    pending.append(t)
             
-            if all(self.slaves[tid]["query_event"].is_set() for tid in current_valid):
+            if not pending:
                 break
             time.sleep(0.1)
         
@@ -1198,7 +1210,7 @@ class NetBusMaster:
         local_sha = hashlib.sha256(data).digest()
         target_path = "/data.bin"
         total_len = len(data)
-        chunk_size = 1024
+        chunk_size = 1024 * 1
         
         start_time = time.time()
         

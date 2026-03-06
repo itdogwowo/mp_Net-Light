@@ -63,6 +63,10 @@ def task_loop(app):
     print("🚀 [Core 0] Data Router Active")
     while bus.shared.get("engine_run", True):
         # 1. 網路守護：確保底層網路可用
+        # 同步 ctrl_bus 狀態到 bus.shared 供 NetworkManager 參考
+        # 邏輯: 只要 (WebSocket 連接) OR (手動 Keep-Alive) 為真，則視為 App 連接中
+        bus.shared["app_connected"] = ctrl_bus.connected or bus.shared.get("manual_keep_alive", False)
+        
         network_ok = nm.check_network()
         if network_ok:
             # 啟動時嘗試讀取配置並連接一次
