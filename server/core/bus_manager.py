@@ -91,7 +91,29 @@ class BusManager:
             
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(pkt, ('255.255.255.255', 9000))
+            # Remove bind to follow tools/NetBusMaster.py pattern
+            # try:
+            #     s.bind((local_ip, 0))
+            # except:
+            #     pass
+
+            # 1. Global Broadcast
+            try:
+                s.sendto(pkt, ('255.255.255.255', 9000))
+                print(f"📡 Global broadcast sent to 255.255.255.255:9000")
+            except Exception as e:
+                print(f"⚠️ Global broadcast failed: {e}")
+            
+            # 2. Subnet Broadcast (Assuming /24)
+            try:
+                parts = local_ip.split('.')
+                parts[-1] = '255'
+                subnet_broadcast = '.'.join(parts)
+                s.sendto(pkt, (subnet_broadcast, 9000))
+                print(f"📡 Subnet broadcast sent to {subnet_broadcast}:9000")
+            except Exception as e:
+                print(f"⚠️ Subnet broadcast failed: {e}")
+                
             s.close()
             # 同時也透過 Log 發送同步給 UI 看到
             self.send_ui_log(f"📡 Broadcast Sent: {local_ip}, scanning (20s interval)")

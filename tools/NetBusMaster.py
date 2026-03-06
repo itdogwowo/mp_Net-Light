@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
 class InputHandler:
     def __init__(self):
         self.is_windows = os.name == 'nt'
+        self.old_settings = None
         if self.is_windows:
             import msvcrt
             self.msvcrt = msvcrt
@@ -36,27 +37,53 @@ class InputHandler:
             self.tty = tty
             self.termios = termios
 
+    def enter_raw_mode(self):
+        """進入 Raw 模式 (禁用回顯、行緩衝) - 持續生效"""
+        if not self.is_windows:
+            try:
+                fd = sys.stdin.fileno()
+                self.old_settings = self.termios.tcgetattr(fd)
+                # setcbreak: 禁用行緩衝和回顯，但保留 Ctrl+C 等信號
+                self.tty.setcbreak(fd)
+            except Exception as e:
+                print(f"Failed to enter raw mode: {e}")
+
+    def exit_raw_mode(self):
+        """退出 Raw 模式，恢復原始設置"""
+        if not self.is_windows and self.old_settings:
+            try:
+                fd = sys.stdin.fileno()
+                self.termios.tcsetattr(fd, self.termios.TCSADRAIN, self.old_settings)
+            except Exception:
+                pass
+
     def kbhit(self):
         if self.is_windows:
             return self.msvcrt.kbhit()
         else:
+            # 在 Raw 模式下，select 依然有效
             dr, dw, de = self.select.select([sys.stdin], [], [], 0)
             return dr != []
 
     def getch(self):
+        """讀取單個字符 (假設已在 Raw 模式 或 Windows)"""
         if self.is_windows:
-            # getwch returns Unicode char, compatible with non-ascii
             return self.msvcrt.getwch()
         else:
-            # Unix-like raw input handling
-            fd = sys.stdin.fileno()
-            old_settings = self.termios.tcgetattr(fd)
             try:
-                self.tty.setraw(sys.stdin.fileno())
-                ch = sys.stdin.read(1)
-            finally:
-                self.termios.tcsetattr(fd, self.termios.TCSADRAIN, old_settings)
-            return ch
+                # 直接讀取，因為已經在 enter_raw_mode 中設置了 cbreak
+                return sys.stdin.read(1)
+            except Exception:
+                return ''
+            
+    def flush_input(self):
+        """清空輸入緩衝區 (Unix only)"""
+        if not self.is_windows:
+            try:
+                import termios
+                termios.tcflush(sys.stdin, termios.TCIOFLUSH)
+            except:
+                pass
 
 input_handler = InputHandler()
 
@@ -287,34 +314,44 @@ class MonitorPanel:
     
     def _render_frame(self):
         with self.lock:
-            ConsoleUI.move_cursor(1, 1)
+            # 使用 ANSI 轉義序列：
+            # \033[H : 移動光標到左上角 (1,1)
+            # \033[2J: 清除整個屏幕
+            # \033[3J: 清除滾動緩衝區 (防止殘留)
+            sys.stdout.write("\033[H\033[2J\033[3J")
             
             title = "╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗"
             subtitle = f"║  🎬 NetBus Master Monitor  │  Devices: {len(self.monitors)}  │  Time: {datetime.now().strftime('%H:%M:%S')}                                 ║"
             divider = "╠════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣"
             
-            print(title)
-            print(subtitle)
-            print(divider)
+            # 使用列表構建輸出緩衝區，一次性打印以減少閃爍
+            buffer = []
+            buffer.append(title)
+            buffer.append(subtitle)
+            buffer.append(divider)
             
             if not self.monitors:
-                print("║  [無設備在線]                                                                                                      ║")
+                buffer.append("║  [無設備在線]                                                                                                      ║")
             else:
                 for device_id, monitor in sorted(self.monitors.items()):
-                    self._render_device_row(monitor)
+                    buffer.append(self._get_device_row_str(monitor))
             
             bottom = "╠════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣"
-            print(bottom)
+            buffer.append(bottom)
             
             if self.interactive_mode:
                 controls = "║  [SPACE] 暫停/繼續  │  [S] 停止播放  │  [Q] 退出                                                              ║"
-                print(controls)
+                buffer.append(controls)
             
             footer = "╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝"
-            print(footer)
-            print()
-    
-    def _render_device_row(self, monitor: DeviceMonitor):
+            buffer.append(footer)
+            
+            # 確保內容完全覆蓋舊內容
+            output_str = "\n".join(buffer)
+            sys.stdout.write(output_str + "\n")
+            sys.stdout.flush()
+
+    def _get_device_row_str(self, monitor: DeviceMonitor):
         device_str = f"{monitor.device_id[:12]:<12}"
         play_id_str = f"P{monitor.play_id:02d}" if monitor.play_id is not None else "---"
         
@@ -335,7 +372,7 @@ class MonitorPanel:
             size_str = f"{monitor.uploaded_bytes//1024}/{monitor.total_bytes//1024} KB"
             info = f"{progress_bar} │ {speed_str} │ {size_str}"
         
-        elif monitor.status in ["播放中", "暂停"]:
+        elif monitor.status in ["播放中", "暫停"]:
             play_progress = monitor.get_play_progress()
             
             # 🔧 修复: 显示真实计算的 FPS
@@ -361,8 +398,7 @@ class MonitorPanel:
             idle_time = int(time.time() - monitor.last_update)
             info = f"閒置 {idle_time}s"
         
-        line = f"║ {device_str} │ {play_id_str} │ {status_str} │ {info:<80} ║"
-        print(line)
+        return f"║ {device_str} │ {play_id_str} │ {status_str} │ {info:<80} ║"
 
 
 class DeviceManager:
@@ -743,6 +779,7 @@ class NetBusMaster:
     # ==================== New Step 1: 掃描與選擇 ====================
     def scan_devices(self):
         """僅掃描 (發送廣播包)"""
+        # print("\nDEBUG: scan_devices ENTERED") # Debug print
         self.load_config()  # Reload config
         self.panel.stop()
         ConsoleUI.clear_screen()
@@ -754,13 +791,41 @@ class NetBusMaster:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             
+            # Refresh local IP
+            self.local_ip = self.get_local_ip()
+            
+            # Remove bind as it might cause issues on some systems
+            # try:
+            #     s.bind((self.local_ip, 0))
+            # except Exception as e:
+            #     print(f"⚠️ Bind warning: {e}")
+
             port = self.config.get("ws_port", 8000)
             udp_port = self.config.get("upt_port", 9000)
+            
             p_data = SchemaCodec.encode(
                 self.store.get(0x1001),
                 {"server_ip": self.local_ip, "ws_url": f"ws://{self.local_ip}:{port}"}
             )
-            s.sendto(Proto.pack(0x1001, p_data), ('255.255.255.255', udp_port)) # UDP Port 9000 fixed?
+            
+            print(f"📡 Broadcasting DISCOVER to port {udp_port} (Server IP: {self.local_ip})")
+
+            # 1. Send to Global Broadcast
+            try:
+                s.sendto(Proto.pack(0x1001, p_data), ('255.255.255.255', udp_port))
+            except Exception as e:
+                print(f"⚠️ Global broadcast failed: {e}")
+                
+            # 2. Send to Subnet Broadcast (Assuming /24)
+            try:
+                parts = self.local_ip.split('.')
+                parts[-1] = '255'
+                subnet_broadcast = '.'.join(parts)
+                s.sendto(Proto.pack(0x1001, p_data), (subnet_broadcast, udp_port))
+                print(f"📡 Subnet broadcast sent to {subnet_broadcast}:{udp_port}")
+            except Exception as e:
+                print(f"⚠️ Subnet broadcast failed: {e}")
+                
             s.close()
             print("✅ 廣播已發送，請等待設備連線...")
         except Exception as e:
@@ -1283,23 +1348,36 @@ class NetBusMaster:
         
         mp3_files = [f for f in os.listdir('.') if f.endswith('.mp3')]
         if not mp3_files:
-            print("❌ 找不到 MP3 文件")
-            input("\n按 Enter 繼續...")
-            self.panel.start()
-            return
+            print("❌ 找不到 MP3 文件 (可選)")
         
         print(f"\n🎵 [音訊準備] 模式: {AUDIO_MODE}")
+        print(f"  0. 不播放音訊 (僅觸發動畫)")
         for i, f in enumerate(mp3_files):
             print(f"  {i+1}. {f}")
+        print("  q. 取消返回")
         
+        selected_mp3 = None
         try:
-            choice = int(input("\n👉 選擇編號 (0=取消): ")) - 1
-            if choice < 0:
+            raw_choice = input("\n👉 選擇編號: ").strip().lower()
+            if raw_choice == 'q':
                 self.panel.start()
                 return
-            selected_mp3 = mp3_files[choice]
-        except:
-            print("❌ 選擇無效")
+            
+            choice = int(raw_choice)
+            if choice == 0:
+                selected_mp3 = None
+                print("✅ 已選擇: 靜音模式")
+            elif 1 <= choice <= len(mp3_files):
+                selected_mp3 = mp3_files[choice-1]
+                print(f"✅ 已選擇: {selected_mp3}")
+            else:
+                print("❌ 選擇無效")
+                time.sleep(1)
+                self.panel.start()
+                return
+        except ValueError:
+            print("❌ 輸入無效")
+            time.sleep(1)
             self.panel.start()
             return
         
@@ -1315,21 +1393,35 @@ class NetBusMaster:
             "block_id": 0,
             "play_mode": 0
         })
-        time.sleep(0.5)
-        
-        print("\n" + "!" * 50)
-        print("     系統就緒,等待擊發")
-        print(f"     延遲設定: {self.config.get('sync_delay_ms', 0)} ms")
-        print("     輸入 'go' 開始 | 'q' 取消")
-        print("!" * 50)
-        
-        trigger = input("\n🚀 指令: ").lower()
-        if trigger != 'go':
-            print("🛑 已取消")
-            time.sleep(1)
-            self.panel.start()
-            return
-        
+        while True:
+            print("\n" + "!" * 50)
+            print("     系統就緒,等待擊發")
+            print(f"     延遲設定: {self.config.get('sync_delay_ms', 0)} ms")
+            print("     輸入 'go' 開始 | 't' 微調延遲 | 'q' 取消")
+            print("!" * 50)
+            
+            trigger = input("\n🚀 指令: ").lower().strip()
+            
+            if trigger == 'go':
+                break
+            elif trigger == 'q':
+                print("🛑 已取消")
+                time.sleep(1)
+                self.panel.start()
+                return
+            elif trigger == 't':
+                try:
+                    curr = self.config.get("sync_delay_ms", 150)
+                    new_val = input(f"👉 輸入新延遲 (當前 {curr}ms): ").strip()
+                    if new_val:
+                        self.config["sync_delay_ms"] = int(new_val)
+                        self.save_config()
+                        print(f"✅ 延遲已更新為: {self.config['sync_delay_ms']} ms")
+                except ValueError:
+                    print("❌ 輸入無效")
+            else:
+                print("❌ 指令無效")
+
         for tid in self.selected_targets:
             self.panel.update_device(tid, status="播放中")
         
@@ -1338,54 +1430,72 @@ class NetBusMaster:
         delay_ms = self.config.get("sync_delay_ms", 150)
         delay_sec = abs(delay_ms) / 1000.0
         
-        if delay_ms >= 0:
-            self._start_audio_stream(selected_mp3)
-            if delay_ms > 0:
+        if selected_mp3:
+            if delay_ms >= 0:
+                self._start_audio_stream(selected_mp3)
+                if delay_ms > 0:
+                    time.sleep(delay_sec)
+                self.send_pkt(self.selected_targets, 0x300A, {})
+            else:
+                self.send_pkt(self.selected_targets, 0x300A, {})
                 time.sleep(delay_sec)
-            self.send_pkt(self.selected_targets, 0x300A, {})
+                self._start_audio_stream(selected_mp3)
         else:
+            # Silent mode: just trigger
+            self.is_playing = True # Enable loop
             self.send_pkt(self.selected_targets, 0x300A, {})
-            time.sleep(delay_sec)
-            self._start_audio_stream(selected_mp3)
         
-        print("\n[控制提示] SPACE=暫停/繼續 | S=停止 | Q=退出")
+        # print("\n[控制提示] SPACE=暫停/繼續 | S=停止 | Q=退出") # 移除此行，因為 MonitorPanel 已經顯示了控制提示，且此行會導致 UI 錯亂
         
-        while self.is_playing:
-            if input_handler.kbhit():
-                try:
-                    key = input_handler.getch()
-                    if isinstance(key, bytes):
-                        key = key.decode('utf-8', errors='ignore')
-                    key = key.lower()
-                    
-                    if key == ' ':
-                        with self.play_lock:
-                            self.is_paused = not self.is_paused
-                            if self.is_paused:
-                                self.send_pkt(self.selected_targets, 0x3003, {})
-                                for tid in self.selected_targets:
-                                    self.panel.update_device(tid, status="暫停")
-                            else:
-                                self.send_pkt(self.selected_targets, 0x3004, {})
-                                for tid in self.selected_targets:
-                                    self.panel.update_device(tid, status="播放中")
-                    
-                    elif key == 's':
-                        self.stop_all()
-                        break
-                    
-                    elif key == 'q':
-                        self.stop_all()
-                        break
-                    
-                    elif key == '\x03': # Ctrl+C
-                         self.stop_all()
-                         break
-                         
-                except Exception:
-                    pass
-            
-            time.sleep(0.1)
+        # 進入 Raw 模式 (持續禁用回顯與行緩衝)
+        input_handler.enter_raw_mode()
+        input_handler.flush_input()
+        
+        try:
+            while self.is_playing:
+                # 檢測按鍵輸入 (非阻塞)
+                if input_handler.kbhit():
+                    try:
+                        # 使用 getch 讀取按鍵
+                        key = input_handler.getch()
+                        
+                        # 處理字節類型
+                        if isinstance(key, bytes):
+                            key = key.decode('utf-8', errors='ignore')
+                        
+                        key = key.lower()
+                        
+                        if key == ' ':
+                            with self.play_lock:
+                                self.is_paused = not self.is_paused
+                                if self.is_paused:
+                                    self.send_pkt(self.selected_targets, 0x3003, {})
+                                    for tid in self.selected_targets:
+                                        self.panel.update_device(tid, status="暫停")
+                                else:
+                                    self.send_pkt(self.selected_targets, 0x3004, {})
+                                    for tid in self.selected_targets:
+                                        self.panel.update_device(tid, status="播放中")
+                        
+                        elif key == 's':
+                            self.stop_all()
+                            break
+                        
+                        elif key == 'q':
+                            self.stop_all()
+                            break
+                        
+                        elif key == '\x03': # Ctrl+C
+                             self.stop_all()
+                             break
+                             
+                    except Exception:
+                        pass
+                
+                time.sleep(0.05)
+        finally:
+            # 確保退出播放循環時恢復原始模式
+            input_handler.exit_raw_mode()
         
         for tid in self.selected_targets:
             self.panel.update_device(tid, status="待機")
@@ -1482,72 +1592,22 @@ class NetBusMaster:
 
     def input_with_refresh(self, prompt):
         """
-        帶自動刷新的輸入函數
+        帶自動刷新的輸入函數 (已棄用)
         - 模擬標準 input() 行為 (支持回顯、Backspace、Enter確認)
         - 等待期間若設備狀態變化，自動重繪界面並恢復輸入緩衝區
         """
-        print(f"\n{prompt}", end="", flush=True)
-        
-        input_buf = []
-        last_online = -1
-        last_offline = -1
-        
-        while True:
-            # 1. 檢查狀態更新
-            curr_online, curr_offline = self.device_manager.get_counts()
-            
-            # 初始化狀態記錄
-            if last_online == -1:
-                last_online, last_offline = curr_online, curr_offline
-                
-            if curr_online != last_online or curr_offline != last_offline:
-                # 狀態變化，重繪界面
-                self._print_menu()
-                # 恢復輸入行
-                current_str = "".join(input_buf)
-                print(f"\n{prompt}{current_str}", end="", flush=True)
-                
-                last_online = curr_online
-                last_offline = curr_offline
-            
-            # 2. 非阻塞鍵盤檢測
-            if input_handler.kbhit():
-                try:
-                    ch = input_handler.getch() # 獲取字符
-                    
-                    if ch == '\r' or ch == '\n': # Enter
-                        print() # 換行
-                        return "".join(input_buf)
-                    
-                    elif ch == '\x08' or ch == '\x7f': # Backspace
-                        if input_buf:
-                            input_buf.pop()
-                            # 清除並重繪當前行
-                            current_str = "".join(input_buf)
-                            print(f"\r{prompt}{current_str} ", end="", flush=True) # 多印一個空格覆蓋
-                            print(f"\r{prompt}{current_str}", end="", flush=True) # 再回退
-                            
-                    elif ch == '\x03': # Ctrl+C
-                        raise KeyboardInterrupt
-                        
-                    elif ch and ch.isprintable():
-                        input_buf.append(ch)
-                        print(ch, end="", flush=True)
-                        
-                except KeyboardInterrupt:
-                    raise
-                except:
-                    pass
-            
-            time.sleep(0.05)
+        # 由於兼容性問題，直接調用標準 input
+        return input(prompt)
 
     def main_loop(self):
         self._print_menu()
         
         while self.running:
-            # 使用自定義輸入函數替代 input()
-            # 注意: 這裡會阻塞直到用戶按 Enter，但內部會處理刷新
-            ch = self.input_with_refresh("👉 請選擇操作: ").lower().strip()
+            # Revert to standard input to ensure reliability
+            try:
+                ch = self.input_with_refresh("\n👉 請選擇操作: ").lower().strip()
+            except EOFError:
+                break
             
             if not ch:
                 continue

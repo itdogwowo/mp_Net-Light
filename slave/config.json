@@ -28,7 +28,7 @@
             }
         },
         "wifi": {
-            "enable": 1,
+            "enable": 0,
             "active_mode": 2,
             "timeout": 300,
             "ssid": "Home_WiFi",
