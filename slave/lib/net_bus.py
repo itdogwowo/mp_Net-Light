@@ -22,10 +22,22 @@ class NetBus:
         
         # 內存隔離：每個 Bus 實例擁有獨立的緩衝區與解析器
         # 統一使用 Buffer.size 作為接收緩衝區大小
-        buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
+        # 🚀 增大默認緩衝區以容納完整 WS 幀 (Header + Payload)
+        # 嘗試 64KB 大包 (配合 BufferHub 64KB)
+        buf_size = bus.shared.get('Buffer', {}).get('size', 65536)
         self._buf = bytearray(buf_size)
         self._ptr = 0
         self.parser = app.create_parser() if app else None
+
+    def enter_raw_mode(self, target_hub, size):
+        """進入 Raw Mode: 直接將 Socket 數據導向 Hub"""
+        self.raw_mode = True
+        self.raw_bytes_left = size
+        self.raw_target = target_hub
+        # 預先分配一個與 Socket 操作相關的 memoryview，減少循環中的創建開銷
+        # 注意：這裡使用整個緩衝區，具體長度在 readinto 時限制
+        self._raw_view_cache = memoryview(self._buf)
+        print(f"🚀 [NetBus] Entered RAW MODE. Expecting {size} bytes.")
 
     def connect(self, host, port, path="/ws"):
         """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
@@ -93,9 +105,46 @@ class NetBus:
         """
         if not self.connected or not self.sock: return
         
+        # RAW MODE HANDLER
+        if getattr(self, 'raw_mode', False):
+            try:
+                # 🚀 Zero-Copy Optimization:
+                # Use existing self._buf to avoid allocating new bytes object
+                # This prevents GC spikes during high-speed transfer
+                
+                # 1. Read directly into pre-allocated buffer (limit to remaining bytes)
+                # 使用緩存的 memoryview 進行切片，避免每次創建新的 memoryview 對象
+                limit = min(len(self._buf), self.raw_bytes_left)
+                
+                # 這裡的切片操作在 MicroPython 中是非常輕量的
+                view = self._raw_view_cache[:limit]
+                n = self.sock.readinto(view)
+                
+                if n is None: # Non-blocking, no data
+                    return
+                    
+                if n == 0: # Connection closed
+                    self.connected = False
+                    return
+                
+                # 2. Write to Hub using memoryview (no copy if Hub supports it, or fast C-level copy)
+                if self.raw_target:
+                    # 使用已經讀入數據的 view 切片
+                    self.raw_target.write_from(view[:n])
+                
+                self.raw_bytes_left -= n
+                
+                if self.raw_bytes_left <= 0:
+                    self.raw_mode = False
+                    self._raw_view_cache = None # 釋放引用
+                    print(f"🏁 [NetBus] RAW MODE DONE.")
+            except OSError:
+                pass
+            return
+
         try:
             # 確保接收大小與緩衝區一致
-            recv_size = bus.shared.get('Buffer', {}).get('size', 4096)
+            recv_size = bus.shared.get('Buffer', {}).get('size', 65536)
             if self.type == self.TYPE_UDP:
                 raw, addr = self.sock.recvfrom(recv_size)
                 self.target_addr = addr # 自動鎖定最後一個來源
@@ -117,7 +166,8 @@ class NetBus:
 
             # --- 智能分發 ---
             if self.app and self.parser:
-                # 自動餵入專屬 Parser
+                # 針對 WS 模式，嘗試避免內存複製 (如果 parser 支援)
+                # 但 StreamParser.feed 目前是 extend
                 self.app.handle_stream(
                     self.parser, data, 
                     transport_name=self.label, 

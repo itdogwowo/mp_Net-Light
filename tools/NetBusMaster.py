@@ -366,7 +366,7 @@ class MonitorPanel:
         status_color = status_colors.get(monitor.status, "\033[0m")
         status_str = f"{status_color}{monitor.status:<6}{ConsoleUI.reset_color()}"
         
-        if monitor.status == "傳輸中":
+        if monitor.status == "傳輸中" or monitor.status == "測速中" or monitor.status == "Raw測速":
             progress_bar = ConsoleUI.draw_progress_bar(monitor.upload_progress, width=20)
             speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
             size_str = f"{monitor.uploaded_bytes//1024}/{monitor.total_bytes//1024} KB"
@@ -390,6 +390,16 @@ class MonitorPanel:
             
             # 🔧 简化显示: 只显示 Real_FPS (真实渲染帧率)
             info = f"Progress: {progress_percent} │ Frame: {frame_str:<12} │ FPS: {calc_fps_str} │ Mem: {mem_str}"
+        
+        elif monitor.status == "完成":
+            # 顯示最終平均速度
+            elapsed = monitor.last_update - monitor.upload_start_time
+            if elapsed > 0 and monitor.total_bytes > 0:
+                avg_speed = (monitor.total_bytes / 1024) / elapsed
+                speed_str = f"{avg_speed:>6.1f} KB/s"
+                info = f"完成 │ Avg: {speed_str} │ {monitor.total_bytes//1024} KB"
+            else:
+                info = "完成"
         
         elif monitor.status == "錯誤":
             info = f"\033[91m{monitor.error_msg[:70]}\033[0m"
@@ -1325,6 +1335,252 @@ class NetBusMaster:
         self.config["mapping"][tid]["last_sha"] = local_sha.hex()
         self.save_config()
     
+    # ==================== Step 7: RAM 測速 ====================
+    def step_7_ram_speed_test(self):
+        self.load_config()
+        self.panel.stop()
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
+        
+        if not self.selected_targets:
+            print("⚠️ 請先執行 Step 1 選擇設備")
+            input("\n按 Enter 繼續...")
+            self.panel.start()
+            return
+
+        print("\n🚀 [RAM Speed Test] 純內存上傳測速")
+        print("   此模式將發送 dummy 數據到設備 RAM，不寫入 Flash。")
+        print("   設備將進入 Turbo 模式全速消耗數據。")
+        
+        try:
+            size_mb = float(input("\n👉 請輸入測試大小 (MB) [默認 2]: ").strip() or "2")
+        except:
+            size_mb = 2.0
+            
+        total_len = int(size_mb * 1024 * 1024)
+        dummy_data = b'\xAA' * total_len
+        chunk_size = 65000 # 修正: 65536 會導致 ushort 溢出, 改用 65000
+        
+        print(f"\n📦 準備發送 {size_mb} MB 數據...")
+        print(f"   Chunk Size: {chunk_size} bytes")
+        
+        # 使用與 Deploy 相同的邏輯，但目標是 0xFFFF
+        self.panel.start()
+        
+        for tid in self.selected_targets:
+            self.panel.update_device(tid, status="測速中", upload_progress=0)
+            
+        max_workers = self.config.get("max_workers", 50)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 傳遞 dummy_data 防止閉包引用問題
+            futures = {
+                executor.submit(self._ram_test_single_slave, tid, dummy_data, chunk_size): tid 
+                for tid in self.selected_targets
+            }
+            
+            for future in futures:
+                tid = futures[future]
+                try:
+                    future.result()
+                    self.panel.update_device(tid, status="完成", upload_progress=100)
+                except Exception as e:
+                    self.panel.update_device(tid, status="錯誤", error_msg=str(e))
+        
+        time.sleep(1)
+        print("\n✅ 測速完成")
+        input("\n按 Enter 返回...")
+        self.panel.start()
+
+    # ==================== Step 8: Raw Stream Test ====================
+    def step_8_raw_stream_test(self):
+        self.load_config()
+        self.panel.stop()
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
+        
+        if not self.selected_targets:
+            print("⚠️ 請先執行 Step 1 選擇設備")
+            input("\n按 Enter 繼續...")
+            self.panel.start()
+            return
+
+        print("\n🚀 [Raw Stream Test] 極限 Raw Socket 測速")
+        print("   此模式將發送 'Enter Raw Mode' 指令，隨後直接灌入 Raw Bytes。")
+        print("   完全繞過 NetBus 協議封裝 (No Header, No CRC)。")
+        
+        try:
+            size_mb = float(input("\n👉 請輸入測試大小 (MB) [默認 5]: ").strip() or "5")
+        except:
+            size_mb = 5.0
+            
+        total_len = int(size_mb * 1024 * 1024)
+        
+        print(f"\n📦 準備發送 {size_mb} MB 數據...")
+        
+        self.panel.start()
+        
+        for tid in self.selected_targets:
+            self.panel.update_device(tid, status="Raw測速", upload_progress=0)
+            
+        max_workers = self.config.get("max_workers", 50)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._raw_test_single_slave, tid, total_len): tid 
+                for tid in self.selected_targets
+            }
+            
+            for future in futures:
+                tid = futures[future]
+                try:
+                    future.result()
+                    self.panel.update_device(tid, status="完成", upload_progress=100)
+                except Exception as e:
+                    self.panel.update_device(tid, status="錯誤", error_msg=str(e))
+        
+        time.sleep(1)
+        print("\n✅ 測速完成")
+        input("\n按 Enter 返回...")
+        self.panel.start()
+
+    def _raw_test_single_slave(self, tid, total_len):
+        node = self.slaves.get(tid)
+        if not node: raise Exception("設備離線")
+            
+        start_time = time.time()
+        conn = node["conn"]
+        
+        self.panel.update_device(
+            tid,
+            uploaded_bytes=0,
+            total_bytes=total_len,
+            upload_start_time=start_time
+        )
+        
+        # 1. Send ENTER RAW MODE (0x2007)
+        self.send_pkt([tid], 0x2007, {
+            "file_id": 0xFFFF,
+            "total_size": total_len,
+            "path": "raw_stream_test"
+        })
+        
+        # Give slave a moment to switch context
+        time.sleep(0.1)
+        
+        # 2. Send Raw Bytes
+        chunk_size = 65536
+        sent = 0
+        dummy_chunk = b'\xAA' * chunk_size
+        
+        while sent < total_len:
+            rem = total_len - sent
+            if rem < chunk_size:
+                conn.sendall(dummy_chunk[:rem])
+                sent += rem
+            else:
+                conn.sendall(dummy_chunk)
+                sent += chunk_size
+            
+            # Update UI
+            elapsed = time.time() - start_time
+            speed = (sent / 1024) / elapsed if elapsed > 0 else 0
+            progress = (sent / total_len) * 100
+            self.panel.update_device(
+                tid, 
+                upload_progress=progress, 
+                upload_speed=speed, 
+                uploaded_bytes=sent
+            )
+            
+        # 3. Send End (NetBus Protocol)
+        time.sleep(0.1) 
+        self.send_pkt([tid], 0x2003, {"file_id": 0xFFFF})
+
+    def _ram_test_single_slave(self, tid, data, chunk_size):
+        node = self.slaves.get(tid)
+        if not node:
+            raise Exception("設備離線")
+            
+        total_len = len(data)
+        start_time = time.time()
+        
+        self.panel.update_device(
+            tid,
+            uploaded_bytes=0,
+            total_bytes=total_len,
+            upload_start_time=start_time
+        )
+        
+        # 1. Start Benchmark Mode (RAM)
+        self.send_pkt([tid], 0x2001, {
+            "file_id": 0xFFFF,
+            "total_size": total_len,
+            "chunk_size": chunk_size,
+            "sha256": b'\x00'*32,
+            "path": "benchmark_ram_test"
+        })
+        time.sleep(0.1)
+        
+        # 2. Upload Loop
+        for off in range(0, total_len, chunk_size):
+            chunk = data[off : off + chunk_size]
+            end = off + len(chunk)
+            
+            # 對於 RAM 測速，我們可以選擇是否等待 ACK
+            # 為了測量"可靠傳輸速度"，我們應該等待 ACK
+            # 這樣也能防止 UDP 丟包或 TCP 緩衝區溢出
+            node["ack_event"].clear()
+            self.send_pkt([tid], 0x2002, {
+                "file_id": 0xFFFF,
+                "offset": off,
+                "data": chunk
+            })
+            
+            # RAM 寫入應該很快，超時設短一點
+            # 增加重試機制，應對 Buffer Full 的情況
+            # 在 Turbo/Benchmark 模式下，我們不等待 ACK (Slave 不會發)
+            # 所以直接發送下一個塊
+            # max_retries = 5
+            # for attempt in range(max_retries):
+            #     node["ack_event"].clear()
+            #     self.send_pkt([tid], 0x2002, {
+            #         "file_id": 0xFFFF,
+            #         "offset": off,
+            #         "data": chunk
+            #     })
+            #     
+            #     if node["ack_event"].wait(timeout=1.0):
+            #         break # Success
+            #     
+            #     if attempt < max_retries - 1:
+            #         # print(f"⚠️ Offset {off} ACK Timeout, retrying ({attempt+1}/{max_retries})...")
+            #         pass
+            #     else:
+            #         raise Exception(f"Offset {off} ACK 超時 (Retried {max_retries} times)")
+            
+            # Fire-and-Forget
+            self.send_pkt([tid], 0x2002, {
+                "file_id": 0xFFFF,
+                "offset": off,
+                "data": chunk
+            })
+            
+            # 輕微流控，避免淹沒 socket 緩衝區
+            # time.sleep(0.0001) 
+            
+            elapsed = time.time() - start_time
+            speed = (end / 1024) / elapsed if elapsed > 0 else 0
+            progress = (end / total_len) * 100
+            
+            self.panel.update_device(
+                tid,
+                upload_progress=progress,
+                upload_speed=speed,
+                uploaded_bytes=end
+            )
+            
+        # 3. End
+        self.send_pkt([tid], 0x2003, {"file_id": 0xFFFF})
+
     # ==================== Step 4: 同步播放 (修復音訊) ====================
     def step_4_sync_play(self):
         self.load_config()  # Reload config
@@ -1340,46 +1596,76 @@ class NetBusMaster:
             self.panel.start()
             return
         
-        if AUDIO_MODE is None:
-            print("❌ 音訊模塊未安裝,無法播放")
-            input("\n按 Enter 繼續...")
-            self.panel.start()
-            return
+        # 選擇播放模式
+        print("\n🎛️ [播放模式選擇]")
+        print("  1. 本地文件播放 (Local File)")
+        print("  2. 即時串流播放 (Live Stream) - RAM Only")
+        print("  3. 基準測試 (Benchmark) - RAM Only")
         
-        mp3_files = [f for f in os.listdir('.') if f.endswith('.mp3')]
-        if not mp3_files:
-            print("❌ 找不到 MP3 文件 (可選)")
-        
-        print(f"\n🎵 [音訊準備] 模式: {AUDIO_MODE}")
-        print(f"  0. 不播放音訊 (僅觸發動畫)")
-        for i, f in enumerate(mp3_files):
-            print(f"  {i+1}. {f}")
-        print("  q. 取消返回")
-        
-        selected_mp3 = None
         try:
-            raw_choice = input("\n👉 選擇編號: ").strip().lower()
-            if raw_choice == 'q':
+            mode_choice = input("\n👉 請選擇模式 (默認 1): ").strip()
+        except:
+            mode_choice = "1"
+            
+        play_mode = "local"
+        stream_path = ""
+        
+        if mode_choice == "2":
+            play_mode = "stream"
+            stream_path = input("   輸入 Stream Hub 名稱 (默認 pixel_stream): ").strip()
+            if not stream_path: stream_path = "pixel_stream"
+        elif mode_choice == "3":
+            play_mode = "benchmark"
+            stream_path = "benchmark_test"
+        else:
+            play_mode = "local"
+        
+        # 如果是本地文件模式，檢查音訊
+        if play_mode == "local":
+            if AUDIO_MODE is None:
+                print("❌ 音訊模塊未安裝,無法播放")
+                input("\n按 Enter 繼續...")
                 self.panel.start()
                 return
             
-            choice = int(raw_choice)
-            if choice == 0:
-                selected_mp3 = None
-                print("✅ 已選擇: 靜音模式")
-            elif 1 <= choice <= len(mp3_files):
-                selected_mp3 = mp3_files[choice-1]
-                print(f"✅ 已選擇: {selected_mp3}")
-            else:
-                print("❌ 選擇無效")
+            mp3_files = [f for f in os.listdir('.') if f.endswith('.mp3')]
+            if not mp3_files:
+                print("❌ 找不到 MP3 文件 (可選)")
+            
+            print(f"\n🎵 [音訊準備] 模式: {AUDIO_MODE}")
+            print(f"  0. 不播放音訊 (僅觸發動畫)")
+            for i, f in enumerate(mp3_files):
+                print(f"  {i+1}. {f}")
+            print("  q. 取消返回")
+            
+            selected_mp3 = None
+            try:
+                raw_choice = input("\n👉 選擇編號: ").strip().lower()
+                if raw_choice == 'q':
+                    self.panel.start()
+                    return
+                
+                choice = int(raw_choice)
+                if choice == 0:
+                    selected_mp3 = None
+                    print("✅ 已選擇: 靜音模式")
+                elif 1 <= choice <= len(mp3_files):
+                    selected_mp3 = mp3_files[choice-1]
+                    print(f"✅ 已選擇: {selected_mp3}")
+                else:
+                    print("❌ 選擇無效")
+                    time.sleep(1)
+                    self.panel.start()
+                    return
+            except ValueError:
+                print("❌ 輸入無效")
                 time.sleep(1)
                 self.panel.start()
                 return
-        except ValueError:
-            print("❌ 輸入無效")
-            time.sleep(1)
-            self.panel.start()
-            return
+        else:
+            # Stream/Benchmark 模式通常不配音訊，或者由 PC 端推流
+            selected_mp3 = None
+            print(f"✅ 進入 {play_mode} 模式 (Target: {stream_path})")
         
         print(f"\n⚙️ 正在預備設備...")
         
@@ -1388,11 +1674,36 @@ class NetBusMaster:
             if tid in self.panel.monitors:
                 self.panel.monitors[tid].reset_play_stats()
         
-        self.send_pkt(self.selected_targets, 0x3009, {
-            "file_name": "data.bin",
-            "block_id": 0,
-            "play_mode": 0
-        })
+        # 根據模式發送預備指令
+        if play_mode == "local":
+            self.send_pkt(self.selected_targets, 0x3009, {
+                "file_name": "data.bin",
+                "block_id": 0,
+                "play_mode": 0
+            })
+        else:
+            # Stream / Benchmark 模式：發送特殊 FILE_BEGIN (0xFFFF)
+            # 這會觸發 Slave 端建立 AtomicStreamHub 並進入 Turbo/Stream 模式
+            # 注意：這裡只是"建立管道"，實際數據需要另外推送 (Stream) 或者 Slave 自己產生 (Benchmark)?
+            # 根據之前的修改，Slave 收到 0xFFFF + path="benchmark" 會進入 Turbo Mode 並等待數據
+            # 如果是 Benchmark，我們可能需要 Master 瘋狂發送數據？
+            # 或者 Slave 端的 Benchmark 是指 "接收並丟棄以測速"？
+            # 根據之前的代碼，Slave 只是開啟了 Turbo Mode (不限速消費)，數據仍需從 Hub 讀取
+            # 而 Hub 的數據需要 Master 推送 (0x2002)
+            
+            # 發送開啟指令
+            self.send_pkt(self.selected_targets, 0x2001, {
+                "file_id": 0xFFFF,
+                "total_size": 0,
+                "chunk_size": 0,
+                "sha256": b'\x00'*32,
+                "path": stream_path
+            })
+            
+            # 如果是 Benchmark，我們需要準備一個發送線程
+            if play_mode == "benchmark":
+                print("🚀 Benchmark 模式：將循環發送隨機數據以測試頻寬...")
+        
         while True:
             print("\n" + "!" * 50)
             print("     系統就緒,等待擊發")
@@ -1405,6 +1716,10 @@ class NetBusMaster:
             if trigger == 'go':
                 break
             elif trigger == 'q':
+                # 如果是 Stream 模式，發送結束指令
+                if play_mode != "local":
+                    self.send_pkt(self.selected_targets, 0x2003, {"file_id": 0xFFFF})
+                
                 print("🛑 已取消")
                 time.sleep(1)
                 self.panel.start()
@@ -1427,23 +1742,33 @@ class NetBusMaster:
         
         self.panel.start(interactive=True)
         
+        # 啟動 Benchmark 發送線程 (如果是 Benchmark 模式)
+        benchmark_running = False
+        if play_mode == "benchmark":
+            benchmark_running = True
+            threading.Thread(target=self._benchmark_sender_task, args=(stream_path,), daemon=True).start()
+        
         delay_ms = self.config.get("sync_delay_ms", 150)
         delay_sec = abs(delay_ms) / 1000.0
         
-        if selected_mp3:
-            if delay_ms >= 0:
-                self._start_audio_stream(selected_mp3)
-                if delay_ms > 0:
+        if play_mode == "local":
+            if selected_mp3:
+                if delay_ms >= 0:
+                    self._start_audio_stream(selected_mp3)
+                    if delay_ms > 0:
+                        time.sleep(delay_sec)
+                    self.send_pkt(self.selected_targets, 0x300A, {})
+                else:
+                    self.send_pkt(self.selected_targets, 0x300A, {})
                     time.sleep(delay_sec)
-                self.send_pkt(self.selected_targets, 0x300A, {})
+                    self._start_audio_stream(selected_mp3)
             else:
+                # Silent mode: just trigger
+                self.is_playing = True # Enable loop
                 self.send_pkt(self.selected_targets, 0x300A, {})
-                time.sleep(delay_sec)
-                self._start_audio_stream(selected_mp3)
         else:
-            # Silent mode: just trigger
-            self.is_playing = True # Enable loop
-            self.send_pkt(self.selected_targets, 0x300A, {})
+            # Stream / Benchmark 模式無需 0x300A (Play)，因為 0x2001 已經啟動了 Engine
+            self.is_playing = True
         
         # print("\n[控制提示] SPACE=暫停/繼續 | S=停止 | Q=退出") # 移除此行，因為 MonitorPanel 已經顯示了控制提示，且此行會導致 UI 錯亂
         
@@ -1466,27 +1791,31 @@ class NetBusMaster:
                         key = key.lower()
                         
                         if key == ' ':
-                            with self.play_lock:
-                                self.is_paused = not self.is_paused
-                                if self.is_paused:
-                                    self.send_pkt(self.selected_targets, 0x3003, {})
-                                    for tid in self.selected_targets:
-                                        self.panel.update_device(tid, status="暫停")
-                                else:
-                                    self.send_pkt(self.selected_targets, 0x3004, {})
-                                    for tid in self.selected_targets:
-                                        self.panel.update_device(tid, status="播放中")
+                            if play_mode == "local":
+                                with self.play_lock:
+                                    self.is_paused = not self.is_paused
+                                    if self.is_paused:
+                                        self.send_pkt(self.selected_targets, 0x3003, {})
+                                        for tid in self.selected_targets:
+                                            self.panel.update_device(tid, status="暫停")
+                                    else:
+                                        self.send_pkt(self.selected_targets, 0x3004, {})
+                                        for tid in self.selected_targets:
+                                            self.panel.update_device(tid, status="播放中")
+                            else:
+                                # Stream 模式暫停邏輯 (可選實現)
+                                pass
                         
                         elif key == 's':
-                            self.stop_all()
+                            self.stop_all(play_mode)
                             break
                         
                         elif key == 'q':
-                            self.stop_all()
+                            self.stop_all(play_mode)
                             break
                         
                         elif key == '\x03': # Ctrl+C
-                             self.stop_all()
+                             self.stop_all(play_mode)
                              break
                              
                     except Exception:
@@ -1494,6 +1823,12 @@ class NetBusMaster:
                 
                 time.sleep(0.05)
         finally:
+            # 停止 Benchmark
+            if play_mode == "benchmark":
+                self.benchmark_running = False # 標記停止
+                # 發送結束包
+                self.send_pkt(self.selected_targets, 0x2003, {"file_id": 0xFFFF})
+
             # 確保退出播放循環時恢復原始模式
             input_handler.exit_raw_mode()
         
@@ -1501,6 +1836,36 @@ class NetBusMaster:
             self.panel.update_device(tid, status="待機")
         
         time.sleep(1)
+    
+    def _benchmark_sender_task(self, stream_path):
+        """Benchmark 模式：全速發送垃圾數據"""
+        self.benchmark_running = True
+        # 構造一個假數據包 (使用 65000 大包以測極限)
+        chunk_size = 65000
+        dummy_data = b'\xAA' * chunk_size
+        file_id = 0xFFFF
+        offset = 0
+        
+        print(f"\n🚀 Benchmark Sender Started (Target: {stream_path}, Chunk: {chunk_size})")
+        
+        while self.benchmark_running and self.running:
+            # 發送數據塊
+            # 注意：這裡不等待 ACK，全速發送 (UDP/WS Flow Control 會處理)
+            # 為了測試極限，我們可以使用 0x2002
+            # 為了避免 offset 溢出，可以循環使用
+            
+            self.send_pkt(self.selected_targets, 0x2002, {
+                "file_id": file_id,
+                "offset": offset,
+                "data": dummy_data
+            })
+            
+            offset = (offset + chunk_size) % (1024 * 1024 * 100) # 100MB wrap
+            
+            # 控制發送速率以免撐爆 Master 端的 Buffer
+            # time.sleep(0.001) # 約 1MB/s per device
+            # 如果要測極限，可以不 sleep，但要注意 Python GIL 和 Network IO
+            time.sleep(0.0001) 
     
     def _start_audio_stream(self, file_path):
         """啟動音訊流 (修復版)"""
@@ -1551,13 +1916,17 @@ class NetBusMaster:
         
         threading.Thread(target=_play_task, daemon=True).start()
     
-    def stop_all(self):
+    def stop_all(self, play_mode="local"):
         global mixer
         self.is_playing = False
         self.is_paused = False
+        self.benchmark_running = False # Stop benchmark thread
         
         if self.selected_targets:
-            self.send_pkt(self.selected_targets, 0x3002, {})
+            if play_mode == "local":
+                self.send_pkt(self.selected_targets, 0x3002, {})
+            else:
+                self.send_pkt(self.selected_targets, 0x2003, {"file_id": 0xFFFF})
             
             for tid in self.selected_targets:
                 self.panel.update_device(tid, status="待機")
@@ -1583,8 +1952,10 @@ class NetBusMaster:
         print(" 3. Clear List         | 清除設備列表 (離線: {})".format(offline))
         print(" ----------------------------------------")
         print(" 4. Slice Animation    | 切分動畫數據")
-        print(" 5. Deploy Data        | 部署到設備 (帶監控)")
+        print(" 5. Deploy Data        | 部署到設備 (Flash)")
         print(" 6. Sync Play          | 同步播放 (支持暫停)")
+        print(" 7. RAM Speed Test     | 純 RAM 上傳測速 (Benchmark)")
+        print(" 8. Raw Stream Test    | 極限 Raw Socket 測速 (No Protocol)")
         print(" s. STOP ALL           | 緊急停止")
         print(" q. Exit               | 退出程序")
         print("=" * 60)
@@ -1629,6 +2000,12 @@ class NetBusMaster:
                 self._print_menu()
             elif ch == '6':
                 self.step_4_sync_play()
+                self._print_menu()
+            elif ch == '7':
+                self.step_7_ram_speed_test()
+                self._print_menu()
+            elif ch == '8':
+                self.step_8_raw_stream_test()
                 self._print_menu()
             elif ch == 's':
                 self.stop_all()

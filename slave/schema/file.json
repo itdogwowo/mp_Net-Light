@@ -98,6 +98,24 @@
           "type": "str_u16len"
         }
       ]
+    },
+    {
+      "cmd": "0x2007",
+      "name": "FILE_RAW_BEGIN",
+      "payload": [
+        {
+          "name": "file_id",
+          "type": "u16"
+        },
+        {
+          "name": "total_size",
+          "type": "u32"
+        },
+        {
+          "name": "path",
+          "type": "str_u16len"
+        }
+      ]
     }
   ]
 }

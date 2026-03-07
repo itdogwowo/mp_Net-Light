@@ -3,10 +3,18 @@ import time
 from lib.sys_bus import bus
 
 def task_loop(st_LED, fps=40):
+    # 預設 Hub 名稱
+    current_hub_name = "pixel_stream"
     hub = None
-    while hub is None:
-        hub = bus.get_service("pixel_stream")
+    
+    # 初始等待 (但不要死循環，允許後續動態綁定)
+    print("⏳ [Core 1] Waiting for pixel_stream service...")
+    retry = 0
+    while hub is None and retry < 20:
+        hub = bus.get_service(current_hub_name)
+        if hub: break
         time.sleep_ms(100)
+        retry += 1
         
     # 🚀 關鍵：建立 Core 1 專用計數器
     _state = {"render_count": 0}
@@ -27,6 +35,18 @@ def task_loop(st_LED, fps=40):
     print(f"🔥 [Core 1] Render Engine Online | {fps} FPS")
 
     while bus.shared.get("engine_run", True):
+        # 🔄 動態切換 Service (支援 Benchmark 或多路流)
+        target_name = bus.shared.get("stream_service", "pixel_stream")
+        if target_name != current_hub_name:
+            new_hub = bus.get_service(target_name)
+            if new_hub:
+                print(f"🔄 [Core 1] Switching to Hub: {target_name}")
+                hub = new_hub
+                current_hub_name = target_name
+                # 重置緩衝狀態，避免舊數據干擾
+                current_big_buffer = None
+                buff_offset = 0
+
         # 🚀 停止模式：關燈
         if not bus.shared.get("is_streaming"):
             if bus.shared.get("is_ready") == False:
@@ -44,21 +64,43 @@ def task_loop(st_LED, fps=40):
             _state["render_count"] = 0
             continue
 
-        # 🚀 播放模式：死守時鐘
+        # 🚀 播放模式：死守時鐘 (除非是 Turbo 模式)
         now = time.ticks_us()
-        if time.ticks_diff(now, next_tick_us) >= 0:
+        is_turbo = bus.shared.get("turbo_mode", False)
+        
+        if is_turbo or time.ticks_diff(now, next_tick_us) >= 0:
             # 🚀 流式讀取邏輯：如果當前大 Buffer 用完了或還沒有，去 Hub 拿新的
             if current_big_buffer is None or buff_offset + frame_size > len(current_big_buffer):
+                # 嘗試釋放舊 buffer (如果還沒釋放)
+                current_big_buffer = None 
+                
                 current_big_buffer = hub.get_read_view() # 這是核心同步點
                 buff_offset = 0 # 重置偏移量
+                
+                # Debug: 打印成功獲取 buffer
+                if current_big_buffer and is_turbo:
+                    # print(f"🚀 [Core1] Got Buffer: {len(current_big_buffer)}")
+                    pass
                 
             if current_big_buffer:
                 # 🐍 Pythonic 高速切片拷貝 (內核級別 memmove)
                 # 從大緩存中提取一幀到 apa 的顯存中
                 raw_view[:] = current_big_buffer[buff_offset : buff_offset + frame_size]
-                st_LED.show_all()
+                
+                # 🚀 Turbo 模式下跳過物理 LED 輸出，以測試最大傳輸吞吐量
+                if not is_turbo:
+                    st_LED.show_all()
+                    
                 _state["render_count"] += 1
                 buff_offset += frame_size
-            next_tick_us += interval_us
+            else:
+                # 🛡️ Turbo Mode Protection: 
+                # 如果緩衝區為空 (Writer 還沒來得及寫)，必須短暫 sleep 釋放 CPU/GIL
+                # 否則會導致 Core0 (Network) 被餓死，無法接收數據
+                if is_turbo:
+                    time.sleep_ms(1)
+            
+            if not is_turbo:
+                next_tick_us += interval_us
         else:
             time.sleep_us(500) 

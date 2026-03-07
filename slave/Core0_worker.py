@@ -60,6 +60,9 @@ def task_loop(app):
     s = {"f_local": None, "last_hb": time.ticks_ms()}
     hub = bus.get_service("pixel_stream")
 
+    # 🚀 提升 UDP 緩衝區 (如果支持)
+    # nm.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65535)
+
     print("🚀 [Core 0] Data Router Active")
     while bus.shared.get("engine_run", True):
         # 1. 網路守護：確保底層網路可用
@@ -67,30 +70,39 @@ def task_loop(app):
         # 邏輯: 只要 (WebSocket 連接) OR (手動 Keep-Alive) 為真，則視為 App 連接中
         bus.shared["app_connected"] = ctrl_bus.connected or bus.shared.get("manual_keep_alive", False)
         
-        network_ok = nm.check_network()
-        if network_ok:
-            # 啟動時嘗試讀取配置並連接一次
-            if not tried_config_connect and not ctrl_bus.connected:
-                tried_config_connect = True
-                m_ip = bus_sys.get("master_IP", "")
-                m_port = bus_sys.get("master_port", 0)
-                if m_ip and m_port:
-                    print(f"🔄 Auto-Connecting to stored Master: {m_ip}:{m_port}")
-                    # 必須附帶 slave_id 作為 path
-                    full_url = f"ws://{m_ip}:{m_port}/ws/{bus.slave_id}"
-                    if on_connect_wrapper(full_url):
-                        print("✅ Auto-Connect Success!")
-                    else:
-                        print("⚠️ Auto-Connect Failed, waiting for discovery...")
-
-            try:
-                discovery_bus.poll(**ctx_extra)
-                if ctrl_bus.connected: 
-                    ctrl_bus.poll()
-            except Exception as e:
-                # 預防網路突發中斷導致的 Socket 報錯
-                print(f"📡 Network Poll Error: {e}")
+        # 在 Turbo 模式下，我們假設網絡是好的，跳過耗時的檢查
+        if not bus.shared.get("turbo_mode", False):
+            network_ok = nm.check_network()
+            if network_ok:
+                # 啟動時嘗試讀取配置並連接一次
+                if not tried_config_connect and not ctrl_bus.connected:
+                    tried_config_connect = True
+                    m_ip = bus_sys.get("master_IP", "")
+                    m_port = bus_sys.get("master_port", 0)
+                    if m_ip and m_port:
+                        print(f"🔄 Auto-Connecting to stored Master: {m_ip}:{m_port}")
+                        # 必須附帶 slave_id 作為 path
+                        full_url = f"ws://{m_ip}:{m_port}/ws/{bus.slave_id}"
+                        if on_connect_wrapper(full_url):
+                            print("✅ Auto-Connect Success!")
+                        else:
+                            print("⚠️ Auto-Connect Failed, waiting for discovery...")
+    
+                try:
+                    discovery_bus.poll(**ctx_extra)
+                    # if ctrl_bus.connected: 
+                    #    ctrl_bus.poll()
+                except Exception as e:
+                    # 預防網路突發中斷導致的 Socket 報錯
+                    print(f"📡 Network Poll Error: {e}")
         
+        # 無論是否 Turbo，都要全力輪詢 ctrl_bus
+        # 這是數據進入的主要通道
+        if ctrl_bus.connected:
+             try:
+                 ctrl_bus.poll(ctrl_bus=ctrl_bus)
+             except Exception as e:
+                 pass
 
         # 2. 🚀 生產者供應鏈邏輯 (由 Core 0 定時處理補貨)
         from action.stream_actions    import handle_supply_chain
@@ -103,14 +115,27 @@ def task_loop(app):
         # 3. 系統維護
         now = time.ticks_ms()
         if time.ticks_diff(now, s["last_hb"]) > bus_sys["heartbeat_interval"]:
-            if bus.shared.get("is_streaming") and ctrl_bus.connected:
-                
-                send_heartbeat({"app": app, "send": ctrl_bus.write})
-                
-                on_status_get({"app": app, "send": ctrl_bus.write}, {"query_type": 1})
-            gc.collect()
+            # 在高速傳輸 (Turbo Mode) 時，跳過心跳回報以節省頻寬和 CPU
+            # 或者減少回報頻率 (例如每 5 秒一次，而不是每 1 秒)
+            if not bus.shared.get("turbo_mode", False):
+                if bus.shared.get("is_streaming") and ctrl_bus.connected:
+                    
+                    send_heartbeat({"app": app, "send": ctrl_bus.write})
+                    
+                    on_status_get({"app": app, "send": ctrl_bus.write}, {"query_type": 1})
+            
+            # GC 是一個耗時操作，在高速傳輸時應該避免頻繁觸發
+            # 只有當內存真的不足時才觸發，或者在 Turbo 模式下完全禁用自動 GC
+            if not bus.shared.get("turbo_mode", False):
+                gc.collect()
+            
             s["last_hb"] = now
             last_report = now
-        time.sleep_ms(bus_sys.get("refresh_rate_ms", 1))
+        
+        # Turbo 模式下減少 sleep 時間，讓網路棧跑得更快
+        if bus.shared.get("turbo_mode", False):
+            time.sleep_ms(0) # Yield CPU but return ASAP
+        else:
+            time.sleep_ms(bus_sys.get("refresh_rate_ms", 1))
     
     ctrl_bus.disconnect()

@@ -20,10 +20,14 @@ class AtomicStreamHub:
         # ── 預分配物理緩衝 ──
         self._bufs = [bytearray(size) for _ in range(num_buffers)]
         # ── 預分配視圖 (核心優化：避免運行時創建 view) ──
+        # Fix: memoryview(b) 在某些 MP 版本中會創建新的 view 對象，
+        # 但如果是對同一個 buffer，開銷很小。
+        # 關鍵是我們希望外部寫入時不要發生內存分配。
         self._views = [memoryview(b) for b in self._bufs]
         
         # ── 狀態控制 ──
-        self._status = [_IDLE] * num_buffers
+        # 使用 bytearray 而不是 list 來存儲狀態，以獲得更好的緩存局部性和原子性 (如果底層支持)
+        self._status = bytearray(num_buffers) # 0:IDLE, 1:READY, 2:READING
         self._w_ptr = 0  # 寫入指標
         self._r_ptr = 0  # 讀取指標
         
@@ -47,18 +51,25 @@ class AtomicStreamHub:
     def write_from(self, source):
         """
         將數據寫入 HUB (複製模式)
-        ───────────────────────────────────────────────
-        :param source: 來源數據 (bytes/bytearray/memoryview)
-        :return: bool (True: 寫入成功, False: 緩衝區已滿)
         """
         ptr = self._w_ptr
         
         # 檢查當前指標指向的槽位是否可寫入
+        # 使用 bytearray 索引訪問
         if self._status[ptr] != _IDLE:
             return False
         
-        # 執行高效內存拷貝 (底層 C 實現)
-        self._views[ptr][:] = source
+        # 確保 source 大小與 buffer 匹配
+        # 在 native 模式下，這種 slice 操作應該是高效的
+        slen = len(source)
+        # 為了避開 list 查找開銷，可以緩存 view
+        view = self._views[ptr]
+        blen = len(view)
+        
+        if slen > blen:
+            view[:] = source[:blen]
+        else:
+            view[:slen] = source
         
         # 更新狀態與指標
         self._status[ptr] = _READY
@@ -98,10 +109,9 @@ class AtomicStreamHub:
     def flush(self):
         """
         快速重設 HUB 狀態
-        ───────────────────────────────────────────────
-        不動作內存擦除，僅重設指針與狀態機，耗時極短
         """
-        # range 在 native 中有優化
+        # bytearray 可以直接賦值清零
+        # self._status[:] = b'\x00' * self.num_buffers # 不支援
         for i in range(self.num_buffers):
             self._status[i] = _IDLE
             
