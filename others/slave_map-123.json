@@ -1,0 +1,102 @@
+{
+    "mp3_file": "C:\\Users\\PC\\Documents\\code\\git\\mp_Net-Light\\tools\\Monumentous.mp3",
+    "sync_delay_ms": -700,
+    "mapping": {
+        "30EDA0EA4EC8": {
+            "play_id": 0,
+            "last_sha": "a285a2f25dbeba34544d24f85e02a6168c3b133823cb873d4e93142a2d570b2b"
+        },
+        "80F1B2D1F5F9": {
+            "play_id": 27,
+            "last_sha": "c4b58ac069008a4e1211f7fa0f3e127dc5012193ce81e9e8c3f75a90c618a1af"
+        },
+        "80F1B2D1F514": {
+            "play_id": 26,
+            "last_sha": "d5470ab490337c63a5c11c86f705feb4e19b7db8f55969c4dabb374d7097a3bc"
+        },
+        "80F1B2D1B8BD": {
+            "play_id": 17,
+            "last_sha": "61971948caf33223222b41cfb981843055aea0185051f4dd8e23bce6d272431c"
+        },
+        "80F1B2D1F4F2": {
+            "play_id": 5,
+            "last_sha": "0efbb1cc45b7c45e58b64807d71f142085e2539b3b4f59e9b17c8e409d3a57d3"
+        },
+        "80F1B2D1B8B7": {
+            "play_id": 16,
+            "last_sha": "e7f667fcbbf860e3eabeb72574647482f1fad773904cf83d0686342e26694c0c"
+        },
+        "80F1B2D1B812": {
+            "play_id": 15,
+            "last_sha": "723d0c8545c690ca64c72a781e244dfd3935da3c27ecf947bbd3cdd124d5d6d5"
+        },
+        "80F1B2D1F5A1": {
+            "play_id": 6,
+            "last_sha": "e2189555097126e92ceb371f98039085397d449a38e2848624512fd3e9a26fca"
+        },
+        "80F1B2D1B80F": {
+            "play_id": 28,
+            "last_sha": "7c859869319971188c38e5efe38322c223790db595c5fe982a3fb2bcb5318022"
+        },
+        "80F1B2D1F51A": {
+            "play_id": 4,
+            "last_sha": "a2a354fb5fbb4de445b7847a2a8d2e2c058e977b2c496fc2b1c79fe4ea13eeed"
+        },
+        "80F1B2D1B75D": {
+            "play_id": 29,
+            "last_sha": ""
+        },
+        "80F1B2D0AEE1": {
+            "play_id": 30,
+            "last_sha": ""
+        },
+        "80F1B2D1F7B1": {
+            "play_id": 27,
+            "last_sha": "c4b58ac069008a4e1211f7fa0f3e127dc5012193ce81e9e8c3f75a90c618a1af"
+        },
+        "80F1B2D1F667": {
+            "play_id": 31,
+            "last_sha": ""
+        },
+        "80F1B2D1F677": {
+            "play_id": 32,
+            "last_sha": ""
+        },
+        "80F1B2D1F79C": {
+            "play_id": 33,
+            "last_sha": "6ba7086ec2958001d3f574403ee3834b6a2ab33f92c5e0e7729906283d6bc258"
+        },
+        "80F1B2D1F5C0": {
+            "play_id": 34,
+            "last_sha": ""
+        },
+        "80F1B2D1F527": {
+            "play_id": 35,
+            "last_sha": ""
+        },
+        "80F1B2D1B828": {
+            "play_id": 36,
+            "last_sha": ""
+        },
+        "80F1B2D1B81B": {
+            "play_id": 37,
+            "last_sha": ""
+        },
+        "80F1B2D1F530": {
+            "play_id": 38,
+            "last_sha": ""
+        },
+        "80F1B2D1F7DE": {
+            "play_id": 39,
+            "last_sha": ""
+        },
+        "80F1B2D1F81D": {
+            "play_id": 40,
+            "last_sha": ""
+        },
+        "80F1B2D1F613": {
+            "play_id": 41,
+            "last_sha": ""
+        }
+    }
+}

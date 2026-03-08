@@ -19,6 +19,10 @@ def task_loop(app):
     lan = bus.get_service("lan") # 兼容舊代碼引用 (如果需要)
     
     ctrl_bus = NetBus(NetBus.TYPE_WS, app=app, label="CTRL-WS")
+    
+    # 🚀 註冊 ctrl_bus 到全局總線，供 Core 1 使用 (若啟用 decode_core=1)
+    bus.register_service("ctrl_bus", ctrl_bus)
+    
     discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCV")
     discovery_bus.connect(None, bus_sys["discovery_port"])
 
@@ -97,9 +101,10 @@ def task_loop(app):
                     print(f"📡 Network Poll Error: {e}")
         
         # 無論是否 Turbo，都要全力輪詢 ctrl_bus
-        # 這是數據進入的主要通道
+        # 這是數據進入的主要通道 (Network -> Hub)
         if ctrl_bus.connected:
              try:
+                 # poll 內部會自動判斷是否執行 process_ingress (依據 decode_core)
                  ctrl_bus.poll(ctrl_bus=ctrl_bus)
              except Exception as e:
                  pass

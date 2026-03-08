@@ -1956,6 +1956,7 @@ class NetBusMaster:
         print(" 6. Sync Play          | 同步播放 (支持暫停)")
         print(" 7. RAM Speed Test     | 純 RAM 上傳測速 (Benchmark)")
         print(" 8. Raw Stream Test    | 極限 Raw Socket 測速 (No Protocol)")
+        print(" 9. Set Decode Core    | 設定解碼 CPU 核心 (0/1)")
         print(" s. STOP ALL           | 緊急停止")
         print(" q. Exit               | 退出程序")
         print("=" * 60)
@@ -1970,18 +1971,48 @@ class NetBusMaster:
         # 由於兼容性問題，直接調用標準 input
         return input(prompt)
 
+    def step_9_set_decode_core(self):
+        """設定解碼 CPU 核心"""
+        self.load_config()
+        self.panel.stop()
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
+        
+        if not self.selected_targets:
+            print("⚠️ 請先執行 Step 1 選擇設備")
+            input("\n按 Enter 繼續...")
+            self.panel.start()
+            return
+            
+        print("\n⚙️ [Set Decode Core] 設定解碼 CPU")
+        print("   Core 0: 網絡 IO + 解碼 (默認)")
+        print("   Core 1: 渲染 + 解碼 (分擔 Core 0 壓力)")
+        
+        try:
+            core = int(input("\n👉 請輸入 Core ID (0/1): ").strip())
+            if core not in (0, 1): raise ValueError
+        except:
+            print("❌ 輸入無效，使用默認 Core 0")
+            core = 0
+            
+        print(f"\n📡 發送設定: Decode Core -> {core}")
+        self.send_pkt(self.selected_targets, 0x1005, {"core": core})
+        
+        time.sleep(0.5)
+        print("✅ 指令已發送")
+        input("\n按 Enter 返回...")
+        self.panel.start()
+
     def main_loop(self):
         self._print_menu()
         
         while self.running:
-            # Revert to standard input to ensure reliability
             try:
                 ch = self.input_with_refresh("\n👉 請選擇操作: ").lower().strip()
             except EOFError:
                 break
             
-            if not ch:
-                continue
+            if not ch: continue
                 
             if ch == '1':
                 self.scan_devices()
@@ -2006,6 +2037,9 @@ class NetBusMaster:
                 self._print_menu()
             elif ch == '8':
                 self.step_8_raw_stream_test()
+                self._print_menu()
+            elif ch == '9':
+                self.step_9_set_decode_core()
                 self._print_menu()
             elif ch == 's':
                 self.stop_all()

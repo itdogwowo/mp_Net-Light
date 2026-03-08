@@ -7,8 +7,8 @@ from lib.buffer_hub import AtomicStreamHub
 def on_file_begin(ctx, args):
     app = ctx["app"]
 
-    # 🚀 Online Stream Mode (Magic ID: 0xFFFF)
-    if args.get("file_id") == 0xFFFF:
+    # 🚀 Online Stream Mode (Magic ID: 0xFFFF -> Mode: 0xFF)
+    if args.get("mode") == 0xFF:
         # 1. 解析 Path 參數，直接作為 Service Name
         # 如果為空，預設使用 "pixel_stream"
         stream_path = args.get("path")
@@ -50,60 +50,77 @@ def on_file_begin(ctx, args):
     if args.get("path",False):
         args['path'] = bus.get_service("data_Phat") + args['path']
 
-    ok = app.file_rx.begin(args)
-    if ok: print(f"📂 [File] Start -> {app.file_rx.path}")
+    # 🚀 使用新的 FileRx.begin (返回 Hub 或 None)
+    hub = app.file_rx.begin(args)
+    
+    if hub:
+        # 註冊到 Bus 供監控或調試 (可選)
+        file_hub_name = f"filerx_{args.get('path')}"
+        bus.register_service(file_hub_name, hub)
+        
+        # 不需要手動 bind，因為 begin 內部已經設置了 self.hub
+        app.current_file_hub = hub
+        
+        print(f"📂 [File] Start -> {app.file_rx.path} (Mode: {app.file_rx.mode})")
+    else:
+        print(f"❌ [File] Start Failed: {app.file_rx.last_error}")
 
 def on_file_chunk(ctx, args):
     app = ctx["app"]
 
-    # 🚀 Online Stream Mode
-    if getattr(app, "is_online_stream", False) and args.get("file_id") == 0xFFFF:
-        # 使用 begin 階段解析出的 hub name
+    # 🚀 Online Stream Mode (Check app flag)
+    # 移除 file_id 檢查，只依賴 app 狀態
+    if getattr(app, "is_online_stream", False):
+        # ... (Existing Stream Logic) ...
         hub_name = getattr(app, "current_stream_hub", "pixel_stream")
         hub = bus.get_service(hub_name)
-        
-        # Debug Print (僅打印前幾個包以免刷屏)
-        # if args["offset"] == 0:
-        #    print(f"🧩 [Chunk] First Packet! Off:{args['offset']} Len:{len(args['data'])} Hub:{hub_name}")
-
         if hub:
-             # 嘗試寫入 Hub
-             # 使用 write_from (內存拷貝)
-             # 對於極限性能，如果數據已經在 buffer 中，其實可以不做拷貝 (Zero-Copy)
-             # 但這需要 Hub 支援 swap buffer
-             res = hub.write_from(args["data"])
-             
-             # Debug: 如果 Offset 0 失敗，打印詳細原因
-             if args["offset"] == 0 and not res:
-                 print(f"⚠️ [Chunk] Off:0 Write Fail (Buffer Full?) Fill:{hub.get_fill_level()}")
-
+             res = hub.write_from(args.get("data", b""))
              if res:
-                 # ACK: 在 Turbo 模式下，為了極限吞吐量，我們跳過 ACK 發送
-                 # 除非是特定的同步點（例如每 100 個包確認一次，這裡暫時完全禁用以測極限）
-                 # 正常的流式傳輸仍然需要 ACK 來進行流控
                  if not bus.shared.get("turbo_mode", False):
                      if "send" in ctx:
                         ack_def = app.store.get(0x2004)
                         ack_data = SchemaCodec.encode(ack_def, {
-                            "file_id": args["file_id"],
                             "offset": args["offset"]
                         })
                         ctx["send"](Proto.pack(0x2004, ack_data))
-             else:
-                 # Buffer Full
-                 # print(f"⚠️ [Stream] Drop chunk {args['offset']} (Buffer Full)")
-                 pass
+        return
+    
+    # 🚀 Standard File Mode with Background Write
+    # 檢查是否有綁定的 Hub
+    file_hub = getattr(app, "current_file_hub", None)
+    
+    if file_hub and app.file_rx.active:
+        # 嘗試將數據推入 Hub
+        # Core 0 負責生產
+        if file_hub.write_from(args.get("data", b"")):
+            # 成功推入 Hub
+            # 這裡我們需要觸發 Core 1 去消費吗？
+            # Core 1 應該是在 main loop 中自動輪詢 file_rx.process_background_task()
+            
+            # 發送 ACK (Flow Control)
+            # 只有當成功寫入 Hub 才發 ACK
+            if "send" in ctx:
+                ack_def = app.store.get(0x2004)
+                ack_data = SchemaCodec.encode(ack_def, {
+                    "offset": args["offset"]
+                })
+                ctx["send"](Proto.pack(0x2004, ack_data))
         else:
-             print(f"❌ [Chunk] Hub '{hub_name}' not found!")
+            # Hub 滿了！不發 ACK (Backpressure)
+            # Master 會超時重傳，或者我們應該發一個 BUSY 信號？
+            # 簡單起見，不發 ACK，讓 Master 等待
+            # print(f"⚠️ [File] Hub Full, Backpressure on {args['offset']}")
+            pass
         return
 
+    # Fallback to Old Sync Mode (if no hub or hub fail)
     if app.file_rx.chunk(args):
         # 🚀 關鍵：每收到一包就回傳 ACK
         # 讓 PC 知道可以發下一包了
         if "send" in ctx:
             ack_def = app.store.get(0x2004)
             ack_data = SchemaCodec.encode(ack_def, {
-                "file_id": args["file_id"],
                 "offset": args["offset"]
             })
             ctx["send"](Proto.pack(0x2004, ack_data))
@@ -112,7 +129,8 @@ def on_file_end(ctx, args):
     app = ctx["app"]
 
     # 🚀 Online Stream Mode
-    if getattr(app, "is_online_stream", False) and args.get("file_id") == 0xFFFF:
+    # 移除 file_id 檢查
+    if getattr(app, "is_online_stream", False):
         app.is_online_stream = False
         bus.shared["is_streaming"] = False
         bus.shared["is_ready"] = False
@@ -121,10 +139,28 @@ def on_file_end(ctx, args):
         return
 
     # 執行校驗
+    # 注意: 在 Hub 模式下，end 需要確保 Hub 中的數據已全部消費完
+    # 但 file_rx.end 內部已經有 flush 機制嗎？
+    # process_background_task 是異步的，這裡需要等待 Hub 空
+    # 或者，FileRx.end 應該返回 "PENDING"？
+    
+    # 簡單起見，我們假設 Master 在發送 END 前會等待所有 ACK
+    # 而我們只有在 Hub 寫入成功時才發 ACK，所以理論上 Hub 應該已經被消費得差不多了
+    # 除非 Core 1 非常慢。
+    
+    # 強制執行一次消費循環以確保最後的數據被寫入
+    app.file_rx.process_hub_data()
+    
+    # 關閉並執行校驗
     ok = app.file_rx.end(args)
     
     path = app.file_rx.path
-    sha = app.file_rx.last_sha_hex # 拿到剛才計算的 hex
+    sha = app.file_rx.last_sha_hex 
+    final_digest = app.file_rx.get_final_sha()
+    
+    # 如果是實時計算的 SHA，我們應該用實時的結果 (如果是校驗失敗，end() 會返回 False)
+    if final_digest:
+        sha = ubinascii.hexlify(final_digest).decode()
     
     if ok:
         # 🚀 現代化、正式的結尾打印

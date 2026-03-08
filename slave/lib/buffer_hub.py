@@ -6,28 +6,33 @@ _IDLE = micropython.const(0)
 _READY = micropython.const(1)
 _READING = micropython.const(2)
 
+from array import array
+
 class AtomicStreamHub:
     # 槽位狀態 (公開常量供外部參考，但內部使用 _IDLE 等以獲取 native 優化)
     IDLE = _IDLE
     READY = _READY
     READING = _READING
 
-    def __init__(self, size, num_buffers=3):
+    def __init__(self, size, num_buffers=3, name="Hub"):
         """
         :param size: 每個緩衝區的大小 (bytes)
         :param num_buffers: 緩衝區數量 (推薦 3)
+        :param name: 用於調試的名稱
         """
+        self.name = name
         # ── 預分配物理緩衝 ──
         self._bufs = [bytearray(size) for _ in range(num_buffers)]
         # ── 預分配視圖 (核心優化：避免運行時創建 view) ──
-        # Fix: memoryview(b) 在某些 MP 版本中會創建新的 view 對象，
-        # 但如果是對同一個 buffer，開銷很小。
-        # 關鍵是我們希望外部寫入時不要發生內存分配。
         self._views = [memoryview(b) for b in self._bufs]
         
         # ── 狀態控制 ──
-        # 使用 bytearray 而不是 list 來存儲狀態，以獲得更好的緩存局部性和原子性 (如果底層支持)
+        # 使用 bytearray 而不是 list 來存儲狀態，以獲得更好的緩存局部性和原子性
         self._status = bytearray(num_buffers) # 0:IDLE, 1:READY, 2:READING
+        
+        # 🚀 新增：記錄每個 Buffer 的有效長度 (unsigned short array)
+        self._lengths = array('H', [0] * num_buffers)
+        
         self._w_ptr = 0  # 寫入指標
         self._r_ptr = 0  # 讀取指標
         
@@ -38,7 +43,7 @@ class AtomicStreamHub:
         self._last_read_idx = None
         
         # 預先格式化診斷信息，避免運行時組裝字串
-        print("🚀 [BufferHub] Ready: {} KB total".format((size * num_buffers) // 1024))
+        print(f"🚀 [{name}] Ready: {(size * num_buffers) // 1024} KB total")
 
     @property
     def dirty(self):
@@ -55,21 +60,22 @@ class AtomicStreamHub:
         ptr = self._w_ptr
         
         # 檢查當前指標指向的槽位是否可寫入
-        # 使用 bytearray 索引訪問
         if self._status[ptr] != _IDLE:
             return False
         
-        # 確保 source 大小與 buffer 匹配
-        # 在 native 模式下，這種 slice 操作應該是高效的
         slen = len(source)
-        # 為了避開 list 查找開銷，可以緩存 view
         view = self._views[ptr]
         blen = len(view)
+        
+        # 記錄長度
+        actual_len = slen if slen <= blen else blen
         
         if slen > blen:
             view[:] = source[:blen]
         else:
             view[:slen] = source
+        
+        self._lengths[ptr] = actual_len
         
         # 更新狀態與指標
         self._status[ptr] = _READY
@@ -81,39 +87,36 @@ class AtomicStreamHub:
     def read_into(self, target):
         """
         將數據從 HUB 讀出 (複製模式)
-        ───────────────────────────────────────────────
-        :param target: 目標緩衝區 (必須預分配好)
-        :return: bool (True: 讀取成功, False: 無數據可讀)
         """
-        # 如果之前有 buffer 處於 READING 狀態，先釋放
         if self._last_read_idx is not None:
              self._status[self._last_read_idx] = _IDLE
              self._last_read_idx = None
 
         ptr = self._r_ptr
         
-        # 檢查當前指標指向的槽位是否有數據
         if self._status[ptr] != _READY:
             return False
             
-        # 執行高效內存拷貝
-        target[:] = self._views[ptr]
+        # 執行高效內存拷貝，只拷貝有效長度
+        valid_len = self._lengths[ptr]
+        tlen = len(target)
+        copy_len = valid_len if valid_len <= tlen else tlen
         
-        # 釋放槽位並更新指標
+        target[:copy_len] = self._views[ptr][:copy_len]
+        
         self._status[ptr] = _IDLE
         self._r_ptr = (ptr + 1) % self.num_buffers
         
         return True
-
+    
     @micropython.native
     def flush(self):
         """
         快速重設 HUB 狀態
         """
-        # bytearray 可以直接賦值清零
-        # self._status[:] = b'\x00' * self.num_buffers # 不支援
         for i in range(self.num_buffers):
             self._status[i] = _IDLE
+            self._lengths[i] = 0
             
         self._w_ptr = 0
         self._r_ptr = 0
@@ -129,13 +132,10 @@ class AtomicStreamHub:
                 count += 1
         return count
 
-    # --- 兼容舊 API ---
-
     @micropython.native
     def get_write_view(self):
         """
         獲取寫入視圖 (零拷貝模式)
-        注意：如果緩衝區滿，返回 None
         """
         ptr = self._w_ptr
         if self._status[ptr] != _IDLE:
@@ -143,13 +143,18 @@ class AtomicStreamHub:
         return self._views[ptr]
 
     @micropython.native
-    def commit(self):
+    def commit(self, length=0):
         """
         提交寫入
+        :param length: 實際寫入的字節數 (0 表示滿)
         """
         ptr = self._w_ptr
-        # 只有在 IDLE 狀態下才能提交 (防止重複提交或錯誤調用)
         if self._status[ptr] == _IDLE:
+            if length <= 0 or length > self.size:
+                self._lengths[ptr] = self.size
+            else:
+                self._lengths[ptr] = length
+                
             self._status[ptr] = _READY
             self._w_ptr = (ptr + 1) % self.num_buffers
     
@@ -157,7 +162,10 @@ class AtomicStreamHub:
     def get_read_view(self):
         """
         獲取讀取視圖 (零拷貝模式)
-        會鎖定緩衝區直到下一次調用 get_read_view 或 read_into
+        返回: (memoryview, length) 元組 (注意：API 變更)
+        或者：為了兼容性，只返回 view，但 caller 需要知道長度
+        
+        ⚠️ API Change: Now returns a sliced memoryview of VALID data
         """
         # 1. 釋放上一個 READING 的 buffer
         if self._last_read_idx is not None:
@@ -170,7 +178,10 @@ class AtomicStreamHub:
             self._status[ptr] = _READING
             self._last_read_idx = ptr
             self._r_ptr = (ptr + 1) % self.num_buffers
-            return self._views[ptr]
+            
+            # 返回切片後的 view，這樣長度就是正確的
+            valid_len = self._lengths[ptr]
+            return self._views[ptr][:valid_len]
         
         return None
     

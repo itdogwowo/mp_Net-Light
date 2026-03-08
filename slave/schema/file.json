@@ -6,8 +6,8 @@
       "name": "FILE_BEGIN",
       "payload": [
         {
-          "name": "file_id",
-          "type": "u16"
+          "name": "mode",
+          "type": "u8"
         },
         {
           "name": "total_size",
@@ -33,10 +33,6 @@
       "name": "FILE_CHUNK",
       "payload": [
         {
-          "name": "file_id",
-          "type": "u16"
-        },
-        {
           "name": "offset",
           "type": "u32"
         },
@@ -49,21 +45,12 @@
     {
       "cmd": "0x2003",
       "name": "FILE_END",
-      "payload": [
-        {
-          "name": "file_id",
-          "type": "u16"
-        }
-      ]
+      "payload": []
     },
     {
       "cmd": "0x2004",
       "name": "FILE_ACK",
       "payload": [
-        {
-          "name": "file_id",
-          "type": "u16"
-        },
         {
           "name": "offset",
           "type": "u32"

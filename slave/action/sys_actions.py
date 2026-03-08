@@ -9,8 +9,25 @@ from lib.schema_codec import SchemaCodec
 CMD_DISCOVER = 0x1001
 CMD_ANNOUNCE = 0x1002
 CMD_SYS_INFO_GET = 0x1003
+CMD_SET_DECODE_CORE = 0x1005
 
 # --- 處理函數 (嚴格遵循 ctx, args 兩個參數) ---
+
+def on_set_decode_core(ctx, args):
+    """
+    設定解碼 CPU 核心 (0x1005)
+    args: { "core": u8 }
+    """
+    from lib.sys_bus import bus
+    core = args.get("core", 0)
+    if core not in (0, 1): core = 0
+    
+    bus.shared["decode_core"] = core
+    print(f"⚙️ [Sys] Set Decode Core to: CPU {core}")
+    
+    # 回覆確認
+    if ctx.get("send"):
+        ctx["send"](Proto.pack(CMD_SET_DECODE_CORE, {"core": core}))
 
 def on_connect_request(bus_manager, url):
     """
@@ -81,4 +98,5 @@ def register(app):
     """註冊系統指令到分發器"""
     app.disp.on(CMD_DISCOVER, on_discover)
     app.disp.on(CMD_SYS_INFO_GET, on_sys_info_get)
+    app.disp.on(CMD_SET_DECODE_CORE, on_set_decode_core)
     print("✅ [Action] Sys actions registered")

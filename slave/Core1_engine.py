@@ -34,9 +34,29 @@ def task_loop(st_LED, fps=40):
     
     print(f"🔥 [Core 1] Render Engine Online | {fps} FPS")
 
-    while bus.shared.get("engine_run", True):
-        # 🔄 動態切換 Service (支援 Benchmark 或多路流)
-        target_name = bus.shared.get("stream_service", "pixel_stream")
+    # 預先緩存 bus.shared 以減少查找
+    shared_bus = bus.shared
+    ctrl_bus = None
+
+    while shared_bus.get("engine_run", True):
+        # 0. 🚀 [Core 1] 數據解碼任務 (如果啟用)
+        # 檢查是否啟用 Core 1 解碼
+        if shared_bus.get("decode_core", 0) == 1:
+            if ctrl_bus is None:
+                ctrl_bus = bus.get_service("ctrl_bus")
+            
+            if ctrl_bus:
+        # 主動調用 NetBus 進行數據解析 (Hub -> App)
+        # 這會分擔 Core 0 的 CPU 壓力，讓其專注於 socket.readinto
+        ctrl_bus.process_ingress()
+
+    # 1. 🚀 [Core 1] 文件後台寫入任務
+    # 這允許 Core 0 快速將文件數據寫入 Hub 並返回 ACK，而 Core 1 慢慢寫 Flash
+    if app and hasattr(app, 'file_rx'):
+        app.file_rx.process_hub_data()
+
+    # 2. 🔄 動態切換 Service (支援 Benchmark 或多路流)
+    target_name = shared_bus.get("stream_service", "pixel_stream")
         if target_name != current_hub_name:
             new_hub = bus.get_service(target_name)
             if new_hub:

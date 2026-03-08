@@ -12,7 +12,8 @@
         "buffer_frames": 1
     },
     "Buffer": {
-        "size": 4096
+        "size": 65536,
+        "count": 3
     },
     "Network": {
         "priority": ["lan", "wifi"],
