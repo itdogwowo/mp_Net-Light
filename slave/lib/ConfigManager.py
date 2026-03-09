@@ -303,8 +303,7 @@ class ConfigManager:
         """
         嘗試在不破壞格式的情況下更新單個值。
         支援路徑如 "System.c_lum" 或 "Network.wifi.ssid"。
-        僅支援基礎類型值的原地替換 (str, int, float, bool, null)。
-        如果值是 dict 或 list，或者路徑找不到，則返回 False。
+        支援基礎類型 (str, int, float, bool, null) 以及 dict/list (強制轉為單行緊湊 JSON)。
         """
         try:
             with open(self.path, 'r') as f:
@@ -359,6 +358,7 @@ class ConfigManager:
                                 value_start = i
                                 
                                 # 確定值的結束位置
+                                # 我們需要根據值的類型來正確跳過它
                                 if i < n:
                                     if content[i] == '"':
                                         i += 1
@@ -376,9 +376,34 @@ class ConfigManager:
                                     elif content[i] in '-0123456789': # number
                                         while i < n and content[i] in '-0123456789.eE':
                                             i += 1
-                                    elif content[i] == '{' or content[i] == '[':
-                                        # 遇到複雜結構，放棄原地更新
-                                        return False
+                                    elif content[i] == '{':
+                                        # 跳過物件區塊
+                                        depth = 1
+                                        i += 1
+                                        while i < n and depth > 0:
+                                            if content[i] == '{': depth += 1
+                                            elif content[i] == '}': depth -= 1
+                                            elif content[i] == '"': # 跳過字串以免誤判大括號
+                                                i += 1
+                                                while i < n:
+                                                    if content[i] == '"' and content[i-1] != '\\':
+                                                        break
+                                                    i += 1
+                                            i += 1
+                                    elif content[i] == '[':
+                                        # 跳過陣列區塊
+                                        depth = 1
+                                        i += 1
+                                        while i < n and depth > 0:
+                                            if content[i] == '[': depth += 1
+                                            elif content[i] == ']': depth -= 1
+                                            elif content[i] == '"': # 跳過字串
+                                                i += 1
+                                                while i < n:
+                                                    if content[i] == '"' and content[i-1] != '\\':
+                                                        break
+                                                    i += 1
+                                            i += 1
                                 
                                 value_end = i
                                 # 找到目標，跳出循環
@@ -388,10 +413,7 @@ class ConfigManager:
                                 key_idx += 1
                                 target_key = keys[key_idx]
                                 # 這裡不需要特殊處理，只要繼續掃描即可
-                                # 因為 JSON 的嵌套結構會自然地讓下一個鍵出現在後面
-                                # (注意：這是一個簡化的邏輯，假設沒有同名的鍵在前面的兄弟節點中)
-                                # 嚴格來說應該要追蹤括號深度，但在合法 JSON 中，
-                                # 只要我們順序匹配鍵，通常能找到正確路徑。
+                                pass
                         else:
                             # 不是目標鍵，跳過它的值
                             i = j + 1
@@ -399,8 +421,6 @@ class ConfigManager:
                             while i < n and content[i] in ' \t\r\n':
                                 i += 1
                             # 簡單跳過值（不支援嵌套結構的完整跳過，這裡有風險）
-                            # 為求穩健，如果沒匹配到鍵，我們應該讓主迴圈繼續走，
-                            # 利用括號計數來正確跳過區塊
                             pass
 
                 elif c == '{' or c == '[':
@@ -414,19 +434,29 @@ class ConfigManager:
             
             if value_start != -1 and value_end != -1:
                 # 執行替換
-                # 檢查新值是否為複雜結構
-                if isinstance(new_value, (dict, list)):
-                    return False
                 
-                # 序列化新值
-                new_value_str = json.dumps(new_value)
+                # 特殊處理：如果是 dict 或 list，強制轉為單行 JSON
+                # 這滿足使用者的需求：「當我update字典的時候,直接轉換為json一行過」
+                if isinstance(new_value, (dict, list)):
+                    # 使用 separators=(',', ':') 來產生最緊湊的 JSON (無空白)
+                    # MicroPython 的 json.dumps 可能不支援 separators，
+                    # 但默認 dumps 出來的通常就是緊湊的或者帶空格的單行
+                    new_value_str = json.dumps(new_value)
+                    
+                    # 確保它是單行的 (移除可能的換行符，雖然 dumps 預設通常不換行除非有 indent)
+                    new_value_str = new_value_str.replace('\n', '').replace('\r', '')
+                    
+                    dprint(f"[Config] 📦 結構化更新 (單行模式): {key_path}")
+                else:
+                    # 基礎類型
+                    new_value_str = json.dumps(new_value)
                 
                 # 構建新內容
                 new_content = content[:value_start] + new_value_str + content[value_end:]
                 
                 with open(self.path, 'w') as f:
                     f.write(new_content)
-                dprint(f"[Config] ✓ 無損更新成功: {key_path} -> {new_value_str}")
+                dprint(f"[Config] ✓ 無損更新成功: {key_path}")
                 return True
             else:
                 dprint(f"[Config] ⚠ 無損更新失敗：找不到路徑 {key_path}")

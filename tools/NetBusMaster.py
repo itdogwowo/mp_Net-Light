@@ -598,7 +598,7 @@ class NetBusMaster:
         port = self.config.get("ws_port", 8000)
         s.bind(('0.0.0.0', port))
         s.listen(20)
-        print(f"[WS Server] 監聽 0.0.0.0:{port}")
+        print(f"[WS Server] 監聽 0.0.0.0:{port} ,IP: {self.local_ip}")
         
         while self.running:
             try:

@@ -145,8 +145,45 @@ class NetworkManager:
         
         try:
             dprint("📡 初始化 WiFi STA...")
+            try:
+                network.WLAN(network.AP_IF).active(False)
+                time.sleep(0.5) # Wait for radio to fully power down
+            except: pass
+            
+            
             wlan = network.WLAN(network.STA_IF)
             wlan.active(True)
+            dprint("   等待 WiFi 射頻啟動 (3s)...")
+            time.sleep(3.0) # Give it more time based on user feedback
+            
+            # Scan and list WiFi networks (with retry)
+            try:
+                dprint("🔍 掃描 WiFi 訊號中...")
+                scan_res = []
+                for i in range(3):
+                    try:
+                        scan_res = wlan.scan()
+                    except Exception as e:
+                        dprint(f"   (嘗試 {i+1}/3) 掃描錯誤: {e}")
+                    
+                    if scan_res: break
+                    dprint(f"   (嘗試 {i+1}/3) 未找到訊號，等待 1.5s 重試...")
+                    time.sleep(1.5)
+                
+                dprint(f"   找到 {len(scan_res)} 個基地台:")
+                # Sort by RSSI
+                scan_res.sort(key=lambda x: x[3], reverse=True)
+                for info in scan_res:
+                    # (ssid, bssid, channel, rssi, authmode, hidden)
+                    try:
+                        ssid = info[0].decode('utf-8')
+                        if not ssid: ssid = "<Hidden>"
+                    except: ssid = "<Unknown>"
+                    rssi = info[3]
+                    auth = "OPEN" if info[4] == 0 else "SECURE"
+                    dprint(f"   - {ssid:<25} RSSI: {rssi} | {auth}",2)
+            except Exception as scan_err:
+                dprint(f"   ⚠️ 掃描失敗: {scan_err}")
             
             # 設置 mDNS 名稱 (如果支持)
             if hasattr(wlan, 'config') and 'mdns_name' in config:
@@ -202,6 +239,11 @@ class NetworkManager:
         """啟動 AP 模式並開啟 WebREPL"""
         try:
             ap = network.WLAN(network.AP_IF)
+            
+            # Reset AP state first
+            ap.active(False)
+            time.sleep(0.1)
+            
             ap.active(True)
             
             # 讀取 AP 配置，如果沒有則使用默認值
