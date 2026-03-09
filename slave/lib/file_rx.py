@@ -71,6 +71,22 @@ class FileRx:
             return False
 
         try:
+            # Ensure directory exists
+            parent = "/".join(self.path.split("/")[:-1])
+            if parent:
+                parts = parent.split("/")
+                curr = ""
+                for p in parts:
+                    if not p: continue
+                    curr += "/" + p
+                    try:
+                        os.stat(curr)
+                    except:
+                        try:
+                            os.mkdir(curr)
+                        except:
+                            pass
+
             # 以 'wb' 模式開啟會自動清空舊文件
             # 對於 ESP32-P4，直接順序寫入比頻繁 seek 預分配更快
             self.fp = open(self.path, "wb")

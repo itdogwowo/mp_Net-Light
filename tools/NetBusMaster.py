@@ -440,7 +440,11 @@ class DeviceManager:
                 "parser": parser,
                 "ack_event": threading.Event(),
                 "query_event": threading.Event(),
+                "read_event": threading.Event(),
                 "remote_sha": None,
+                "remote_size": 0,
+                "read_data": None,
+                "read_offset": 0,
                 "last_seen": time.time()  # 用於內部連接保活檢查
             }
             
@@ -744,7 +748,15 @@ class NetBusMaster:
         elif cmd == 0x2006:
             if cid in self.slaves:
                 self.slaves[cid]["remote_sha"] = args["sha256"]
+                self.slaves[cid]["remote_size"] = args["size"]
                 self.slaves[cid]["query_event"].set()
+
+        # 复用 0x2002 FILE_CHUNK 作为下载数据的返回
+        elif cmd == 0x2002:
+            if cid in self.slaves:
+                self.slaves[cid]["read_data"] = args["data"]
+                self.slaves[cid]["read_offset"] = args["offset"]
+                self.slaves[cid]["read_event"].set()
         
         return cid
     
@@ -776,6 +788,289 @@ class NetBusMaster:
                     pass
             # 如果 tid 根本不在 slaves (socket 已 close/清除)，則無法發送，忽略
     
+    # ==================== Step 0: 固件更新 ====================
+    def step_0_update_firmware(self):
+        self.load_config()
+        self.panel.stop()
+        ConsoleUI.clear_screen()
+        ConsoleUI.show_cursor()
+        
+        if not self.selected_targets:
+            print("⚠️ 請先執行 Step 1 選擇設備")
+            input("\n按 Enter 繼續...")
+            self.panel.start()
+            return
+
+        print("\n🔧 [Step 0] 固件更新流程")
+        print("  1. 上傳固件 (mp_Net-Light/slave -> MCU)")
+        print("  2. 修改 Config (下載 -> 編輯 -> 上傳)")
+        print("  q. 返回")
+        
+        choice = input("\n👉 請選擇: ").strip().lower()
+        
+        if choice == '1':
+            self._update_firmware_files()
+        elif choice == '2':
+            self._modify_config()
+        elif choice == 'q':
+            self.panel.start()
+            return
+        else:
+            print("❌ 無效選擇")
+            time.sleep(1)
+            self.panel.start()
+            return
+            
+        input("\n按 Enter 返回...")
+        self.panel.start()
+
+    def _upload_generic_file(self, tid, local_path, remote_path, file_idx=1, total_files=1):
+        try:
+            with open(local_path, "rb") as f:
+                data = f.read()
+        except Exception as e:
+            raise Exception(f"Read local file failed: {e}")
+
+        node = self.slaves.get(tid)
+        if not node:
+            raise Exception("Device Offline")
+
+        local_sha = hashlib.sha256(data).digest()
+        total_len = len(data)
+        chunk_size = 1024
+        
+        # Update panel
+        self.panel.update_device(
+            tid,
+            status=f"Up {file_idx}/{total_files}",
+            upload_progress=0,
+            uploaded_bytes=0,
+            total_bytes=total_len,
+            upload_start_time=time.time()
+        )
+        
+        # 1. Send FILE_BEGIN
+        self.send_pkt([tid], 0x2001, {
+            "file_id": file_idx,
+            "total_size": total_len,
+            "chunk_size": chunk_size,
+            "sha256": local_sha,
+            "path": remote_path
+        })
+        
+        time.sleep(0.05)
+        start_time = time.time()
+        
+        # 2. Send FILE_CHUNK
+        for off in range(0, total_len, chunk_size):
+            chunk = data[off : off + chunk_size]
+            node["ack_event"].clear()
+            self.send_pkt([tid], 0x2002, {
+                "file_id": file_idx,
+                "offset": off,
+                "data": chunk
+            })
+            
+            if not node["ack_event"].wait(timeout=5.0):
+                raise Exception(f"Timeout at offset {off}")
+            
+            done = off + len(chunk)
+            elapsed = time.time() - start_time
+            speed = (done / 1024) / elapsed if elapsed > 0 else 0
+            progress = (done / total_len) * 100
+            
+            self.panel.update_device(
+                tid,
+                upload_progress=progress,
+                upload_speed=speed,
+                uploaded_bytes=done
+            )
+            
+        # 3. Send FILE_END
+        self.send_pkt([tid], 0x2003, {"file_id": file_idx})
+        time.sleep(0.05)
+
+    def _update_firmware_files(self):
+        slave_dir = os.path.join(PROJECT_ROOT, "slave")
+        files_to_upload = []
+        
+        print("\n🔍 掃描本地固件文件...")
+        for root, dirs, files in os.walk(slave_dir):
+            # Skip __pycache__
+            if "__pycache__" in root:
+                continue
+                
+            for file in files:
+                if file == "config.json" or file.endswith(".pyc"):
+                    continue
+                
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, slave_dir)
+                remote_path = "/" + rel_path.replace("\\", "/")
+                files_to_upload.append((full_path, remote_path))
+                
+        print(f"📦 找到 {len(files_to_upload)} 個文件:")
+        for _, r in files_to_upload[:5]:
+            print(f"  - {r}")
+        if len(files_to_upload) > 5:
+            print(f"  ... 以及其他 {len(files_to_upload)-5} 個")
+            
+        confirm = input("\n👉 確認上傳到所有選定設備? (y/n): ").lower()
+        if confirm != 'y':
+            return
+
+        self.panel.start()
+        
+        # Reset Status
+        for tid in self.selected_targets:
+            self.panel.update_device(tid, status="準備中", upload_progress=0)
+            
+        max_workers = self.config.get("max_workers", 10)
+        
+        # Helper for thread pool
+        def _task(tid):
+            try:
+                for i, (l_path, r_path) in enumerate(files_to_upload):
+                    self._upload_generic_file(tid, l_path, r_path, i+1, len(files_to_upload))
+                self.panel.update_device(tid, status="完成", upload_progress=100)
+            except Exception as e:
+                self.panel.update_device(tid, status="錯誤", error_msg=str(e))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_task, tid): tid for tid in self.selected_targets}
+            for f in futures:
+                f.result()
+                
+        time.sleep(1)
+        print("\n✅ 固件更新完成")
+
+    def _modify_config(self):
+        target = self.selected_targets[0]
+        print(f"\n📥 從 {target} 下載 config.json...")
+        
+        node = self.slaves.get(target)
+        if not node:
+            print("❌ 設備離線")
+            return
+
+        # Query SHA and Size
+        node["query_event"].clear()
+        node["remote_sha"] = None
+        node["remote_size"] = 0
+        self.send_pkt([target], 0x2005, {"path": "/config.json"})
+        if node["query_event"].wait(timeout=3.0):
+            sha_hex = node["remote_sha"].hex() if node["remote_sha"] else "None"
+            size = node["remote_size"]
+            print(f"  Remote SHA: {sha_hex}")
+            print(f"  Remote Size: {size} bytes")
+        else:
+            print("⚠️ 查詢超時, 無法獲取文件大小")
+            return
+            
+        # Download Loop
+        config_data = bytearray()
+        chunk_size = 1024
+        
+        # Init progress bar
+        self.panel.update_device(
+            target,
+            status="下載中",
+            uploaded_bytes=0,
+            total_bytes=size,
+            upload_start_time=time.time()
+        )
+        
+        offset = 0
+        start_time = time.time()
+        
+        while offset < size:
+            node["read_event"].clear()
+            node["read_data"] = None
+            
+            # Request chunk
+            # 這裡的 length 如果超過剩餘大小也沒關係，f.read 會處理
+            self.send_pkt([target], 0x2007, {
+                "path": "/config.json",
+                "offset": offset,
+                "length": chunk_size
+            })
+            
+            if not node["read_event"].wait(timeout=5.0):
+                print(f"❌ 下載超時 at offset {offset}")
+                self.panel.update_device(target, status="錯誤")
+                return
+                
+            chunk = node["read_data"]
+            if not chunk:
+                break # EOF or error
+                
+            config_data.extend(chunk)
+            offset += len(chunk)
+            
+            # Update Panel
+            elapsed = time.time() - start_time
+            speed = (offset / 1024) / elapsed if elapsed > 0 else 0
+            progress = (offset / size) * 100 if size > 0 else 0
+            
+            self.panel.update_device(
+                target,
+                upload_progress=progress,
+                upload_speed=speed,
+                uploaded_bytes=offset
+            )
+            
+            # Small delay to prevent flooding if network is super fast (optional)
+            # time.sleep(0.01) 
+            
+        self.panel.update_device(target, status="下載完成", upload_progress=100)
+        temp_path = "temp_config.json"
+        
+        try:
+            # Format JSON for easier editing
+            # decode bytes to string for json.loads
+            json_str = config_data.decode('utf-8')
+            json_obj = json.loads(json_str)
+            with open(temp_path, "w", encoding='utf-8') as f:
+                json.dump(json_obj, f, indent=4, ensure_ascii=False)
+        except:
+            # Binary write if not valid json
+            with open(temp_path, "wb") as f:
+                f.write(config_data)
+                
+        print(f"✅ 已保存到 {temp_path}")
+        print("👉 請編輯該文件。")
+        
+        # Open editor
+        if os.name == 'nt':
+            os.system(f"start notepad {temp_path}")
+            
+        input("\n⌨️  編輯完成後按 Enter 繼續上傳...")
+        
+        if not os.path.exists(temp_path):
+            print("❌ 文件不存在")
+            return
+            
+        confirm = input(f"👉 確認上傳到 {len(self.selected_targets)} 個設備? (y/n): ").lower()
+        if confirm != 'y':
+            return
+            
+        self.panel.start()
+        
+        def _task_config(tid):
+            try:
+                self._upload_generic_file(tid, temp_path, "/config.json", 1, 1)
+                self.panel.update_device(tid, status="配置更新", upload_progress=100)
+            except Exception as e:
+                self.panel.update_device(tid, status="錯誤", error_msg=str(e))
+
+        with ThreadPoolExecutor(max_workers=self.config.get("max_workers", 10)) as executor:
+            futures = {executor.submit(_task_config, tid): tid for tid in self.selected_targets}
+            for f in futures:
+                f.result()
+                
+        print("\n✅ Config 更新完成")
+        time.sleep(1)
+
     # ==================== New Step 1: 掃描與選擇 ====================
     def scan_devices(self):
         """僅掃描 (發送廣播包)"""
@@ -1578,6 +1873,7 @@ class NetBusMaster:
         print(" 🎬 NetBus Master Control Panel")
         print("=" * 60)
         online, offline = self.device_manager.get_counts()
+        print(" 0. Update Firmware    | 固件更新/配置修改")
         print(" 1. Scan Devices       | 掃描設備 (廣播)")
         print(" 2. Select Devices     | 選擇目標設備 (已選/總數: {}/{})".format(len(self.selected_targets), online))
         print(" 3. Clear List         | 清除設備列表 (離線: {})".format(offline))
@@ -1612,7 +1908,10 @@ class NetBusMaster:
             if not ch:
                 continue
                 
-            if ch == '1':
+            if ch == '0':
+                self.step_0_update_firmware()
+                self._print_menu()
+            elif ch == '1':
                 self.scan_devices()
                 self._print_menu()
             elif ch == '2':

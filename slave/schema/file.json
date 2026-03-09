@@ -94,8 +94,30 @@
           "len": 32
         },
         {
+          "name": "size",
+          "type": "u32"
+        },
+        {
           "name": "path",
           "type": "str_u16len"
+        }
+      ]
+    },
+    {
+      "cmd": "0x2007",
+      "name": "FILE_READ",
+      "payload": [
+        {
+          "name": "path",
+          "type": "str_u16len"
+        },
+        {
+          "name": "offset",
+          "type": "u32"
+        },
+        {
+          "name": "length",
+          "type": "u16"
         }
       ]
     }
