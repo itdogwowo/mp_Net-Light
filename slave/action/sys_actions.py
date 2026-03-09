@@ -4,6 +4,8 @@ import gc
 import os
 from lib.proto import Proto
 from lib.schema_codec import SchemaCodec
+from lib.sys_bus import bus
+from lib.ConfigManager import cfg_manager
 
 # 定義常量 (直接使用數值)
 CMD_DISCOVER = 0x1001
@@ -47,7 +49,22 @@ def on_connect_request(bus_manager, url):
         # 注意: bus_manager.connect 內部的 settimeout(5) 會阻塞 Core0 少許時間
         # 但對於控制信道切換這是必要的。
         # 這裡呼叫 NetBus.connect(host, port, path)
-        return bus_manager.connect(h, p, path=path)
+        res = bus_manager.connect(h, p, path=path)
+
+        if res:
+             bus_sys = bus.shared["System"]
+             # 針對性無損更新 
+             if bus_sys.get("master_IP") != h: 
+                 bus_sys["master_IP"] = h 
+                 print(f"💾 Updating Master IP: {h}") 
+                 cfg_manager.save_from_bus(update_key="System.master_IP") 
+                 
+             if bus_sys.get("master_port") != p: 
+                 bus_sys["master_port"] = p 
+                 print(f"💾 Updating Master Port: {p}") 
+                 cfg_manager.save_from_bus(update_key="System.master_port")
+
+        return res
         
     except Exception as e:
         print(f"❌ [sys_actions] Connect Error: {e}")

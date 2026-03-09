@@ -38,6 +38,26 @@ def on_file_end(ctx, args):
         print(f"🏁 [File] End Success: {path}")
         print(f"🔒 [SHA256] {sha}")
         print("-" * 40)
+
+        # 回覆最終狀態 (0x2006)
+        if "send" in ctx:
+            try:
+                import os
+                st = os.stat(path)
+                size = st[6]
+                sha_bytes = ubinascii.unhexlify(sha)
+
+                rsp_def = app.store.get(0x2006)
+                rsp_data = SchemaCodec.encode(rsp_def, {
+                    "exists": 1,
+                    "sha256": sha_bytes,
+                    "size": size,
+                    "path": path
+                })
+                ctx["send"](Proto.pack(0x2006, rsp_data))
+                print(f"📤 [File] Sent Final SHA256 (0x2006)")
+            except Exception as e:
+                print(f"⚠️ [File] Failed to send final SHA: {e}")
     else:
         err = app.file_rx.last_error
         print(f"❌ [File] End Failed: {err}")

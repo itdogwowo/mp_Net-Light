@@ -3,7 +3,6 @@ import time, gc
 from lib.sys_bus import bus
 from lib.net_bus import NetBus
 from action.sys_actions import on_connect_request
-from lib.ConfigManager import cfg_manager
 from lib.network_manager import NetworkManager
 
 def task_loop(app):
@@ -23,29 +22,8 @@ def task_loop(app):
     discovery_bus.connect(None, bus_sys["discovery_port"])
 
     def on_connect_wrapper(url):
-        # 嘗試連接並在成功時更新配置
-        res = on_connect_request(ctrl_bus, url)
-        if res:
-            try:
-                parts = url.replace("ws://", "").split("/", 1)
-                hp = parts[0].split(":")
-                h = hp[0]
-                p = int(hp[1]) if len(hp) > 1 else 80
-                
-                # 針對性無損更新
-                if bus_sys.get("master_IP") != h:
-                    bus_sys["master_IP"] = h
-                    print(f"💾 Updating Master IP: {h}")
-                    cfg_manager.save_from_bus(update_key="System.master_IP")
-                    
-                if bus_sys.get("master_port") != p:
-                    bus_sys["master_port"] = p
-                    print(f"💾 Updating Master Port: {p}")
-                    cfg_manager.save_from_bus(update_key="System.master_port")
-                
-            except Exception as e:
-                print(f"⚠️ Config update error: {e}")
-        return res
+        # 嘗試連接並在成功時更新配置 (現在移至 sys_actions 處理)
+        return on_connect_request(ctrl_bus, url)
 
     ctx_extra = {
         "app": app, 
