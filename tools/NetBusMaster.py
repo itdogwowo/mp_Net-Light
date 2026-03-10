@@ -542,6 +542,8 @@ class NetBusMaster:
         self.is_playing = False
         self.is_paused = False
         self.play_lock = threading.Lock()
+        self.playback_start_time = 0
+        self.current_fps = 40
         
         self.config_file = config_file
         self.config = copy.deepcopy(DEFAULT_CONFIG)
@@ -672,6 +674,50 @@ class NetBusMaster:
             self.device_manager.register_connection(
                 cid, conn, addr, StreamParser()
             )
+            
+            # --- NEW: Mid-Stream Join Logic ---
+            if self.is_playing:
+                try:
+                    now = time.time()
+                    elapsed = now - self.playback_start_time
+                    if elapsed < 0: elapsed = 0
+                    
+                    target_frame = int(elapsed * self.current_fps)
+                    
+                    # 處理循環播放的幀數計算
+                    play_id = self.config["mapping"].get(cid, {}).get("play_id")
+                    if play_id is not None:
+                        meta = self.pxld_metadata.get(play_id)
+                        if meta and meta.get("total_frames", 0) > 0:
+                            target_frame = target_frame % meta["total_frames"]
+                    
+                    print(f"🔄 [Mid-Join] {cid} joining at frame {target_frame} ({elapsed:.2f}s)")
+                    
+                    # 異步執行加入流程，避免阻塞主循環
+                    def _join_task(target_cid, frame):
+                        try:
+                            # 1. 發送準備指令 (與 step_4 保持一致)
+                            self.send_pkt([target_cid], 0x3009, {
+                                "file_name": "data.bin",
+                                "block_id": 0,
+                                "play_mode": 0
+                            })
+                            
+                            # 2. 等待從機就緒 (簡單延遲)
+                            time.sleep(0.2)
+                            
+                            # 3. 發送帶幀號的播放指令
+                            self.send_pkt([target_cid], 0x300A, {"start_frame": frame})
+                            
+                            self.panel.update_device(target_cid, status="中途加入")
+                        except Exception as e:
+                            print(f"❌ Join task failed for {target_cid}: {e}")
+
+                    threading.Thread(target=_join_task, args=(cid, target_frame), daemon=True).start()
+                    
+                except Exception as e:
+                    print(f"❌ Mid-Join logic error: {e}")
+            # --- END NEW LOGIC ---
             
             parser = self.slaves[cid]["parser"]
             while self.running:
@@ -1745,6 +1791,13 @@ class NetBusMaster:
             with open(bin_path, 'wb') as f:
                 f.write(data)
             print(f"  💾 已保存 {bin_path} ({len(data)//1024} KB)")
+            
+        # Save Metadata
+        try:
+            with open(os.path.join(bins_dir, 'metadata.json'), 'w') as f:
+                json.dump(self.pxld_metadata, f)
+        except Exception as e:
+            print(f"  ⚠️ Metadata save failed: {e}")
 
     def _load_bins(self):
         """從 bins/ 目錄載入 bin 檔案到 prepared_data"""
@@ -1754,6 +1807,18 @@ class NetBusMaster:
 
         self.prepared_data.clear()
         self.pxld_metadata.clear()
+        
+        # Load Metadata
+        meta_path = os.path.join(bins_dir, 'metadata.json')
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'r') as f:
+                    loaded_meta = json.load(f)
+                    # Convert string keys to int
+                    self.pxld_metadata = {int(k): v for k, v in loaded_meta.items()}
+                print(f"  📋 Metadata loaded ({len(self.pxld_metadata)} entries)")
+            except Exception as e:
+                print(f"  ⚠️ Metadata load failed: {e}")
 
         loaded = 0
         missing = []
@@ -1907,7 +1972,7 @@ class NetBusMaster:
                     self.prepared_data[pid] = data
                     # Update metadata with actual sliced frame count
                     sliced_frames = end_frame - start_frame
-                    self.pxld_metadata[pid] = {"total_frames": sliced_frames}
+                    self.pxld_metadata[pid] = {"total_frames": sliced_frames, "fps": decoder.fps}
                     
                     # 更新監控面板的 total_frames
                     for tid in self.selected_targets:
@@ -2224,20 +2289,29 @@ class NetBusMaster:
         delay_ms = self.config.get("sync_delay_ms", 150)
         delay_sec = abs(delay_ms) / 1000.0
         
+        # 記錄播放起始時間與 FPS，供中途加入使用
+        self.playback_start_time = time.time()
+        self.current_fps = 40 # Default
+        if self.selected_targets:
+            pid = self.config["mapping"][self.selected_targets[0]].get("play_id")
+            if pid in self.pxld_metadata and "fps" in self.pxld_metadata[pid]:
+                self.current_fps = self.pxld_metadata[pid]["fps"]
+                if self.current_fps == 0: self.current_fps = 40
+        
         if selected_mp3:
             if delay_ms >= 0:
                 self._start_audio_stream(selected_mp3)
                 if delay_ms > 0:
                     time.sleep(delay_sec)
-                self.send_pkt(self.selected_targets, 0x300A, {})
+                self.send_pkt(self.selected_targets, 0x300A, {"start_frame": 0})
             else:
-                self.send_pkt(self.selected_targets, 0x300A, {})
+                self.send_pkt(self.selected_targets, 0x300A, {"start_frame": 0})
                 time.sleep(delay_sec)
                 self._start_audio_stream(selected_mp3)
         else:
             # Silent mode: just trigger
             self.is_playing = True # Enable loop
-            self.send_pkt(self.selected_targets, 0x300A, {})
+            self.send_pkt(self.selected_targets, 0x300A, {"start_frame": 0})
         
         # print("\n[控制提示] SPACE=暫停/繼續 | S=停止 | Q=退出") # 移除此行，因為 MonitorPanel 已經顯示了控制提示，且此行會導致 UI 錯亂
         

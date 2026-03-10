@@ -15,6 +15,25 @@ def on_stream_state_set(ctx, args):
     })
     print(f"📡 [Stream] Set: {args['file_name']}")
 
+def on_stream_play(ctx, args):
+    """0x300A: 開始播放 (支持中途加入)"""
+    start_frame = args.get("start_frame", 0)
+    
+    # 如果指定了起始幀，通知 Supply Chain 進行跳轉
+    if start_frame > 0:
+        bus.shared.update({
+            "seek_frame": start_frame,
+            "is_seeking": True # 觸發重新加載/跳轉
+        })
+        # 刷新 Buffer Hub 以清除舊數據
+        hub = bus.get_service("pixel_stream")
+        if hub: hub.flush()
+        print(f"▶️ PLAY from frame {start_frame}")
+    else:
+        print(f"▶️ PLAY from start")
+        
+    bus.shared.update({"is_streaming": True})
+
 def handle_supply_chain(hub, s, ctx):
     """由 Core 0 定時調用，負責加載與 READY 回報"""
     if bus.shared.get("is_seeking"):
@@ -22,6 +41,16 @@ def handle_supply_chain(hub, s, ctx):
             hub.flush()
             if s.get("f_local"): s["f_local"].close()
             s["f_local"] = open(bus.shared["active_file"], "rb")
+            
+            # 處理跳轉
+            seek_frame = bus.shared.get("seek_frame", 0)
+            if seek_frame > 0:
+                st = bus.get_service("st_LED")
+                if st:
+                    offset = seek_frame * st.total_bytes
+                    s["f_local"].seek(offset)
+                    print(f"⏩ Seek to frame {seek_frame} (offset {offset})")
+                bus.shared["seek_frame"] = 0 # Reset
             
             # 預填第一幀
             view = hub.get_write_view()
@@ -56,7 +85,7 @@ def handle_supply_chain(hub, s, ctx):
 def register(app):
     # 播放控制
     app.disp.on(0x3009, on_stream_state_set) # SET
-    app.disp.on(0x300A, lambda c,a: bus.shared.update({"is_streaming": True})) # PLAY
+    app.disp.on(0x300A, on_stream_play) # PLAY
     app.disp.on(0x3005, lambda c,a: bus.shared.update({"is_paused": bool(a["pause"])})) # PAUSE
     app.disp.on(0x3002, lambda c,a: bus.shared.update({"is_streaming": False, "is_ready": False})) # STOP
     # 0x3003 Direct Mode
