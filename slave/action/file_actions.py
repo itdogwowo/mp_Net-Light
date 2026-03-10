@@ -23,6 +23,9 @@ def on_file_chunk(ctx, args):
                 "offset": args["offset"]
             })
             ctx["send"](Proto.pack(0x2004, ack_data))
+    else:
+        # ⚠️ 如果寫入失敗，打印原因方便調試
+        print(f"⚠️ [File] Chunk Failed: Off={args.get('offset')} Err={app.file_rx.last_error}")
 
 def on_file_end(ctx, args):
     app = ctx["app"]
@@ -130,9 +133,39 @@ def on_file_read(ctx, args):
             })
              ctx["send"](Proto.pack(0x2002, rsp_data))
 
+def on_file_delete(ctx, args):
+    app = ctx["app"]
+    path = args.get("path")
+    
+    if not path: return
+    
+    full_path = bus.get_service("data_Phat") + path
+    
+    import os
+    try:
+        # 嘗試判斷類型，優先當文件刪除
+        try:
+            st = os.stat(full_path)
+            mode = st[0]
+            if (mode & 0o170000) == 0o040000: # Directory
+                os.rmdir(full_path)
+                print(f"🗑️ [Delete] Directory removed: {path}")
+            else: # File
+                os.remove(full_path)
+                print(f"🗑️ [Delete] File removed: {path}")
+        except OSError as e:
+            print(f"⚠️ [Delete] Stat/Remove failed: {e}")
+            
+    except Exception as e:
+        print(f"❌ [Delete] Unexpected error: {e}")
+        
+    # 操作後查詢狀態並回傳 (復用 on_file_query 邏輯)
+    on_file_query(ctx, {"path": path})
+
 def register(app):
     app.disp.on(0x2001, on_file_begin)
     app.disp.on(0x2002, on_file_chunk)
     app.disp.on(0x2003, on_file_end)
     app.disp.on(0x2005, on_file_query)
     app.disp.on(0x2007, on_file_read)
+    app.disp.on(0x2009, on_file_delete)

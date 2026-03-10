@@ -106,7 +106,9 @@ class FileRx:
             return False
         
         # 檢查 file_id 是否匹配當前任務
-        if int(args.get("file_id", 0)) != self.file_id:
+        req_id = int(args.get("file_id", 0))
+        if req_id != self.file_id:
+            self.last_error = f"ID_MISMATCH {req_id}!={self.file_id}"
             return False
 
         off = int(args.get("offset", 0))

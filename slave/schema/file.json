@@ -120,6 +120,15 @@
           "type": "u16"
         }
       ]
+    {
+      "cmd": "0x2009",
+      "name": "FILE_DELETE",
+      "payload": [
+        {
+          "name": "path",
+          "type": "str_u16len"
+        }
+      ]
     }
   ]
 }

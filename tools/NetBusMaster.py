@@ -359,14 +359,20 @@ class MonitorPanel:
             "離線": "\033[90m",
             "待機": "\033[96m",
             "傳輸中": "\033[93m",
+            "下載中": "\033[93m",
             "播放中": "\033[92m",
             "暫停": "\033[95m",
-            "錯誤": "\033[91m"
+            "錯誤": "\033[91m",
+            "無響應": "\033[31m" # 暗紅/紅色
         }
         status_color = status_colors.get(monitor.status, "\033[0m")
+        # 簡單處理包含進度的狀態字串 (如 "Up 1/32")
+        if "Up " in monitor.status:
+            status_color = "\033[93m"
+            
         status_str = f"{status_color}{monitor.status:<6}{ConsoleUI.reset_color()}"
         
-        if monitor.status == "傳輸中":
+        if monitor.status == "傳輸中" or monitor.status == "下載中" or "Up " in monitor.status:
             progress_bar = ConsoleUI.draw_progress_bar(monitor.upload_progress, width=20)
             speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
             size_str = f"{monitor.uploaded_bytes//1024}/{monitor.total_bytes//1024} KB"
@@ -393,6 +399,10 @@ class MonitorPanel:
         
         elif monitor.status == "錯誤":
             info = f"\033[91m{monitor.error_msg[:70]}\033[0m"
+            
+        elif monitor.status == "無響應":
+            lost_time = int(time.time() - monitor.last_update)
+            info = f"\033[31m無響應 {lost_time}s\033[0m"
         
         else:
             idle_time = int(time.time() - monitor.last_update)
@@ -441,6 +451,7 @@ class DeviceManager:
                 "ack_event": threading.Event(),
                 "query_event": threading.Event(),
                 "read_event": threading.Event(),
+                "remote_exists": 0,
                 "remote_sha": None,
                 "remote_size": 0,
                 "read_data": None,
@@ -483,17 +494,23 @@ class DeviceManager:
                 current_cids = list(self.slaves.keys())
             
             for cid in current_cids:
-                # 檢查 MonitorPanel 中的 last_update
-                # 因為 update_device 會更新 monitor.last_update
                 monitor = self.panel.monitors.get(cid)
                 if monitor:
+                    # 如果設備正在傳輸文件或固件更新，跳過離線檢查
+                    # 或者心跳超時時間到了
+                    if monitor.status in ["傳輸中", "下載中", "準備中"] or "Up " in monitor.status:
+                        monitor.last_update = now # 強制餵狗
+                        continue
+                        
                     if now - monitor.last_update > timeout:
-                        if monitor.status != "離線":
-                            monitor.status = "離線"
-                            # 也可以選擇在這裡主動斷開 socket
-                            # self.unregister_connection(cid) 
-                            # 但有時候只是心跳包丟失，socket 還活著，保留 socket 讓它有機會恢復?
-                            # 用戶要求 "30秒沒有收到就標記離線"
+                        # 只有當我們無法通過 socket 驗證連接時，才標記為離線
+                        # 但這裡簡單起見，如果 socket 仍然在 slaves 列表中，說明 socket 對象還在
+                        # 我們將其標記為 "無響應" 而不是 "離線"
+                        if monitor.status != "離線" and monitor.status != "無響應":
+                            # 檢查 socket 是否真的斷了? 
+                            # 其實很難檢測，除非發送失敗。
+                            # 所以這裡我們只標記為 無響應，表示很久沒收到心跳了
+                            monitor.status = "無響應"
                             
     def get_counts(self):
         """返回 (在線總數, 離線總數)"""
@@ -747,6 +764,7 @@ class NetBusMaster:
         
         elif cmd == 0x2006:
             if cid in self.slaves:
+                self.slaves[cid]["remote_exists"] = args["exists"]
                 self.slaves[cid]["remote_sha"] = args["sha256"]
                 self.slaves[cid]["remote_size"] = args["size"]
                 self.slaves[cid]["query_event"].set()
@@ -802,16 +820,22 @@ class NetBusMaster:
             return
 
         print("\n🔧 [Step 0] 固件更新流程")
+        print("  0. 手動上傳文件 (自定義路徑)")
         print("  1. 上傳固件 (mp_Net-Light/slave -> MCU)")
         print("  2. 修改 Config (下載 -> 編輯 -> 上傳)")
+        print("  3. 刪除文件 (輸入路徑)")
         print("  q. 返回")
         
         choice = input("\n👉 請選擇: ").strip().lower()
         
-        if choice == '1':
+        if choice == '0':
+            self._manual_upload()
+        elif choice == '1':
             self._update_firmware_files()
         elif choice == '2':
             self._modify_config()
+        elif choice == '3':
+            self._delete_file()
         elif choice == 'q':
             self.panel.start()
             return
@@ -837,7 +861,7 @@ class NetBusMaster:
 
         local_sha = hashlib.sha256(data).digest()
         total_len = len(data)
-        chunk_size = 1024
+        chunk_size = 1024 # 降低 Chunk Size 避免緩衝區擁塞
         
         # Update panel
         self.panel.update_device(
@@ -858,10 +882,19 @@ class NetBusMaster:
             "path": remote_path
         })
         
-        time.sleep(0.05)
+        # 2. Wait for Ready (Handshake)
+        # 利用 Query 確認 MCU 已經處理完 BEGIN 並且文件句柄已打開
+        # 這比單純 sleep 更可靠，能防止 Begin 還沒處理完就塞 Chunk
+        node["query_event"].clear()
+        node["remote_sha"] = None
+        self.send_pkt([tid], 0x2005, {"path": remote_path})
+        
+        if not node["query_event"].wait(timeout=5.0):
+             raise Exception("FILE_BEGIN Handshake Timeout")
+             
         start_time = time.time()
         
-        # 2. Send FILE_CHUNK
+        # 3. Send FILE_CHUNK
         for off in range(0, total_len, chunk_size):
             chunk = data[off : off + chunk_size]
             node["ack_event"].clear()
@@ -886,9 +919,118 @@ class NetBusMaster:
                 uploaded_bytes=done
             )
             
-        # 3. Send FILE_END
+        # 4. Send FILE_END
+        node["query_event"].clear()
+        node["remote_sha"] = None
         self.send_pkt([tid], 0x2003, {"file_id": file_idx})
-        time.sleep(0.05)
+        
+        # 5. Wait for Final SHA (via 0x2006 from Slave)
+        # Slave will automatically send 0x2006 after validation in on_file_end
+        if node["query_event"].wait(timeout=10.0):
+            remote_sha = node["remote_sha"]
+            if remote_sha == local_sha:
+                pass # Success
+            else:
+                raise Exception(f"SHA Mismatch: {remote_sha.hex()[:8]} != {local_sha.hex()[:8]}")
+        else:
+            raise Exception("Validation Timeout (No 0x2006 response)")
+
+    def _manual_upload(self):
+        print("\n📂 [手動上傳]")
+        
+        # 1. 輸入本地路徑 (支持文件或文件夾)
+        local_input = input("👉 輸入本地文件/文件夾路徑: ").strip().strip('"').strip("'")
+        if not os.path.exists(local_input):
+            print("❌ 路徑不存在")
+            return
+            
+        is_dir = os.path.isdir(local_input)
+        
+        # 2. 輸入目標路徑 (如果是文件夾，則作為根目錄前綴)
+        remote_input = input("👉 輸入目標路徑 [默認=/]: ").strip().replace("\\", "/")
+        if not remote_input:
+            remote_input = "/"
+        
+        # 3. 掃描文件
+        files_to_upload = []
+        if is_dir:
+            base_dir = os.path.abspath(local_input)
+            print(f"\n🔍 掃描 {local_input}...")
+            for root, dirs, files in os.walk(base_dir):
+                if "__pycache__" in root: continue
+                for file in files:
+                    if file.endswith(".pyc"): continue
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, base_dir)
+                    # 構造遠端路徑: 目標路徑/相對路徑
+                    remote_path = os.path.join(remote_input, rel_path).replace("\\", "/")
+                    # 確保路徑以 / 開頭且無雙斜槓
+                    if not remote_path.startswith("/"):
+                        remote_path = "/" + remote_path
+                    remote_path = remote_path.replace("//", "/")
+                    files_to_upload.append((full_path, remote_path))
+        else:
+            # 單個文件
+            filename = os.path.basename(local_input)
+            # 如果目標路徑以 / 結尾，視為目錄
+            if remote_input.endswith("/"):
+                remote_path = remote_input + filename
+            else:
+                remote_path = remote_input
+                
+            if not remote_path.startswith("/"):
+                remote_path = "/" + remote_path
+            remote_path = remote_path.replace("//", "/")
+            files_to_upload.append((local_input, remote_path))
+            
+        if not files_to_upload:
+            print("❌ 無有效文件")
+            return
+            
+        print(f"\n📦 將上傳 {len(files_to_upload)} 個文件:")
+        files_to_upload.sort(key=lambda x: x[1])
+        for _, r in files_to_upload:
+            print(f"  - {r}")
+            
+        confirm = input("\n👉 確認上傳? (y/n): ").lower()
+        if confirm != 'y':
+            return
+            
+        self.panel.start()
+        
+        # Reset Status
+        for tid in self.selected_targets:
+            self.panel.update_device(tid, status="準備中", upload_progress=0)
+            
+        max_workers = self.config.get("max_workers", 10)
+        
+        # Helper for thread pool (復用 _update_firmware_files 的邏輯結構)
+        def _task(tid):
+            try:
+                for i, (l_path, r_path) in enumerate(files_to_upload):
+                    retry_count = 0
+                    while retry_count < 3:
+                        try:
+                            self._upload_generic_file(tid, l_path, r_path, i+1, len(files_to_upload))
+                            break
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count >= 3:
+                                raise e
+                            self.panel.update_device(tid, status=f"Retry {retry_count} {r_path[:10]}...")
+                            time.sleep(1)
+                            
+                self.panel.update_device(tid, status="完成", upload_progress=100)
+            except Exception as e:
+                self.panel.update_device(tid, status="錯誤", error_msg=str(e))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_task, tid): tid for tid in self.selected_targets}
+            for f in futures:
+                f.result()
+                
+        time.sleep(1)
+        print("\n✅ 手動上傳完成")
 
     def _update_firmware_files(self):
         slave_dir = os.path.join(PROJECT_ROOT, "slave")
@@ -910,10 +1052,64 @@ class NetBusMaster:
                 files_to_upload.append((full_path, remote_path))
                 
         print(f"📦 找到 {len(files_to_upload)} 個文件:")
-        for _, r in files_to_upload[:5]:
-            print(f"  - {r}")
-        if len(files_to_upload) > 5:
-            print(f"  ... 以及其他 {len(files_to_upload)-5} 個")
+        
+        # 使用 Tree 格式顯示
+        # 1. 構建目錄樹結構
+        tree = {}
+        for _, remote_path in files_to_upload:
+            parts = remote_path.strip('/').split('/')
+            current = tree
+            for part in parts:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+        
+        # 2. 遞歸打印樹
+        def print_tree(node, prefix=""):
+            # 分離文件和目錄
+            # 這裡簡單假設沒有子節點的就是文件
+            # 但其實上面構建時，文件也是空字典，所以需要區分
+            # 更好的方法是遍歷 files_to_upload 來標記文件
+            
+            # 重新構建帶標記的樹
+            # node: {name: {children..., __is_file__: bool}}
+            
+            # 分組：文件在前，文件夾在後 (或相反，根據用戶喜好)
+            # 這裡我們讓文件夾在前，文件在後，類似 VS Code 資源管理器
+            keys = sorted(node.keys())
+            folders = [k for k in keys if k != "__is_file__" and not node[k].get("__is_file__", False)]
+            files = [k for k in keys if k != "__is_file__" and node[k].get("__is_file__", False)]
+            
+            sorted_keys = folders + files
+            
+            for i, key in enumerate(sorted_keys):
+                is_last = (i == len(sorted_keys) - 1)
+                connector = "└── " if is_last else "├── "
+                
+                is_file = node[key].get("__is_file__", False)
+                icon = "📄" if is_file else "📁"
+                
+                print(f"{prefix}{connector}{icon} {key}")
+                
+                child_prefix = prefix + ("    " if is_last else "│   ")
+                if not is_file:
+                    print_tree(node[key], child_prefix)
+
+        # Re-build tree with file markers
+        tree_marked = {}
+        for _, remote_path in files_to_upload:
+            parts = remote_path.strip('/').split('/')
+            current = tree_marked
+            for i, part in enumerate(parts):
+                if part not in current:
+                    current[part] = {}
+                
+                if i == len(parts) - 1:
+                    current[part]["__is_file__"] = True
+                
+                current = current[part]
+                
+        print_tree(tree_marked)
             
         confirm = input("\n👉 確認上傳到所有選定設備? (y/n): ").lower()
         if confirm != 'y':
@@ -931,7 +1127,18 @@ class NetBusMaster:
         def _task(tid):
             try:
                 for i, (l_path, r_path) in enumerate(files_to_upload):
-                    self._upload_generic_file(tid, l_path, r_path, i+1, len(files_to_upload))
+                    retry_count = 0
+                    while retry_count < 3:
+                        try:
+                            self._upload_generic_file(tid, l_path, r_path, i+1, len(files_to_upload))
+                            break
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count >= 3:
+                                raise e
+                            self.panel.update_device(tid, status=f"Retry {retry_count} {r_path[:10]}...")
+                            time.sleep(1)
+                            
                 self.panel.update_device(tid, status="完成", upload_progress=100)
             except Exception as e:
                 self.panel.update_device(tid, status="錯誤", error_msg=str(e))
@@ -1070,6 +1277,48 @@ class NetBusMaster:
                 
         print("\n✅ Config 更新完成")
         time.sleep(1)
+        
+    def _delete_file(self):
+        remote_path = input("\n👉 輸入要刪除的文件/目錄路徑 (e.g. /app.py): ").strip()
+        if not remote_path:
+            return
+            
+        if not remote_path.startswith("/"):
+            remote_path = "/" + remote_path
+            
+        confirm = input(f"⚠️ 確認刪除 {len(self.selected_targets)} 個設備上的 '{remote_path}'? (y/n): ").lower()
+        if confirm != 'y':
+            return
+            
+        print("\n🗑️ 開始刪除...")
+        
+        for tid in self.selected_targets:
+            node = self.slaves.get(tid)
+            if not node:
+                print(f"  ❌ {tid}: 離線")
+                continue
+                
+            try:
+                # Reset Query State
+                node["query_event"].clear()
+                node["remote_exists"] = 1 # 默認假設存在，等待更新
+                
+                # Send Delete (0x2009)
+                self.send_pkt([tid], 0x2009, {"path": remote_path})
+                
+                # Wait for Query Response (0x2006)
+                if node["query_event"].wait(timeout=3.0):
+                    if node["remote_exists"] == 0:
+                        print(f"  ✅ {tid}: 刪除成功 (或已不存在)")
+                    else:
+                        print(f"  ⚠️ {tid}: 刪除失敗 (文件仍存在)")
+                else:
+                    print(f"  ⚠️ {tid}: 無回應")
+                    
+            except Exception as e:
+                print(f"  ❌ {tid}: {e}")
+                
+        input("\n按 Enter 返回...")
 
     # ==================== New Step 1: 掃描與選擇 ====================
     def scan_devices(self):
