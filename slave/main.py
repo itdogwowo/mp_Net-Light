@@ -6,9 +6,12 @@ from lib.buffer_hub import AtomicStreamHub
 import Core0_worker
 import Core1_engine
 from apa102 import APA102
-
+from lib.fs_manager import fs
 
 def launcher():
+    print(f"📂 [FS] Initializing File System Manager...")
+    # fs 已經在導入時自動初始化 (load manifest or scan)
+    
     st_LED = bus.get_service("st_LED")
     
     # 2. 總線與 ID

@@ -820,22 +820,25 @@ class NetBusMaster:
             return
 
         print("\n🔧 [Step 0] 固件更新流程")
-        print("  0. 手動上傳文件 (自定義路徑)")
-        print("  1. 上傳固件 (mp_Net-Light/slave -> MCU)")
-        print("  2. 修改 Config (下載 -> 編輯 -> 上傳)")
-        print("  3. 刪除文件 (輸入路徑)")
+        print("  0. 文件管理器 (上傳/下載/瀏覽)")
+        print("  1. 固件全量更新 (批量上傳 slave 目錄)")
+        print("  2. Config 編輯器")
+        print("  3. 刪除文件")
+        print("  4. 重建文件索引 (Scan)")
         print("  q. 返回")
         
         choice = input("\n👉 請選擇: ").strip().lower()
         
         if choice == '0':
-            self._manual_upload()
+            self._file_explorer()
         elif choice == '1':
             self._update_firmware_files()
         elif choice == '2':
             self._modify_config()
         elif choice == '3':
             self._delete_file()
+        elif choice == '4':
+            self._scan_files()
         elif choice == 'q':
             self.panel.start()
             return
@@ -935,11 +938,43 @@ class NetBusMaster:
         else:
             raise Exception("Validation Timeout (No 0x2006 response)")
 
-    def _manual_upload(self):
-        print("\n📂 [手動上傳]")
+    def _file_explorer(self):
+        while True:
+            print("\n📂 [文件管理器]")
+            print("  1. 上傳文件 (Upload)")
+            print("  2. 下載文件 (Download)")
+            print("  q. 返回")
+            
+            choice = input("\n👉 請選擇: ").strip().lower()
+            if choice == '1':
+                self._fe_upload()
+            elif choice == '2':
+                self._fe_download()
+            elif choice == 'q':
+                return
+
+    def _fe_upload(self):
+        print("\n📤 [手動上傳]")
         
         # 1. 輸入本地路徑 (支持文件或文件夾)
-        local_input = input("👉 輸入本地文件/文件夾路徑: ").strip().strip('"').strip("'")
+        # 提供默認選項：列出當前目錄
+        cwd = os.getcwd()
+        print(f"當前目錄: {cwd}")
+        files = [f for f in os.listdir(cwd) if os.path.isfile(f) and not f.startswith('.')]
+        dirs = [d for d in os.listdir(cwd) if os.path.isdir(d) and not d.startswith('.')]
+        
+        print("\n[本地文件]")
+        for i, f in enumerate(files[:10]):
+            print(f"  {i+1}. {f}")
+        if len(files) > 10: print("  ...")
+        
+        local_input = input("\n👉 輸入路徑 (或 '0' 自定義輸入): ").strip().strip('"').strip("'")
+        
+        if local_input == '0':
+            local_input = input("👉 輸入完整路徑: ").strip().strip('"').strip("'")
+        elif local_input.isdigit() and int(local_input) > 0 and int(local_input) <= len(files):
+            local_input = os.path.abspath(files[int(local_input)-1])
+            
         if not os.path.exists(local_input):
             print("❌ 路徑不存在")
             return
@@ -1004,7 +1039,7 @@ class NetBusMaster:
             
         max_workers = self.config.get("max_workers", 10)
         
-        # Helper for thread pool (復用 _update_firmware_files 的邏輯結構)
+        # Helper for thread pool
         def _task(tid):
             try:
                 for i, (l_path, r_path) in enumerate(files_to_upload):
@@ -1031,6 +1066,140 @@ class NetBusMaster:
                 
         time.sleep(1)
         print("\n✅ 手動上傳完成")
+        self.panel.stop()
+        ConsoleUI.show_cursor()
+
+    def _fe_download(self):
+        target = self.selected_targets[0]
+        print(f"\n📥 [下載模式] 連接設備: {target}")
+        
+        node = self.slaves.get(target)
+        if not node:
+            print("❌ 設備離線")
+            return
+
+        # 1. 獲取 Manifest
+        print("  正在獲取文件列表 (manifest.json)...")
+        # Reuse logic to download manifest content
+        node["query_event"].clear()
+        node["remote_size"] = 0
+        self.send_pkt([target], 0x2005, {"path": "/manifest.json"})
+        if not node["query_event"].wait(timeout=3.0):
+            print("⚠️ 無法獲取 manifest (可能需要先執行 Scan)")
+            return
+            
+        size = node["remote_size"]
+        if size == 0:
+            print("⚠️ Manifest 為空")
+            return
+            
+        # Download Manifest content
+        config_data = bytearray()
+        chunk_size = 1024
+        offset = 0
+        while offset < size:
+            node["read_event"].clear()
+            node["read_data"] = None
+            self.send_pkt([target], 0x2007, {"path": "/manifest.json", "offset": offset, "length": chunk_size})
+            if not node["read_event"].wait(timeout=5.0): break
+            chunk = node["read_data"]
+            if not chunk: break
+            config_data.extend(chunk)
+            offset += len(chunk)
+            
+        try:
+            manifest = json.loads(config_data.decode('utf-8'))
+        except:
+            print("❌ Manifest 解析失敗")
+            return
+            
+        # 2. 顯示文件樹
+        paths = sorted(manifest.keys())
+        print(f"\n📄 遠端文件 ({len(paths)} 個):")
+        for i, p in enumerate(paths):
+            info = manifest[p]
+            size_kb = info['s'] / 1024
+            print(f"  {i+1}. {p:<40} | {size_kb:>6.1f} KB")
+            
+        # 3. 選擇下載
+        dl_choice = input("\n👉 輸入序號下載單個文件，或輸入 'all' 下載全部: ").strip().lower()
+        
+        files_to_download = []
+        if dl_choice == 'all':
+            files_to_download = paths
+        elif dl_choice.isdigit():
+            idx = int(dl_choice) - 1
+            if 0 <= idx < len(paths):
+                files_to_download = [paths[idx]]
+        else:
+            # 嘗試匹配路徑
+            if dl_choice in paths:
+                files_to_download = [dl_choice]
+        
+        if not files_to_download:
+            return
+            
+        # 下載目錄
+        save_dir = os.path.join(os.getcwd(), "download", target.replace(":", "_"))
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            
+        print(f"\n📂 保存至: {save_dir}")
+        self.panel.start()
+        
+        # 執行下載
+        total_files = len(files_to_download)
+        for i, r_path in enumerate(files_to_download):
+            l_path = os.path.join(save_dir, r_path.lstrip("/"))
+            # Ensure dir
+            os.makedirs(os.path.dirname(l_path), exist_ok=True)
+            
+            # Update Panel
+            self.panel.update_device(target, status=f"下載 {i+1}/{total_files}", upload_progress=0)
+            
+            # Get Size from manifest
+            f_size = manifest[r_path]['s']
+            
+            with open(l_path, "wb") as f:
+                offset = 0
+                start_time = time.time()
+                while offset < f_size:
+                    node["read_event"].clear()
+                    node["read_data"] = None
+                    # Request chunk
+                    chunk_req = 1024 # 下載時可以大一點
+                    self.send_pkt([target], 0x2007, {"path": r_path, "offset": offset, "length": chunk_req})
+                    
+                    if not node["read_event"].wait(timeout=5.0):
+                        print(f"\n❌ Timeout {r_path}")
+                        break
+                        
+                    chunk = node["read_data"]
+                    if not chunk: break
+                    
+                    f.write(chunk)
+                    offset += len(chunk)
+                    
+                    # Progress
+                    progress = (offset / f_size) * 100 if f_size > 0 else 100
+                    elapsed = time.time() - start_time
+                    speed = (offset / 1024) / elapsed if elapsed > 0 else 0
+                    
+                    self.panel.update_device(
+                        target, 
+                        status=f"下載 {i+1}/{total_files}", 
+                        upload_progress=progress,
+                        upload_speed=speed,
+                        uploaded_bytes=offset,
+                        total_bytes=f_size
+                    )
+                    
+        self.panel.update_device(target, status="下載完成", upload_progress=100)
+        time.sleep(1)
+        self.panel.stop()
+        ConsoleUI.show_cursor()
+        print("\n✅ 所有下載完成")
+        input("按 Enter 返回...")
 
     def _update_firmware_files(self):
         slave_dir = os.path.join(PROJECT_ROOT, "slave")
@@ -1318,6 +1487,87 @@ class NetBusMaster:
             except Exception as e:
                 print(f"  ❌ {tid}: {e}")
                 
+        input("\n按 Enter 返回...")
+        
+    def _scan_files(self):
+        print("\n🔄 向所有設備發送全盤掃描指令...")
+        
+        for tid in self.selected_targets:
+            try:
+                self.send_pkt([tid], 0x200B, {})
+                print(f"  ✅ {tid}: 指令已發送")
+            except Exception as e:
+                print(f"  ❌ {tid}: {e}")
+                
+        print("\nℹ️ 掃描將在後台進行，這可能需要幾秒鐘。")
+        input("\n按 Enter 返回...")
+
+    def _view_manifest(self):
+        target = self.selected_targets[0]
+        print(f"\n📥 從 {target} 下載 manifest.json...")
+        
+        node = self.slaves.get(target)
+        if not node:
+            print("❌ 設備離線")
+            return
+
+        # 1. Query Size
+        node["query_event"].clear()
+        node["remote_size"] = 0
+        self.send_pkt([target], 0x2005, {"path": "/manifest.json"})
+        if not node["query_event"].wait(timeout=3.0):
+            print("⚠️ 查詢超時 (Manifest 可能不存在)")
+            return
+            
+        size = node["remote_size"]
+        print(f"  Remote Size: {size} bytes")
+        
+        if size == 0:
+            print("⚠️ 文件為空")
+            return
+
+        # 2. Download Loop
+        config_data = bytearray()
+        chunk_size = 1024
+        offset = 0
+        
+        while offset < size:
+            node["read_event"].clear()
+            node["read_data"] = None
+            
+            self.send_pkt([target], 0x2007, {
+                "path": "/manifest.json",
+                "offset": offset,
+                "length": chunk_size
+            })
+            
+            if not node["read_event"].wait(timeout=5.0):
+                print(f"❌ 下載超時 at offset {offset}")
+                return
+                
+            chunk = node["read_data"]
+            if not chunk: break
+                
+            config_data.extend(chunk)
+            offset += len(chunk)
+            print(f"  Downloading... {offset}/{size} bytes", end='\r')
+            
+        print("\n✅ 下載完成")
+        
+        try:
+            # Decode and Print
+            json_str = config_data.decode('utf-8')
+            # 嘗試格式化顯示 (雖然它已經是格式化過的，但為了保險)
+            try:
+                obj = json.loads(json_str)
+                print("\n📜 [Manifest Content]")
+                print(json.dumps(obj, indent=2)) # 強制重新格式化以確保可讀性
+            except:
+                print("\n📜 [Raw Content]")
+                print(json_str)
+        except Exception as e:
+            print(f"❌ 解析失敗: {e}")
+            
         input("\n按 Enter 返回...")
 
     # ==================== New Step 1: 掃描與選擇 ====================

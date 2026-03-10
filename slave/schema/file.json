@@ -120,6 +120,7 @@
           "type": "u16"
         }
       ]
+    },
     {
       "cmd": "0x2009",
       "name": "FILE_DELETE",
@@ -129,6 +130,11 @@
           "type": "str_u16len"
         }
       ]
+    },
+    {
+      "cmd": "0x200B",
+      "name": "FILE_SCAN",
+      "payload": []
     }
   ]
 }

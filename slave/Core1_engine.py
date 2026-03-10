@@ -1,6 +1,7 @@
 # Core1_engine.py
 import time
 from lib.sys_bus import bus
+from lib.fs_manager import fs
 
 def task_loop(st_LED, fps=40):
     hub = None
@@ -27,6 +28,12 @@ def task_loop(st_LED, fps=40):
     print(f"🔥 [Core 1] Render Engine Online | {fps} FPS")
 
     while bus.shared.get("engine_run", True):
+        # 🚀 0. 系統任務檢查 (優先級最高，會阻塞渲染)
+        if bus.shared.get("fs_scan_requested"):
+            fs.perform_scan()
+            bus.shared["fs_scan_requested"] = False
+            next_tick_us = time.ticks_us() # 掃描完後重置時間基準
+            
         # 🚀 停止模式：關燈
         if not bus.shared.get("is_streaming"):
             if bus.shared.get("is_ready") == False:

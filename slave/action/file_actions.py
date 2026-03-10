@@ -2,18 +2,19 @@ from lib.proto import Proto
 from lib.schema_codec import SchemaCodec
 import ubinascii
 from lib.sys_bus import bus
+from lib.fs_manager import fs
+import _thread
 
 def on_file_begin(ctx, args):
-    app = ctx["app"]
     if args.get("path",False):
         args['path'] = bus.get_service("data_Phat") + args['path']
 
-    ok = app.file_rx.begin(args)
-    if ok: print(f"📂 [File] Start -> {app.file_rx.path}")
+    ok = fs.begin_write(args)
+    if ok: print(f"📂 [File] Start -> {fs.session['path']} (Atomic)")
 
 def on_file_chunk(ctx, args):
     app = ctx["app"]
-    if app.file_rx.chunk(args):
+    if fs.write_chunk(args):
         # 🚀 關鍵：每收到一包就回傳 ACK
         # 讓 PC 知道可以發下一包了
         if "send" in ctx:
@@ -25,31 +26,44 @@ def on_file_chunk(ctx, args):
             ctx["send"](Proto.pack(0x2004, ack_data))
     else:
         # ⚠️ 如果寫入失敗，打印原因方便調試
-        print(f"⚠️ [File] Chunk Failed: Off={args.get('offset')} Err={app.file_rx.last_error}")
+        print(f"⚠️ [File] Chunk Failed: Off={args.get('offset')} Err={fs.session['last_error']}")
 
 def on_file_end(ctx, args):
     app = ctx["app"]
-    # 執行校驗
-    ok = app.file_rx.end(args)
+    # 執行校驗 (內部會調用 fs.atomic_write_finalize)
+    ok = fs.end_write(args)
     
-    path = app.file_rx.path
-    sha = app.file_rx.last_sha_hex # 拿到剛才計算的 hex
+    path = fs.session["path"]
+    sha = fs.session["last_sha_hex"]
     
     if ok:
-        # 🚀 現代化、正式的結尾打印
         print("-" * 40)
         print(f"🏁 [File] End Success: {path}")
         print(f"🔒 [SHA256] {sha}")
         print("-" * 40)
 
         # 回覆最終狀態 (0x2006)
-        if "send" in ctx:
+        # 優先從 manifest 取值
+        if path in fs.manifest:
+            entry = fs.manifest[path]
+            size = entry["s"]
             try:
-                import os
+                sha_bytes = ubinascii.unhexlify(entry["h"])
+            except:
+                sha_bytes = b'\x00'*32
+        else:
+            # Fallback
+            import os
+            try:
                 st = os.stat(path)
                 size = st[6]
-                sha_bytes = ubinascii.unhexlify(sha)
+                sha_bytes = ubinascii.unhexlify(sha) if sha else b'\x00'*32
+            except:
+                size = 0
+                sha_bytes = b'\x00'*32
 
+        if "send" in ctx:
+            try:
                 rsp_def = app.store.get(0x2006)
                 rsp_data = SchemaCodec.encode(rsp_def, {
                     "exists": 1,
@@ -62,7 +76,7 @@ def on_file_end(ctx, args):
             except Exception as e:
                 print(f"⚠️ [File] Failed to send final SHA: {e}")
     else:
-        err = app.file_rx.last_error
+        err = fs.session['last_error']
         print(f"❌ [File] End Failed: {err}")
 
 def on_file_query(ctx, args):
@@ -73,18 +87,30 @@ def on_file_query(ctx, args):
     sha = b'\x00' * 32
     size = 0
     
-    # 檢查文件是否存在
-    try:
-        import os
-        # 使用 os.stat 檢查文件
-        st = os.stat(path)
+    # 優先查 Manifest
+    if path in fs.manifest:
+        entry = fs.manifest[path]
         exists = 1
-        size = st[6]
-        # 調用你現有的高性能流式校驗函數
-        sha = app.file_rx.sha256_digest_stream_from_file(path)
-        print(f"🔍 [Query] {path} exists, Size: {size}, SHA: {ubinascii.hexlify(sha).decode()[:8]}...")
-    except:
-        print(f"🔍 [Query] {path} not found.")
+        size = entry["s"]
+        try:
+            sha = ubinascii.unhexlify(entry["h"])
+            print(f"🔍 [Query] Cache Hit: {path} (Size:{size})")
+        except:
+            pass 
+    else:
+        # Cache Miss: 實時檢查
+        try:
+            import os
+            st = os.stat(path)
+            exists = 1
+            size = st[6]
+            # 實時計算
+            sha_hex = fs.calc_sha256(path)
+            if sha_hex:
+                sha = ubinascii.unhexlify(sha_hex)
+            print(f"🔍 [Query] Realtime: {path} (Size:{size})")
+        except:
+            print(f"🔍 [Query] {path} not found.")
 
     # 回傳結果
     if "send" in ctx:
@@ -141,26 +167,18 @@ def on_file_delete(ctx, args):
     
     full_path = bus.get_service("data_Phat") + path
     
-    import os
-    try:
-        # 嘗試判斷類型，優先當文件刪除
-        try:
-            st = os.stat(full_path)
-            mode = st[0]
-            if (mode & 0o170000) == 0o040000: # Directory
-                os.rmdir(full_path)
-                print(f"🗑️ [Delete] Directory removed: {path}")
-            else: # File
-                os.remove(full_path)
-                print(f"🗑️ [Delete] File removed: {path}")
-        except OSError as e:
-            print(f"⚠️ [Delete] Stat/Remove failed: {e}")
-            
-    except Exception as e:
-        print(f"❌ [Delete] Unexpected error: {e}")
-        
-    # 操作後查詢狀態並回傳 (復用 on_file_query 邏輯)
+    # 使用 FS Manager 刪除
+    fs.delete_file(full_path)
+    
+    # 操作後查詢狀態並回傳
     on_file_query(ctx, {"path": path})
+
+def on_file_scan(ctx, args):
+    """
+    手動觸發全盤掃描
+    """
+    print("🔄 [File] Manual Scan Requested")
+    _thread.start_new_thread(fs.scan_all, ())
 
 def register(app):
     app.disp.on(0x2001, on_file_begin)
@@ -169,3 +187,4 @@ def register(app):
     app.disp.on(0x2005, on_file_query)
     app.disp.on(0x2007, on_file_read)
     app.disp.on(0x2009, on_file_delete)
+    app.disp.on(0x200B, on_file_scan)

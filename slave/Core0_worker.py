@@ -4,6 +4,7 @@ from lib.sys_bus import bus
 from lib.net_bus import NetBus
 from action.sys_actions import on_connect_request
 from lib.network_manager import NetworkManager
+from lib.fs_manager import fs
 
 def task_loop(app):
     # 初始化網路狀態追蹤器
@@ -40,6 +41,10 @@ def task_loop(app):
 
     print("🚀 [Core 0] Data Router Active")
     while bus.shared.get("engine_run", True):
+        # 0. 系統任務：處理 Core 1 轉交的 Flash 寫入任務
+        if bus.shared.get("fs_scan_done"):
+            fs.finalize_scan()
+
         # 1. 網路守護：確保底層網路可用
         # 同步 ctrl_bus 狀態到 bus.shared 供 NetworkManager 參考
         # 邏輯: 只要 (WebSocket 連接) OR (手動 Keep-Alive) 為真，則視為 App 連接中

@@ -2,7 +2,7 @@
 from lib.schema_loader import SchemaStore
 from lib.dispatch import Dispatcher
 from lib.proto import StreamParser
-from lib.file_rx import FileRx
+# from lib.file_rx import FileRx # 已移除
 from action.registry import register_all
 from lib.sys_bus import bus
 
@@ -14,8 +14,8 @@ class App:
         self.disp = Dispatcher(self.store)
         
         # 統一緩衝區管理
-        buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
-        self.file_rx = FileRx(buf_size=buf_size)
+        # buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
+        # self.file_rx = FileRx(buf_size=buf_size) # 已移除
    
         # 3. 註冊行為
         register_all(self)
