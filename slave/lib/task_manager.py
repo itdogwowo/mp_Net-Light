@@ -139,24 +139,23 @@ class TaskManager:
 
             # 3. Performance Monitoring
             loop_count += 1
-            if loop_count >= 1000:
-                now = time.ticks_ms()
-                duration = time.ticks_diff(now, start_time)
+            now = time.ticks_ms()
+            duration = time.ticks_diff(now, start_time)
+            
+            if duration >= 2000: # Report every 2 seconds
                 # Avoid division by zero
-                if duration > 0:
-                    avg_time_ms = duration / 1000.0
-                    # Store in shared memory for WebUI or others to see
-                    # Note: updating shared dict in place is not atomic, but dict reassignment is better
-                    # But here we modify key.
-                    # It's better to fetch, update, set.
-                    # However, bus.shared is a dict.
+                if loop_count > 0:
+                    avg_time_ms = duration / loop_count
+                    
+                    # Store in shared memory
                     try:
                         bus.shared["perf"][f"core{core_id}_loop_ms"] = avg_time_ms
+                        bus.shared["perf"][f"core{core_id}_loops_per_sec"] = (loop_count * 1000) / duration
                     except:
-                        # In case "perf" was deleted
-                        bus.shared["perf"] = {f"core{core_id}_loop_ms": avg_time_ms}
-
-                    # print(f"📊 [Core {core_id}] Loop Time: {avg_time_ms:.3f} ms")
+                        bus.shared["perf"] = {
+                            f"core{core_id}_loop_ms": avg_time_ms,
+                            f"core{core_id}_loops_per_sec": (loop_count * 1000) / duration
+                        }
                 
                 loop_count = 0
                 start_time = now

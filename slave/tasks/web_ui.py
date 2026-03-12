@@ -118,8 +118,8 @@ pre { background: #333; padding: 10px; }
 <body>
 <h1>Net-Light Control</h1>
 <p>Status: <span id="status">Online</span></p>
-<p>Core 0 Loop: <span id="perf0">...</span> ms</p>
-<p>Core 1 Loop: <span id="perf1">...</span> ms</p>
+<p>Core 0: <span id="perf0">...</span> ms/loop (<span id="hz0">...</span> Hz)</p>
+<p>Core 1: <span id="perf1">...</span> ms/loop (<span id="hz1">...</span> Hz)</p>
 
 <h3>Test Controls</h3>
 <button class="green" onclick="cmd(0x1101, {'query_type':1})">Get Status</button>
@@ -153,7 +153,10 @@ function refresh_perf() {
     .then(r=>r.json())
     .then(d => {
         if(d.core0_loop_ms) document.getElementById('perf0').innerText = d.core0_loop_ms.toFixed(3);
+        if(d.core0_loops_per_sec) document.getElementById('hz0').innerText = d.core0_loops_per_sec.toFixed(1);
+        
         if(d.core1_loop_ms) document.getElementById('perf1').innerText = d.core1_loop_ms.toFixed(3);
+        if(d.core1_loops_per_sec) document.getElementById('hz1').innerText = d.core1_loops_per_sec.toFixed(1);
     });
 }
 // Auto refresh

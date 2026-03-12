@@ -106,7 +106,8 @@ class NetworkTask(Task):
         # Actually TaskManager loop doesn't sleep much if tasks are active, so we should sleep here
         # or rely on TaskManager.
         # Core0_worker had: time.sleep_ms(bus_sys.get("refresh_rate_ms", 1))
-        time.sleep_ms(bus_sys.get("refresh_rate_ms", 1))
+        # User requested no wait time in loop, so we remove sleep.
+        pass
 
     def on_stop(self):
         super().on_stop()

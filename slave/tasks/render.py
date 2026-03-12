@@ -57,27 +57,34 @@ class RenderTask(Task):
         if not bus.shared.get("is_streaming"):
             if bus.shared.get("is_ready") == False:
                 # Clear buffer
-                # self.st_LED.big_buffer[:] = bytearray(self.frame_size) 
                 # Optimization: Create bytearray once? Or just fill with 0
                 # Using existing buffer clear might be faster
                 for i in range(len(self.st_LED.big_buffer)):
                     self.st_LED.big_buffer[i] = 0
                 self.st_LED.show_all()
             
-            time.sleep_ms(100)
-            self.next_tick_us = time.ticks_us()
+            # Non-blocking throttle for Stop mode
+            if time.ticks_diff(time.ticks_us(), self.next_tick_us) < 0:
+                return
+            
+            self.next_tick_us = time.ticks_add(time.ticks_us(), 100000) # 100ms
             self._render_count = 0
             return
 
         # Pause Mode
         if bus.shared.get("is_paused"):
-            time.sleep_ms(50)
-            self.next_tick_us = time.ticks_us()
+            if time.ticks_diff(time.ticks_us(), self.next_tick_us) < 0:
+                return
+            self.next_tick_us = time.ticks_add(time.ticks_us(), 50000) # 50ms
             self._render_count = 0
             return
 
         # Play Mode
         now = time.ticks_us()
+        # Initialize next_tick_us if it's way off (e.g. after mode switch)
+        if time.ticks_diff(now, self.next_tick_us) > 200000: # 200ms lag
+             self.next_tick_us = now
+        
         if time.ticks_diff(now, self.next_tick_us) >= 0:
             # Check buffer availability
             if self.current_big_buffer is None or self.buff_offset + self.frame_size > len(self.current_big_buffer):
@@ -86,7 +93,6 @@ class RenderTask(Task):
                 
             if self.current_big_buffer:
                 # Fast copy
-                # self.raw_view[:] = self.current_big_buffer[self.buff_offset : self.buff_offset + self.frame_size]
                 # Use memoryview assignment for speed
                 end = self.buff_offset + self.frame_size
                 self.raw_view[:] = self.current_big_buffer[self.buff_offset : end]
@@ -97,8 +103,8 @@ class RenderTask(Task):
             
             self.next_tick_us += self.interval_us
         else:
-            # Yield short time
-            time.sleep_us(500)
+            # Yield (no sleep, just return to let TaskManager run other tasks)
+            return
 
     def on_stop(self):
         super().on_stop()
