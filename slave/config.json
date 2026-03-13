@@ -11,6 +11,13 @@
         "num_leds": 336,
         "buffer_frames": 1
     },
+    "test_mode": {
+        "enable": 0,
+        "test_pattern": 1,
+        "test_level": 64,
+        "test_segment": 16,
+        "test_speed": 1
+    },
     "Buffer": {
         "size": 4096
     },
@@ -50,7 +57,7 @@
             {
                 "id": 1,
                 "baudrate": 9600,
-                "GPIO": { "tx": 43, "rx": 44 },
+                "GPIO": { "tx": 43, "rx": 44 }
             }
         ]
     },
@@ -58,7 +65,7 @@
         "enable": 1,
         "list": [
             {
-                "id"1,
+                "id": 1,
                 "freq": 400000,
                 "GPIO":{"scl":20,"sda":21}
             }
@@ -68,7 +75,7 @@
         "enable": 1,
         "list": [
             {
-                "id"1,
+                "id": 1,
                 "baudrate": 8000000,
                 "phase":1,
                 "polarity":1,
@@ -94,7 +101,7 @@
     "PWM": {
         "enable": 0,
         "list": [
-            {"GPIO":0,"dArc":0,"type":0},
+            {"GPIO":0,"dArc":0,"type":0}
         ]
     },
     "WS2812": {
@@ -102,15 +109,13 @@
         "list": [
             {"GPIO":15,"Q":10,"order":"GRB"},
             {"GPIO":16,"Q":10,"order":"GRB"},
-            {"GPIO":17,"Q":10,"order":"GRB"},
-
+            {"GPIO":17,"Q":10,"order":"GRB"}
         ]
     },
     "APA102": {
         "enable": 1,
         "list": [
-            {"GPIO":{"spi":0 },"Q":290,"order":"BGRW"},
-
+            {"GPIO":{"spi":0 },"Q":290,"order":"BGRW"}
         ]
     }
 }

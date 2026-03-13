@@ -17,6 +17,7 @@ DEFAULT_CONFIG = {
     "mapping": {},
     "ws_port": 8000,
     "upt_port": 9000,
+    "discovery_offline_s": 5,
     "deploy_timeout": 120,
     "max_workers": 50
 }
@@ -535,6 +536,8 @@ class NetBusMaster:
         self.panel = MonitorPanel()
         self.device_manager = DeviceManager(self.panel)
         self.slaves = self.device_manager.slaves  # 兼容舊代碼，指向 Manager 的字典
+        self.discovered = {}
+        self.discovery_lock = threading.Lock()
         
         self.running = True
         self.local_ip = self.get_local_ip()
@@ -553,6 +556,8 @@ class NetBusMaster:
         self.pxld_metadata = {}
         
         threading.Thread(target=self.start_ws_server, daemon=True).start()
+        threading.Thread(target=self.start_udp_listener, daemon=True).start()
+        threading.Thread(target=self._udp_offline_loop, daemon=True).start()
     
     def load_config(self):
         """載入配置，支持熱更新，並自動補全缺失的默認值"""
@@ -629,6 +634,97 @@ class NetBusMaster:
                 threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True).start()
             except:
                 break
+
+    def start_udp_listener(self):
+        udp_port = int(self.config.get("upt_port", 9000) or 9000)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", udp_port))
+        sock.settimeout(1.0)
+        parser = StreamParser()
+        while self.running:
+            try:
+                data, addr = sock.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+            try:
+                parser.feed(data)
+                for ver, p_addr, cmd, payload in parser.pop():
+                    if cmd != 0x1002:
+                        continue
+                    c_def = self.store.get(0x1002)
+                    if not c_def:
+                        continue
+                    args = SchemaCodec.decode(c_def, payload)
+                    self._handle_slave_announce(addr, args)
+            except Exception:
+                continue
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    def _udp_offline_loop(self):
+        while self.running:
+            time.sleep(1.0)
+            try:
+                offline_s = float(self.config.get("discovery_offline_s", 5) or 5)
+            except Exception:
+                offline_s = 5.0
+            now = time.time()
+            with self.discovery_lock:
+                for sid, info in list(self.discovered.items()):
+                    if sid in self.slaves:
+                        continue
+                    last_seen = float(info.get("last_seen", 0) or 0)
+                    if now - last_seen > offline_s:
+                        info["online"] = False
+                        info["status_msg"] = "OFFLINE"
+                        self.panel.update_device(sid, status="離線")
+
+    def _handle_slave_announce(self, addr, args):
+        sid = args.get("slave_id")
+        if not sid:
+            return
+        ip = addr[0]
+
+        online = bool(args.get("online"))
+        status_msg = str(args.get("status_msg") or "")
+        flags = args.get("flags")
+        uptime_ms = args.get("uptime_ms")
+
+        play_id = self.config["mapping"].get(sid, {}).get("play_id")
+        total_frames = 0
+        if play_id is not None:
+            total_frames = self.pxld_metadata.get(play_id, {}).get("total_frames", 0)
+
+        self.panel.register_device(sid, play_id, total_frames)
+
+        status_map = {
+            "ONLINE": "在線",
+            "BOOTING": "啟動中",
+            "INIT": "初始化",
+            "FS_SCANNING": "掃描中",
+            "WAIT_CORE1": "等待核心1",
+            "WS_DISCONNECTED": "未連線",
+            "OFFLINE": "離線"
+        }
+        ui_status = status_map.get(status_msg, status_msg or ("在線" if online else "啟動中"))
+        if sid not in self.slaves:
+            self.panel.update_device(sid, status=ui_status)
+
+        with self.discovery_lock:
+            self.discovered[sid] = {
+                "slave_id": sid,
+                "ip": ip,
+                "online": online,
+                "flags": flags,
+                "uptime_ms": uptime_ms,
+                "status_msg": status_msg,
+                "last_seen": time.time()
+            }
     
     def handle_client(self, conn, addr):
         cid = f"PENDING_{addr[1]}"

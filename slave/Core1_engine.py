@@ -13,6 +13,7 @@ def task_loop(st_LED, fps=40):
     _state = {"render_count": 0}
     # 將計數器註冊到總線，命名為 render_fps
     bus.register_provider("render_fps", lambda: _state["render_count"])
+    bus.shared["core1_ready"] = True
     
     interval_us = (1000 // fps) * 1000
     next_tick_us = time.ticks_us()

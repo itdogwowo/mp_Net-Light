@@ -18,6 +18,10 @@ def launcher():
     bus.slave_id = ubinascii.hexlify(machine.unique_id()).decode().upper()
     bus.shared["engine_run"] = True
     bus_sys = bus.shared["System"]
+    test_cfg = bus.shared.get("test_mode") or {}
+    if test_cfg.get("enable") == 1 or test_cfg.get("enable") is True:
+        bus.shared.update({"is_streaming": True, "is_paused": False, "is_ready": True, "play_mode": 1})
+        print("🧪 [MODE] Test mode: auto playback enabled")
     # 3. 🚀 註冊核心交換服務 (不修改 lib，在此處申請)
     hub = AtomicStreamHub(st_LED.total_bytes * bus_sys["buffer_frames"]) 
     bus.register_service("pixel_stream", hub)
@@ -31,8 +35,6 @@ def launcher():
 
         # 4. 啟動雙核任務
         _thread.start_new_thread(Core1_engine.task_loop, (st_LED, bus_sys["local_fps"]))
-
-        print(f"✨ NetBus System Online: {bus.slave_id}")
         
         app = App()
         # 🚀 啟動核心 0：Data 路由處理 (主線程阻塞)

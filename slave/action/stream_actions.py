@@ -36,6 +36,31 @@ def on_stream_play(ctx, args):
 
 def handle_supply_chain(hub, s, ctx):
     """由 Core 0 定時調用，負責加載與 READY 回報"""
+    if bus.shared.get("is_streaming") and not bus.shared.get("is_paused"):
+        test_cfg = bus.shared.get("test_mode") or {}
+        if (test_cfg.get("enable") == 1 or test_cfg.get("enable") is True) and not bus.shared.get("active_file"):
+            if bus.shared.get("is_ready") is False:
+                bus.shared["is_ready"] = True
+            if not hub.dirty:
+                view = hub.get_write_view()
+                if view is not None:
+                    gen = s.get("test_gen")
+                    if gen is None:
+                        st = bus.get_service("st_LED")
+                        if st:
+                            from lib.test_buffer import make_test_pattern
+                            gen = make_test_pattern(st.total_bytes, test_cfg)
+                            s["test_gen"] = gen
+                    if gen:
+                        st = bus.get_service("st_LED")
+                        frame_size = st.total_bytes if st else len(view)
+                        ofs = 0
+                        while ofs + frame_size <= len(view):
+                            gen.write_into(view[ofs : ofs + frame_size])
+                            ofs += frame_size
+                        hub.commit()
+            return
+
     if bus.shared.get("is_seeking"):
         try:
             hub.flush()

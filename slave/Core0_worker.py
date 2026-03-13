@@ -9,6 +9,7 @@ from lib.fs_manager import fs
 def task_loop(app):
     # 初始化網路狀態追蹤器
     bus_sys = bus.shared["System"]
+    bus.shared["core0_ready"] = True
     
     nm = bus.get_service("network_manager")
     if not nm:
@@ -17,10 +18,78 @@ def task_loop(app):
         nm.init_from_config()
 
     lan = bus.get_service("lan") # 兼容舊代碼引用 (如果需要)
-    
-    ctrl_bus = NetBus(NetBus.TYPE_WS, app=app, label="CTRL-WS")
+
     discovery_bus = NetBus(NetBus.TYPE_UDP, app=app, label="UDP-DISCV")
     discovery_bus.connect(None, bus_sys["discovery_port"])
+
+    ctx_extra_pre = {
+        "app": app,
+        "ctrl_bus": None
+    }
+
+    def wait_boot_gate():
+        force_scan = False
+        try:
+            force_scan = bool(bus_sys.get("fs_force_scan_on_boot", False))
+        except Exception:
+            force_scan = False
+
+        try:
+            scan_timeout_s = int(bus_sys.get("fs_scan_timeout_s", 0))
+        except Exception:
+            scan_timeout_s = 0
+
+        if force_scan and not bus.shared.get("fs_scan_requested"):
+            bus.shared["fs_scan_requested"] = True
+        need_scan = bool(bus.shared.get("fs_scan_requested"))
+
+        last_log = time.ticks_ms()
+        while not bus.shared.get("core1_ready"):
+            if not bus.shared.get("engine_run", True):
+                return False
+            discovery_bus.poll(**ctx_extra_pre)
+            now = time.ticks_ms()
+            if time.ticks_diff(now, last_log) > 1000:
+                print("⏳ [BOOT] Waiting Core 1 ready...")
+                last_log = now
+            time.sleep_ms(20)
+
+        if not need_scan:
+            return True
+
+        print("⏳ [BOOT] FS scan required, waiting...")
+        start_ms = time.ticks_ms()
+        last_log = start_ms
+        while True:
+            if not bus.shared.get("engine_run", True):
+                return False
+            discovery_bus.poll(**ctx_extra_pre)
+            if bus.shared.get("fs_scan_done"):
+                fs.finalize_scan()
+                return True
+            now = time.ticks_ms()
+            if scan_timeout_s > 0 and time.ticks_diff(now, start_ms) > scan_timeout_s * 1000:
+                print("❌ [BOOT] FS scan timeout, continue without manifest refresh")
+                return True
+            if time.ticks_diff(now, last_log) > 1000:
+                print("⏳ [BOOT] FS scan running...")
+                last_log = now
+            time.sleep_ms(50)
+
+    if not wait_boot_gate():
+        return
+    bus.shared["system_online"] = True
+    print(f"✨ NetBus System Online: {bus.slave_id}")
+    
+    ctrl_bus = NetBus(NetBus.TYPE_WS, app=app, label="CTRL-WS")
+    pending_url = bus.shared.get("pending_connect_url")
+    if pending_url and not ctrl_bus.connected:
+        try:
+            if on_connect_request(ctrl_bus, pending_url):
+                print("✅ Auto-Connect Success (deferred)!")
+        except Exception as e:
+            print(f"⚠️ Deferred connect error: {e}")
+        bus.shared["pending_connect_url"] = None
 
     def on_connect_wrapper(url):
         # 嘗試連接並在成功時更新配置 (現在移至 sys_actions 處理)

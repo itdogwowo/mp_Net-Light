@@ -1,5 +1,6 @@
 # /action/sys_actions.py
 import machine, time
+import socket
 import gc
 import os
 from lib.proto import Proto
@@ -11,6 +12,13 @@ from lib.ConfigManager import cfg_manager
 CMD_DISCOVER = 0x1001
 CMD_ANNOUNCE = 0x1002
 CMD_SYS_INFO_GET = 0x1003
+
+FLAG_SYSTEM_ONLINE = 1 << 0
+FLAG_CORE0_READY = 1 << 1
+FLAG_CORE1_READY = 1 << 2
+FLAG_FS_READY = 1 << 3
+FLAG_WS_CONNECTED = 1 << 4
+FLAG_APP_CONNECTED = 1 << 5
 
 # --- 處理函數 (嚴格遵循 ctx, args 兩個參數) ---
 
@@ -76,16 +84,120 @@ def on_discover(ctx, args):
     ctx 應包含 app 及 ctrl_bus
     """
     ws_base = args.get("ws_url", "")
-    if not ws_base: return
-    
-    slave_id = "".join(f"{b:02X}" for b in machine.unique_id())
+    server_ip = args.get("server_ip", "")
+    if not ws_base:
+        return
+
+    slave_id = bus.slave_id
+    if not slave_id or slave_id == "UNKNOWN":
+        slave_id = "".join(f"{b:02X}" for b in machine.unique_id())
+        bus.slave_id = slave_id
+
     full_url = f"{ws_base.rstrip('/')}/{slave_id}"
-    
-    # 呼叫上面的重連函數
-    # 從 ctx 中獲取 ctrl_bus 實例
+    _send_slave_announce(ctx, server_ip, slave_id)
+
+    if bus.shared.get("system_online"):
+        ctrl_bus = ctx.get("ctrl_bus")
+        if ctrl_bus:
+            on_connect_request(ctrl_bus, full_url)
+        else:
+            bus.shared["pending_connect_url"] = full_url
+    else:
+        bus.shared["pending_connect_url"] = full_url
+
+def _ticks_ms():
+    try:
+        return time.ticks_ms()
+    except Exception:
+        return int(time.time() * 1000)
+
+def _uptime_ms():
+    try:
+        return int(time.ticks_ms())
+    except Exception:
+        return int(time.time() * 1000)
+
+def _build_online_snapshot(ctx):
+    flags = 0
+    system_online = bool(bus.shared.get("system_online", False))
+    core0_ready = bool(bus.shared.get("core0_ready", False))
+    core1_ready = bool(bus.shared.get("core1_ready", False))
+    fs_ready = not bool(bus.shared.get("fs_scan_requested", False)) and not bool(bus.shared.get("fs_scan_done", False))
     ctrl_bus = ctx.get("ctrl_bus")
-    if ctrl_bus:
-        on_connect_request(ctrl_bus, full_url)
+    ws_connected = bool(getattr(ctrl_bus, "connected", False)) if ctrl_bus else False
+    app_connected = bool(bus.shared.get("app_connected", False))
+
+    if system_online: flags |= FLAG_SYSTEM_ONLINE
+    if core0_ready: flags |= FLAG_CORE0_READY
+    if core1_ready: flags |= FLAG_CORE1_READY
+    if fs_ready: flags |= FLAG_FS_READY
+    if ws_connected: flags |= FLAG_WS_CONNECTED
+    if app_connected: flags |= FLAG_APP_CONNECTED
+
+    online = system_online and core0_ready and core1_ready and fs_ready
+    status_msg = "ONLINE" if online else ("BOOTING" if core0_ready or core1_ready else "INIT")
+    if system_online and not fs_ready:
+        status_msg = "FS_SCANNING"
+    if system_online and fs_ready and not core1_ready:
+        status_msg = "WAIT_CORE1"
+    if system_online and fs_ready and core1_ready and not ws_connected:
+        status_msg = "WS_DISCONNECTED"
+
+    return int(online), int(flags), int(_uptime_ms()), status_msg
+
+def _send_slave_announce(ctx, server_ip, slave_id):
+    if not server_ip:
+        return False
+
+    now_ms = _ticks_ms()
+    last_ms = bus.shared.get("announce_last_ms", -999999)
+    try:
+        if time.ticks_diff(now_ms, last_ms) < 300:
+            return True
+    except Exception:
+        if now_ms - last_ms < 300:
+            return True
+    bus.shared["announce_last_ms"] = now_ms
+
+    app = ctx.get("app")
+    if not app:
+        return False
+
+    cmd_def = app.store.get(CMD_ANNOUNCE)
+    if not cmd_def:
+        return False
+
+    sys_cfg = bus.shared.get("System", {}) or {}
+    pixel_count = int(sys_cfg.get("num_leds", 0) or 0) & 0xFFFF
+    hw_version = str(sys_cfg.get("hw_version", "unknown"))
+
+    online, flags, uptime_ms, status_msg = _build_online_snapshot(ctx)
+    payload = {
+        "slave_id": str(slave_id),
+        "pixel_count": pixel_count,
+        "hw_version": hw_version,
+        "online": online,
+        "flags": flags,
+        "uptime_ms": uptime_ms,
+        "status_msg": status_msg
+    }
+
+    try:
+        pkt = Proto.pack(cmd=CMD_ANNOUNCE, payload=SchemaCodec.encode(cmd_def, payload))
+    except Exception:
+        return False
+
+    port = int(sys_cfg.get("discovery_port", 9000) or 9000)
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.sendto(pkt, (server_ip, port))
+        finally:
+            s.close()
+        return True
+    except Exception:
+        return False
 
 def on_sys_info_get(ctx, args):
     """處理系統信息查詢 (0x1003)"""

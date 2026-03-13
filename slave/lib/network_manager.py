@@ -25,6 +25,11 @@ class NetworkManager:
         self.interfaces = {}  # {'lan': obj, 'wifi': obj}
         self.active_modes = {} # {'lan': 1, 'wifi': 2}
         self.boot_time = time.time()
+        self._boot_ip_report_enabled = True
+        self._boot_ip_report_done = False
+        self._boot_ip_report_delay_s = 0
+        self._boot_ip_report_timeout_s = 15
+        self._boot_ip_report_deadline = self.boot_time + self._boot_ip_report_timeout_s
         # 狀態追蹤
         self._state = {
             "connected_interfaces": set(), # 當前已連接的接口名稱集合
@@ -34,6 +39,16 @@ class NetworkManager:
     def init_from_config(self):
         """從 bus.shared 讀取配置並初始化"""
         net_cfg = self.bus.shared.get('Network', {})
+        ip_report_cfg = net_cfg.get('ip_report', {}) or {}
+        try:
+            self._boot_ip_report_enabled = bool(ip_report_cfg.get('enable', True))
+            self._boot_ip_report_delay_s = int(ip_report_cfg.get('delay_s', ip_report_cfg.get('delay', 0)))
+            self._boot_ip_report_timeout_s = int(ip_report_cfg.get('timeout_s', ip_report_cfg.get('timeout', 15)))
+        except Exception:
+            self._boot_ip_report_enabled = True
+            self._boot_ip_report_delay_s = 0
+            self._boot_ip_report_timeout_s = 15
+        self._boot_ip_report_deadline = self.boot_time + self._boot_ip_report_timeout_s
         
         # 1. 初始化 LAN
         lan_cfg = net_cfg.get('lan')
@@ -368,16 +383,99 @@ class NetworkManager:
 
         # 更新狀態
         self._state['connected_interfaces'] = current_connected
+        self._maybe_report_boot_ip(now)
         
         return bool(current_connected)
 
     def _on_interface_up(self, name, iface):
         """當接口連接成功時"""
+        if self._boot_ip_report_enabled and not self._boot_ip_report_done:
+            dprint(f"🌐 {name.upper()} 連接成功")
+            return
         try:
             cfg = iface.ifconfig()
             dprint(f"🌐 {name.upper()} 連接成功 | IP: {cfg[0]}")
         except:
             dprint(f"🌐 {name.upper()} 連接成功")
+
+    def _maybe_report_boot_ip(self, now):
+        if not self._boot_ip_report_enabled or self._boot_ip_report_done:
+            return
+        if now - self.boot_time < self._boot_ip_report_delay_s:
+            return
+
+        priority = self.bus.shared.get('Network', {}).get('priority', ['lan', 'wifi'])
+        names = []
+        for n in list(priority) + list(self.interfaces.keys()):
+            if n not in names:
+                names.append(n)
+
+        for name in names:
+            iface = self.interfaces.get(name)
+            if not iface:
+                continue
+
+            connected = False
+            try:
+                if hasattr(iface, 'isconnected'):
+                    connected = bool(iface.isconnected())
+                elif hasattr(iface, 'status'):
+                    connected = (iface.status() == 2)
+            except Exception:
+                connected = False
+
+            if not connected:
+                continue
+
+            try:
+                cfg = iface.ifconfig()
+                ip, mask, gw, dns = cfg[0], cfg[1], cfg[2], cfg[3]
+            except Exception:
+                continue
+
+            if ip and ip != "0.0.0.0":
+                dprint(f"📡 BOOT IP Report | {name.upper()}")
+                dprint(f"   IP      : {ip}")
+                dprint(f"   Mask    : {mask}")
+                dprint(f"   Gateway : {gw}")
+                dprint(f"   DNS     : {dns}")
+                self._boot_ip_report_done = True
+                return
+
+        if now < self._boot_ip_report_deadline:
+            return
+
+        if not self.interfaces:
+            dprint("❌ BOOT IP Report | 未初始化任何網絡接口")
+            self._boot_ip_report_done = True
+            return
+
+        dprint("❌ BOOT IP Report | 啟動後未獲取到有效 IP")
+        for name in names:
+            iface = self.interfaces.get(name)
+            if not iface:
+                continue
+            try:
+                active = bool(iface.active()) if hasattr(iface, 'active') else None
+            except Exception:
+                active = None
+            try:
+                if hasattr(iface, 'isconnected'):
+                    connected = bool(iface.isconnected())
+                elif hasattr(iface, 'status'):
+                    connected = (iface.status() == 2)
+                else:
+                    connected = False
+            except Exception:
+                connected = False
+            try:
+                cfg = iface.ifconfig()
+                ip = cfg[0] if cfg else None
+            except Exception:
+                ip = None
+            dprint(f"   - {name.upper():<4} | active={active} | connected={connected} | ip={ip}")
+
+        self._boot_ip_report_done = True
 
     def get_active_interface(self):
         """獲取當前首選的活躍接口 (根據優先級)"""
