@@ -2,9 +2,8 @@
 import machine, network, time, _thread, ubinascii
 from app import App
 from lib.sys_bus import bus
-from lib.buffer_hub import AtomicStreamHub
-import Core0_worker
-import Core1_engine
+from lib.task_manager import TaskManager
+from tasks import FSScanTask, RenderTask, NetworkTask, SupplyChainTask, HeartbeatTask
 from apa102 import APA102
 from lib.fs_manager import fs
 
@@ -22,23 +21,20 @@ def launcher():
     if test_cfg.get("enable") == 1 or test_cfg.get("enable") is True:
         bus.shared.update({"is_streaming": True, "is_paused": False, "is_ready": True, "play_mode": 1})
         print("🧪 [MODE] Test mode: auto playback enabled")
-    # 3. 🚀 註冊核心交換服務 (不修改 lib，在此處申請)
-    hub = AtomicStreamHub(st_LED.total_bytes * bus_sys["buffer_frames"]) 
-    bus.register_service("pixel_stream", hub)
 
-    
-    
-    
-    
 
     try:
 
-        # 4. 啟動雙核任務
-        _thread.start_new_thread(Core1_engine.task_loop, (st_LED, bus_sys["local_fps"]))
-        
         app = App()
-        # 🚀 啟動核心 0：Data 路由處理 (主線程阻塞)
-        Core0_worker.task_loop(app)
+        ctx = {"app": app, "bus": bus, "st_LED": st_LED, "bus_sys": bus_sys}
+        tm = TaskManager(ctx)
+        tm.register_task("network", NetworkTask, affinity=(1, 0))
+        tm.register_task("supply_chain", SupplyChainTask, affinity=(1, 0))
+        tm.register_task("heartbeat", HeartbeatTask, affinity=(1, 0))
+        tm.register_task("render", RenderTask, affinity=(0, 1))
+        tm.register_task("fs_scan", FSScanTask, affinity=(0, 1))
+        _thread.start_new_thread(tm.runner_loop, (1,))
+        tm.runner_loop(0)
 
     except KeyboardInterrupt:
         print("\n👋 User stop requested.")

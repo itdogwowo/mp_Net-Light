@@ -172,9 +172,9 @@ class NetworkManager:
             time.sleep(3.0) # Give it more time based on user feedback
             
             # Scan and list WiFi networks (with retry)
+            scan_res = []
             try:
                 dprint("🔍 掃描 WiFi 訊號中...")
-                scan_res = []
                 for i in range(3):
                     try:
                         scan_res = wlan.scan()
@@ -243,6 +243,17 @@ class NetworkManager:
                 dprint("✓ WiFi STA 接口已就緒")
             else:
                 # STA 失敗，切換到 AP 模式
+                if scan_res:
+                    dprint(f"   找到 {len(scan_res)} 個基地台:")
+                    scan_res.sort(key=lambda x: x[3], reverse=True)
+                    for info in scan_res:
+                        try:
+                            ssid2 = info[0].decode('utf-8')
+                            if not ssid2: ssid2 = "<Hidden>"
+                        except: ssid2 = "<Unknown>"
+                        rssi2 = info[3]
+                        auth2 = "OPEN" if info[4] == 0 else "SECURE"
+                        dprint(f"   - {ssid2:<25} RSSI: {rssi2} | {auth2}")
                 dprint("⚠️ STA 連接失敗，切換到 AP 模式...")
                 wlan.active(False) # 關閉 STA
                 self._start_ap_mode(config)
@@ -335,7 +346,6 @@ class NetworkManager:
                     # 對於 WiFi，我們需要知道是否有應用層連接 (WS) 正在使用它
                     # 但 NetworkManager 屬於底層，不應直接依賴上層狀態
                     # 因此這裡我們透過 bus.shared 獲取一個標誌位 "app_connected"
-                    # 這個標誌位應該由 Core0_worker 在 WS 連接成功時設置
                     
                     app_connected = self.bus.shared.get("app_connected", False)
                     

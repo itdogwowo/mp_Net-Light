@@ -39,9 +39,13 @@ class FileSystemManager:
             with open(MANIFEST_FILE, "r") as f:
                 self.manifest = ujson.load(f)
             print(f"📦 [FS] Manifest loaded: {len(self.manifest)} files")
+            from lib.sys_bus import bus
+            bus.shared["fs_manifest_ready"] = True
         except:
             print("⚠️ [FS] Manifest missing or corrupt, starting scan...")
             self.manifest = {}
+            from lib.sys_bus import bus
+            bus.shared["fs_manifest_ready"] = False
             # Start background scan if manifest is missing
             self.scan_all()
 
@@ -280,6 +284,7 @@ class FileSystemManager:
         from lib.sys_bus import bus
         print("🔄 [FS] Scan requested (Queued for Core 1)")
         bus.shared["fs_scan_requested"] = True
+        bus.shared["fs_manifest_ready"] = False
 
     def perform_scan(self):
         """
@@ -287,10 +292,31 @@ class FileSystemManager:
         """
         if self.scanning: return
         self.scanning = True
+        from lib.sys_bus import bus
+        bus.shared["fs_scan_progress"] = {"done": 0, "total": 0, "current": ""}
         print("🔍 [FS] Starting background scan (Core 1)...")
         
         new_manifest = {}
         
+        total_files = 0
+
+        def _count_dir(dir_path):
+            nonlocal total_files
+            try:
+                for entry in os.ilistdir(dir_path):
+                    name = entry[0]
+                    type_ = entry[1]
+                    full_path = f"{dir_path}/{name}" if dir_path != "/" else f"/{name}"
+                    if name == "manifest.json": continue
+                    if name.endswith(".tmp"): continue
+                    if name.endswith(".db"): continue
+                    if type_ == 0x4000:
+                        _count_dir(full_path)
+                    else:
+                        total_files += 1
+            except:
+                pass
+
         def _scan_dir(dir_path):
             try:
                 for entry in os.ilistdir(dir_path):
@@ -307,6 +333,7 @@ class FileSystemManager:
                     else: # File
                         try:
                             dprint(f"  ⏳ [FS] {full_path}",2)
+                            bus.shared["fs_scan_progress"]["current"] = full_path
                             h = hashlib.sha256()
                             buf = bytearray(2048)
                             size = 0
@@ -319,15 +346,17 @@ class FileSystemManager:
                             
                             sha = ubinascii.hexlify(h.digest()).decode()
                             new_manifest[full_path] = {"s": size, "h": sha}
+                            bus.shared["fs_scan_progress"]["done"] = len(new_manifest)
                         except Exception as e:
                             print(f"  ⚠️ Scan error {full_path}: {e}")
             except Exception as e:
                 print(f"  ⚠️ Scan dir error {dir_path}: {e}")
 
+        _count_dir("/")
+        bus.shared["fs_scan_progress"]["total"] = total_files
         _scan_dir("/")
         
         # 核心 1 不直接寫入 Flash，而是交給核心 0
-        from lib.sys_bus import bus
         print(f"✅ [FS] Scan complete (Core 1). Found {len(new_manifest)} files. Handing over to Core 0...")
         
         bus.shared["fs_scan_result"] = new_manifest
@@ -347,6 +376,8 @@ class FileSystemManager:
             
         bus.shared["fs_scan_done"] = False
         bus.shared["fs_scan_result"] = None
+        bus.shared["fs_manifest_ready"] = True
+        bus.shared["fs_scan_progress"] = None
         print(f"💾 [FS] Manifest saved by Core 0 ({len(self.manifest)} entries).")
 
 # Singleton Instance
