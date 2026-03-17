@@ -7,7 +7,7 @@ import _thread
 
 def on_file_begin(ctx, args):
     if args.get("path",False):
-        args['path'] = bus.get_service("data_Phat") + args['path']
+        args['path'] = args['path']
 
     ok = fs.begin_write(args)
     if ok: print(f"📂 [File] Start -> {fs.session['path']} (Atomic)")
@@ -131,7 +131,7 @@ def on_file_read(ctx, args):
     full_path = path
     
     if path:
-        full_path = bus.get_service("data_Phat") + path
+        full_path =  path
 
     try:
         with open(full_path, "rb") as f:
@@ -165,7 +165,7 @@ def on_file_delete(ctx, args):
     
     if not path: return
     
-    full_path = bus.get_service("data_Phat") + path
+    full_path = path
     
     # 使用 FS Manager 刪除
     fs.delete_file(full_path)

@@ -85,7 +85,7 @@ class LEDController:
             wo = int(self._w)
             for i in range(n):
                 s_idx = offset + (i << 2)
-                dst[i] = src[s_idx + 3]          # 直接映射亮度
+                dst[i] = (src[s_idx + 3] << 4) | (src[s_idx + 3] >> 4)  # 直接映射亮度
 
     def st_show(self):
         """觸發硬體顯示"""

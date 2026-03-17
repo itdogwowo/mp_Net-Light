@@ -452,6 +452,7 @@ class DeviceManager:
                 "ack_event": threading.Event(),
                 "query_event": threading.Event(),
                 "read_event": threading.Event(),
+                "file_lock": threading.Lock(),
                 "remote_exists": 0,
                 "remote_sha": None,
                 "remote_size": 0,
@@ -993,6 +994,182 @@ class NetBusMaster:
         input("\n按 Enter 返回...")
         self.panel.start()
 
+    def _safe_device_filename(self, device_id: str) -> str:
+        if not device_id:
+            return "unknown"
+        invalid = '<>:"/\\|?*'
+        out = []
+        for ch in str(device_id):
+            if ch in invalid or ord(ch) < 32:
+                out.append("_")
+            else:
+                out.append(ch)
+        name = "".join(out).strip(" .")
+        return name or "unknown"
+
+    def _download_remote_file_to_path(
+        self,
+        tid: str,
+        remote_path: str,
+        local_path: str,
+        *,
+        chunk_size: int = 1024,
+        query_timeout: float = 3.0,
+        read_timeout: float = 5.0,
+        max_retries: int = 2
+    ) -> bool:
+        node = self.slaves.get(tid)
+        if not node:
+            return False
+
+        lock = node.get("file_lock")
+        if lock is None:
+            lock = threading.Lock()
+            node["file_lock"] = lock
+
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+        def _local_bytes_sha(path: str):
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+                return hashlib.sha256(data).digest()
+            except:
+                return None
+
+        attempt = 0
+        while attempt <= max_retries:
+            attempt += 1
+            try:
+                with lock:
+                    node["query_event"].clear()
+                    node["remote_exists"] = 0
+                    node["remote_sha"] = None
+                    node["remote_size"] = 0
+                    self.send_pkt([tid], 0x2005, {"path": remote_path})
+                    if not node["query_event"].wait(timeout=query_timeout):
+                        raise Exception("query timeout")
+
+                    if node.get("remote_exists", 0) == 0:
+                        return False
+
+                    remote_sha = node.get("remote_sha")
+                    remote_size = int(node.get("remote_size", 0) or 0)
+                    if os.path.exists(local_path) and remote_sha:
+                        local_sha = _local_bytes_sha(local_path)
+                        if local_sha == remote_sha:
+                            return True
+
+                    data = bytearray()
+                    offset = 0
+                    while offset < remote_size:
+                        node["read_event"].clear()
+                        node["read_data"] = None
+                        self.send_pkt([tid], 0x2007, {"path": remote_path, "offset": offset, "length": chunk_size})
+                        if not node["read_event"].wait(timeout=read_timeout):
+                            raise Exception(f"read timeout at offset {offset}")
+
+                        chunk = node.get("read_data")
+                        if not chunk:
+                            break
+                        data.extend(chunk)
+                        offset += len(chunk)
+
+                    tmp_path = local_path + ".tmp"
+                    with open(tmp_path, "wb") as f:
+                        f.write(data)
+                    os.replace(tmp_path, local_path)
+                    return True
+            except:
+                if attempt > max_retries:
+                    return False
+                time.sleep(0.2 * attempt)
+
+        return False
+
+    def _prefetch_device_cache(self, targets, *, force: bool = False, reason: str = ""):
+        if not targets:
+            return
+
+        base_dir = os.path.join(".", "temp")
+        cfg_dir = os.path.join(base_dir, "config")
+        man_dir = os.path.join(base_dir, "manifest")
+        os.makedirs(cfg_dir, exist_ok=True)
+        os.makedirs(man_dir, exist_ok=True)
+
+        for tid in targets:
+            node = self.slaves.get(tid)
+            if not node:
+                continue
+            safe_id = self._safe_device_filename(tid)
+            cfg_path = os.path.join(cfg_dir, f"{safe_id}.json")
+            man_path = os.path.join(man_dir, f"{safe_id}.json")
+
+            ok = self._download_remote_file_to_path(tid, "/config.json", cfg_path, max_retries=2 if force else 1)
+            if ok:
+                self.panel.update_device(tid, status="已獲取 config", last_update=time.time())
+            else:
+                self.panel.update_device(tid, status="config 取得失敗", last_update=time.time())
+
+            ok = self._download_remote_file_to_path(tid, "/manifest.json", man_path, max_retries=2 if force else 1)
+            if ok:
+                self.panel.update_device(tid, status="已獲取 manifest", last_update=time.time())
+            else:
+                self.panel.update_device(tid, status="manifest 取得失敗", last_update=time.time())
+
+    def _load_cached_json(self, path: str):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return None
+
+    def _get_cached_config_path(self, tid: str) -> str:
+        safe_id = self._safe_device_filename(tid)
+        return os.path.join("temp", "config", f"{safe_id}.json")
+
+    def _get_cached_manifest_path(self, tid: str) -> str:
+        safe_id = self._safe_device_filename(tid)
+        return os.path.join("temp", "manifest", f"{safe_id}.json")
+
+    def _get_sd_mount_from_config(self, cfg) -> str:
+        if not isinstance(cfg, dict):
+            return ""
+        sd = cfg.get("SDcard")
+        if not isinstance(sd, dict):
+            return ""
+        en = sd.get("enable", 0)
+        if en not in (1, True, "1", "true", "True"):
+            return ""
+        mount = sd.get("path") or sd.get("phat") or "/sd"
+        if not isinstance(mount, str) or not mount:
+            mount = "/sd"
+        if not mount.startswith("/"):
+            mount = "/" + mount
+        mount = mount.rstrip("/")
+        return mount or "/sd"
+
+    def _manifest_has_path_prefix(self, manifest, prefix: str) -> bool:
+        if not isinstance(manifest, dict) or not isinstance(prefix, str) or not prefix:
+            return False
+        pfx = prefix.rstrip("/") + "/"
+        for k in manifest.keys():
+            if isinstance(k, str) and k.startswith(pfx):
+                return True
+        return False
+
+    def _get_data_bin_remote_path(self, tid: str) -> str:
+        cfg = self._load_cached_json(self._get_cached_config_path(tid))
+        mount = self._get_sd_mount_from_config(cfg)
+        if mount:
+            return f"{mount}/data.bin"
+
+        manifest = self._load_cached_json(self._get_cached_manifest_path(tid))
+        if self._manifest_has_path_prefix(manifest, "/sd"):
+            return "/sd/data.bin"
+
+        return "/data.bin"
+
     def _upload_generic_file(self, tid, local_path, remote_path, file_idx=1, total_files=1):
         try:
             with open(local_path, "rb") as f:
@@ -1427,6 +1604,8 @@ class NetBusMaster:
             return
 
         self.panel.start()
+
+        self._prefetch_device_cache(self.selected_targets, reason="pre_firmware")
         
         # Reset Status
         for tid in self.selected_targets:
@@ -1471,77 +1650,95 @@ class NetBusMaster:
             print("❌ 設備離線")
             return
 
-        # Query SHA and Size
-        node["query_event"].clear()
-        node["remote_sha"] = None
-        node["remote_size"] = 0
-        self.send_pkt([target], 0x2005, {"path": "/config.json"})
-        if node["query_event"].wait(timeout=3.0):
-            sha_hex = node["remote_sha"].hex() if node["remote_sha"] else "None"
-            size = node["remote_size"]
+        lock = node.get("file_lock")
+        if lock is None:
+            lock = threading.Lock()
+            node["file_lock"] = lock
+
+        with lock:
+            size = 0
+            sha_hex = "None"
+            exists = 0
+            ok_query = False
+            for attempt in range(3):
+                node["query_event"].clear()
+                node["remote_exists"] = 0
+                node["remote_sha"] = None
+                node["remote_size"] = 0
+                self.send_pkt([target], 0x2005, {"path": "/config.json"})
+                if node["query_event"].wait(timeout=8.0):
+                    exists = node.get("remote_exists", 0)
+                    sha_hex = node["remote_sha"].hex() if node.get("remote_sha") else "None"
+                    size = int(node.get("remote_size", 0) or 0)
+                    ok_query = True
+                    break
+                time.sleep(0.2 * (attempt + 1))
+
+            if not ok_query:
+                print("⚠️ 查詢超時, 無法獲取文件大小")
+                return
+
+            if exists == 0:
+                print("⚠️ config.json 不存在")
+                return
+
             print(f"  Remote SHA: {sha_hex}")
             print(f"  Remote Size: {size} bytes")
-        else:
-            print("⚠️ 查詢超時, 無法獲取文件大小")
-            return
-            
-        # Download Loop
-        config_data = bytearray()
-        chunk_size = 1024
-        
-        # Init progress bar
-        self.panel.update_device(
-            target,
-            status="下載中",
-            uploaded_bytes=0,
-            total_bytes=size,
-            upload_start_time=time.time()
-        )
-        
-        offset = 0
-        start_time = time.time()
-        
-        while offset < size:
-            node["read_event"].clear()
-            node["read_data"] = None
-            
-            # Request chunk
-            # 這裡的 length 如果超過剩餘大小也沒關係，f.read 會處理
-            self.send_pkt([target], 0x2007, {
-                "path": "/config.json",
-                "offset": offset,
-                "length": chunk_size
-            })
-            
-            if not node["read_event"].wait(timeout=5.0):
-                print(f"❌ 下載超時 at offset {offset}")
-                self.panel.update_device(target, status="錯誤")
-                return
-                
-            chunk = node["read_data"]
-            if not chunk:
-                break # EOF or error
-                
-            config_data.extend(chunk)
-            offset += len(chunk)
-            
-            # Update Panel
-            elapsed = time.time() - start_time
-            speed = (offset / 1024) / elapsed if elapsed > 0 else 0
-            progress = (offset / size) * 100 if size > 0 else 0
-            
+
+            config_data = bytearray()
+            chunk_size = 1024
+
             self.panel.update_device(
                 target,
-                upload_progress=progress,
-                upload_speed=speed,
-                uploaded_bytes=offset
+                status="下載中",
+                uploaded_bytes=0,
+                total_bytes=size,
+                upload_start_time=time.time()
             )
-            
-            # Small delay to prevent flooding if network is super fast (optional)
-            # time.sleep(0.01) 
-            
-        self.panel.update_device(target, status="下載完成", upload_progress=100)
-        temp_path = "temp_config.json"
+
+            offset = 0
+            start_time = time.time()
+
+            while offset < size:
+                node["read_event"].clear()
+                node["read_data"] = None
+
+                last_err = None
+                for attempt in range(3):
+                    self.send_pkt([target], 0x2007, {"path": "/config.json", "offset": offset, "length": chunk_size})
+                    if node["read_event"].wait(timeout=8.0):
+                        last_err = None
+                        break
+                    last_err = f"read timeout at offset {offset}"
+                    time.sleep(0.2 * (attempt + 1))
+
+                if last_err:
+                    print(f"❌ 下載超時 at offset {offset}")
+                    self.panel.update_device(target, status="錯誤")
+                    return
+
+                chunk = node["read_data"]
+                if not chunk:
+                    break
+
+                config_data.extend(chunk)
+                offset += len(chunk)
+
+                elapsed = time.time() - start_time
+                speed = (offset / 1024) / elapsed if elapsed > 0 else 0
+                progress = (offset / size) * 100 if size > 0 else 0
+
+                self.panel.update_device(
+                    target,
+                    upload_progress=progress,
+                    upload_speed=speed,
+                    uploaded_bytes=offset
+                )
+
+            self.panel.update_device(target, status="下載完成", upload_progress=100)
+        safe_id = self._safe_device_filename(target)
+        temp_path = os.path.join("temp", "config", f"{safe_id}.json")
+        os.makedirs(os.path.dirname(temp_path), exist_ok=True)
         
         try:
             # Format JSON for easier editing
@@ -1807,6 +2004,7 @@ class NetBusMaster:
         print(" - 輸入 'c' 清空選擇")
         print(" - 直接按 Enter 完成並返回")
         
+        prev_set = set(self.selected_targets)
         choice = input("\n👉 請輸入: ").strip().lower()
         
         if not choice:
@@ -1837,6 +2035,11 @@ class NetBusMaster:
                 print(f"✅ 更新選擇: {len(self.selected_targets)} 個設備")
             except:
                 print("❌ 輸入無效")
+
+        new_selected = [tid for tid in self.selected_targets if tid not in prev_set]
+        if new_selected:
+            print(f"📥 嘗試獲取 config/manifest: {len(new_selected)} 個設備")
+            self._prefetch_device_cache(new_selected, reason="selected")
         
         time.sleep(1)
         self.panel.start()
@@ -2120,15 +2323,22 @@ class NetBusMaster:
         
         # 嘗試向所有目標發送查詢，不管狀態
         valid_tids = []
+        deploy_paths = {}
         for tid in self.selected_targets:
             if tid in self.slaves and local_sha_cache[tid]:
-                node = self.slaves[tid]
-                node["query_event"].clear()
-                node["remote_sha"] = None
                 valid_tids.append(tid)
                 
-        # 批量發送查詢
-        self.send_pkt(valid_tids, 0x2005, {"path": "/data.bin"})
+        self._prefetch_device_cache(valid_tids, reason="deploy")
+
+        for tid in valid_tids:
+            node = self.slaves[tid]
+            node["query_event"].clear()
+            node["remote_sha"] = None
+            p = self._get_data_bin_remote_path(tid)
+            deploy_paths[tid] = p
+            self.send_pkt([tid], 0x2005, {"path": p})
+
+        self._deploy_paths = deploy_paths
         
         tout = self.config.get("deploy_timeout", 120)
         print(f"⏳ 等待設備回報 (Timeout: {tout}s)...")
@@ -2148,8 +2358,8 @@ class NetBusMaster:
             time.sleep(0.1)
         
         deploy_queue = []
-        print(f"\n{'編號':<5} | {'設備ID':<15} | {'本地SHA':<16} | {'遠程SHA':<16} | {'狀態'}")
-        print("-" * 75)
+        print(f"\n{'編號':<5} | {'設備ID':<15} | {'本地SHA':<16} | {'遠程SHA':<16} | {'路徑':<12} | {'狀態'}")
+        print("-" * 92)
         
         for i, tid in enumerate(self.selected_targets):
             local_sha = local_sha_cache.get(tid)
@@ -2164,8 +2374,9 @@ class NetBusMaster:
             
             is_match = (local_sha == remote_sha)
             status = "✔ 匹配" if is_match else "✖ 不同"
+            path_disp = deploy_paths.get(tid, "/data.bin")
             
-            print(f"[{i+1:02}]  {tid:15} | {local_sha} | {remote_sha:16} | {status}")
+            print(f"[{i+1:02}]  {tid:15} | {local_sha} | {remote_sha:16} | {path_disp:<12} | {status}")
             deploy_queue.append((tid, local_sha, remote_sha))
         
         if not deploy_queue:
@@ -2173,7 +2384,7 @@ class NetBusMaster:
             self.panel.start()
             return
         
-        print("\n" + "-" * 75)
+        print("\n" + "-" * 92)
         choice = input("👉 輸入編號上傳 (例: 1,3,5) | 'a' 僅上傳不一致 | 'all' 全選: ").lower()
         
         final_targets = []
@@ -2228,7 +2439,7 @@ class NetBusMaster:
             raise Exception("無數據或離線")
         
         local_sha = hashlib.sha256(data).digest()
-        target_path = "/data.bin"
+        target_path = getattr(self, "_deploy_paths", {}).get(tid) or self._get_data_bin_remote_path(tid)
         total_len = len(data)
         chunk_size = 1024 * 1
         
