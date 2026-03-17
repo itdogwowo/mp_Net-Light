@@ -794,8 +794,13 @@ class NetBusMaster:
                     def _join_task(target_cid, frame):
                         try:
                             # 1. 發送準備指令 (與 step_4 保持一致)
+                            # 獲取正確的路徑 (SD or Flash)
+                            f_path = self._get_data_bin_remote_path(target_cid)
+                            # 移除開頭的 slash 以防萬一 (雖然 open 應該都能吃)
+                            if f_path.startswith("/"): f_path = f_path[1:]
+                            
                             self.send_pkt([target_cid], 0x3009, {
-                                "file_name": "data.bin",
+                                "file_name": f_path,
                                 "block_id": 0,
                                 "play_mode": 0
                             })
@@ -901,6 +906,10 @@ class NetBusMaster:
                     monitor.block_count += 1
                     monitor.avg_fps = (monitor.avg_fps * (monitor.block_count - 1) + actual_fps) / monitor.block_count
         
+        elif cmd == 0x3008: # STREAM_READY_ACK
+            # 設備已就緒
+            self.panel.update_device(cid, status="就緒")
+            
         elif cmd == 0x2004:
             if cid in self.slaves:
                 self.slaves[cid]["ack_event"].set()
@@ -2505,47 +2514,47 @@ class NetBusMaster:
             input("\n按 Enter 繼續...")
             self.panel.start()
             return
-        
-        if AUDIO_MODE is None:
-            print("❌ 音訊模塊未安裝,無法播放")
-            input("\n按 Enter 繼續...")
-            self.panel.start()
-            return
-        
-        mp3_files = [f for f in os.listdir('.') if f.endswith('.mp3')]
-        if not mp3_files:
-            print("❌ 找不到 MP3 文件 (可選)")
-        
-        print(f"\n🎵 [音訊準備] 模式: {AUDIO_MODE}")
-        print(f"  0. 不播放音訊 (僅觸發動畫)")
-        for i, f in enumerate(mp3_files):
-            print(f"  {i+1}. {f}")
-        print("  q. 取消返回")
-        
+
+        audio_available = AUDIO_MODE is not None
         selected_mp3 = None
-        try:
-            raw_choice = input("\n👉 選擇編號: ").strip().lower()
-            if raw_choice == 'q':
-                self.panel.start()
-                return
-            
-            choice = int(raw_choice)
-            if choice == 0:
-                selected_mp3 = None
-                print("✅ 已選擇: 靜音模式")
-            elif 1 <= choice <= len(mp3_files):
-                selected_mp3 = mp3_files[choice-1]
-                print(f"✅ 已選擇: {selected_mp3}")
-            else:
-                print("❌ 選擇無效")
+
+        if audio_available:
+            mp3_files = [f for f in os.listdir('.') if f.endswith('.mp3')]
+            if not mp3_files:
+                print("❌ 找不到 MP3 文件 (可選)")
+
+            print(f"\n🎵 [音訊準備] 模式: {AUDIO_MODE}")
+            print(f"  0. 不播放音訊 (僅觸發動畫)")
+            for i, f in enumerate(mp3_files):
+                print(f"  {i+1}. {f}")
+            print("  q. 取消返回")
+
+            try:
+                raw_choice = input("\n👉 選擇編號: ").strip().lower()
+                if raw_choice == 'q':
+                    self.panel.start()
+                    return
+
+                choice = int(raw_choice)
+                if choice == 0:
+                    selected_mp3 = None
+                    print("✅ 已選擇: 靜音模式")
+                elif 1 <= choice <= len(mp3_files):
+                    selected_mp3 = mp3_files[choice-1]
+                    print(f"✅ 已選擇: {selected_mp3}")
+                else:
+                    print("❌ 選擇無效")
+                    time.sleep(1)
+                    self.panel.start()
+                    return
+            except ValueError:
+                print("❌ 輸入無效")
                 time.sleep(1)
                 self.panel.start()
                 return
-        except ValueError:
-            print("❌ 輸入無效")
-            time.sleep(1)
-            self.panel.start()
-            return
+        else:
+            print("\n⚠️ 音訊模塊未安裝：將以靜音模式執行（僅發送播放指令）")
+            selected_mp3 = None
         
         print(f"\n⚙️ 正在預備設備...")
         
@@ -2554,11 +2563,21 @@ class NetBusMaster:
             if tid in self.panel.monitors:
                 self.panel.monitors[tid].reset_play_stats()
         
-        self.send_pkt(self.selected_targets, 0x3009, {
-            "file_name": "data.bin",
-            "block_id": 0,
-            "play_mode": 0
-        })
+        # 分組發送 0x3009，因為不同設備可能使用不同路徑 (SD/Flash)
+        path_groups = {}
+        for tid in self.selected_targets:
+            p = self._get_data_bin_remote_path(tid)
+            if p.startswith("/"): p = p[1:]
+            if p not in path_groups: path_groups[p] = []
+            path_groups[p].append(tid)
+            
+        for f_path, tids in path_groups.items():
+            print(f"📡 [Stream] Set: {f_path} -> {tids}")
+            self.send_pkt(tids, 0x3009, {
+                "file_name": f_path,
+                "block_id": 0,
+                "play_mode": 0
+            })
         while True:
             print("\n" + "!" * 50)
             print("     系統就緒,等待擊發")
@@ -2618,6 +2637,7 @@ class NetBusMaster:
         else:
             # Silent mode: just trigger
             self.is_playing = True # Enable loop
+            self.is_paused = False
             self.send_pkt(self.selected_targets, 0x300A, {"start_frame": 0})
         
         # print("\n[控制提示] SPACE=暫停/繼續 | S=停止 | Q=退出") # 移除此行，因為 MonitorPanel 已經顯示了控制提示，且此行會導致 UI 錯亂
