@@ -1,5 +1,6 @@
 from machine import Pin, I2C, SPI
 import neopixel
+import micropython
 import gc
 import utime
 import math
@@ -78,14 +79,15 @@ class LEDController:
 
         elif tid == 3: # i2c_LED (PCA9685)
             # 專門提取 W 通道 (src[+3]) 給 PWM 控制器
-            dst = self.led.buf
+            dst = ptr16(self.led.buf)
             ro = int(self._r)
             go = int(self._g)
             bo = int(self._b)
             wo = int(self._w)
             for i in range(n):
                 s_idx = offset + (i << 2)
-                dst[i] = src[s_idx + 3]          # 直接映射亮度
+                w = src[s_idx + 3]
+                dst[i] = (w << 4) | (w >> 4)
 
     def st_show(self):
         """觸發硬體顯示"""

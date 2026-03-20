@@ -79,12 +79,12 @@
 │  [Schema Decode]                    [寫入 Buffer B]     │
 └──────────────────────────┬──────────────────────────────┘
                            │ SysBus (Services/Providers)
-                           │ AtomicStreamHub (雙緩衝指針)
+                           │ AtomicStreamHub (三緩衝狀態機)
 ┌──────────────────────────┴──────────────────────────────┐
 │                      Core 1 (Rendering)                 │
 │  [讀取 Buffer A] → [APA102/WS2812] → [本地特效運算]    │
 │      ↑                                                   │
-│  [Dirty Bit 檢查]                                       │
+│  [hub.dirty 檢查]                                       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -134,8 +134,9 @@ CRC16 覆蓋範圍 = VER + ADDR + CMD + LEN + DATA
 from lib.sys_bus import bus
 
 # ─── 1. Services：核心間/模組間共享大型對象 ───
-bus.register_service("stream_hub", AtomicStreamHub())
-hub = bus.get_service("stream_hub")
+hub = AtomicStreamHub(size_bytes, num_buffers=3)
+bus.register_service("pixel_stream", hub)
+hub = bus.get_service("pixel_stream")
 
 # ─── 2. Providers：動態資訊回報（解耦依賴）───
 bus.register_provider("fps", lambda: led_driver.get_fps())
@@ -179,8 +180,8 @@ _thread.start_new_thread(rendering_task, ())
 
 ### 5.3 雙核通訊規範
 ✅ **允許**：
-- Core 0 寫入 `SysBus.services["stream_hub"]` 的寫緩衝
-- Core 1 讀取讀緩衝並檢查 Dirty Bit
+- Core 0 寫入 `SysBus.services["pixel_stream"]` 的寫緩衝
+- Core 1 讀取讀緩衝並檢查 `hub.dirty`
 
 ❌ **禁止**：
 - 兩核心同時修改同一個 `dict` key
@@ -240,25 +241,42 @@ _thread.start_new_thread(rendering_task, ())
 │   ├── schema_loader.py    # Schema JSON 加載器
 │   ├── schema_codec.py     # Payload 編解碼引擎
 │   ├── dispatch.py         # 指令分發器
-│   ├── file_rx.py          # 檔案接收器
 │   ├── sys_bus.py          # ★ 三級數據總線
-│   └── buffer_hub.py       # ★ 雙緩衝管理
+│   ├── buffer_hub.py       # ★ 三緩衝狀態機
+│   ├── task_manager.py     # ★ 任務註冊/親和性/Runner
+│   ├── fs_manager.py       # ★ 檔案系統管理
+│   ├── net_bus.py          # 網路接收/解析
+│   ├── network_manager.py  # 網路介面管理
+│   ├── LEDController.py    # LED 控制器 (WS2812/APA102/PCA9685)
+│   ├── apa102.py           # APA102 驅動
+│   ├── pca9685.py          # PCA9685 PWM 驅動
+│   ├── ESP_Boot.py         # 啟動/硬體初始化
+│   └── ConfigManager.py    # 設定檔管理
 │
 ├── action/                 # 行為層（常改）
 │   ├── registry.py         # 統一註冊入口
 │   ├── file_actions.py     # 檔案傳輸指令
 │   ├── fs_actions.py       # 檔案系統指令
-│   └── status_actions.py   # ★ 狀態回報指令
+│   ├── stream_actions.py   # ★ LED 串流指令
+│   ├── status_actions.py   # ★ 狀態回報指令
+│   ├── heartbeat_actions.py# 心跳指令
+│   └── sys_actions.py      # 系統指令
+│
+├── tasks/                  # 任務層（Core 0/1 Runner 調度）
+│   ├── network.py
+│   ├── render.py
+│   └── web_ui.py
 │
 ├── schema/                 # 協議定義
 │   ├── sys.json
 │   ├── status.json
 │   ├── file.json
 │   ├── fs.json
-│   └── stream.json
+│   ├── stream.json
+│   └── heartbeat.json
 │
 ├── app.py                  # 裝配層
-├── rendering_task.py       # ★ Core 1 渲染任務
+├── boot.py                 # 硬體與服務初始化
 └── main.py                 # 測試/入口
 ```
 
@@ -284,16 +302,19 @@ payload = encode_payload(cmd_def, args)        # -> bytes
 
 #### `/lib/buffer_hub.py`
 ```python
-hub = AtomicStreamHub(num_leds=2048)
+hub = AtomicStreamHub(size_bytes, num_buffers=3)
 
 # Core 0
 view = hub.get_write_view()
-view[0] = (255, 0, 0)  # RGB
-hub.commit()
+if view is not None:
+    view[0] = 255
+    view[1] = 0
+    view[2] = 0
+    hub.commit()
 
 # Core 1
-if hub.is_dirty():
-    view = hub.get_read_view()
+view = hub.get_read_view()
+if view is not None:
     spi.write(view)
 ```
 
@@ -554,35 +575,39 @@ STREAM_FRAME_PART(frame_id, part_index, total_parts, data)
 
 ## 9) 關鍵技術實現
 
-### 9.1 雙緩衝指針交換 (AtomicStreamHub)
+### 9.1 三緩衝狀態機 (AtomicStreamHub)
 
 #### 核心概念
 ```
-[Buffer A] ←─ 讀指針 (Core 1)
-[Buffer B] ←─ 寫指針 (Core 0)
-          ↕ commit() 時一納秒交換指針
+[IDLE]  ← get_write_view() 取得可寫槽位
+  ↓ commit()
+[READY] ← get_read_view() 取得可讀槽位（並標記 READING）
+  ↓ 下一次 get_read_view()/read_into() 時釋放
+[IDLE]
 ```
 
 #### 實作細節
 ```python
-class AtomicStreamHub:
-    def __init__(self, num_leds):
-        self._buf_a = bytearray(num_leds * 3)
-        self._buf_b = bytearray(num_leds * 3)
-        self._read_buf = self._buf_a
-        self._write_buf = self._buf_b
-        self._dirty = False
+IDLE, READY, READING = 0, 1, 2
 
-    def commit(self):
-        # 指針交換（極快）
-        self._read_buf, self._write_buf = self._write_buf, self._read_buf
-        self._dirty = True
+class AtomicStreamHub:
+    def __init__(self, size, num_buffers=3):
+        self._bufs = [bytearray(size) for _ in range(num_buffers)]
+        self._views = [memoryview(b) for b in self._bufs]
+        self._status = [IDLE] * num_buffers
+        self._w_ptr = 0
+        self._r_ptr = 0
+        self._last_read_idx = None
+
+    @property
+    def dirty(self):
+        return self._status[self._r_ptr] == READY
 ```
 
 #### 優勢
-✅ **零拷貝**：不進行 `bytearray` 內容複製  
-✅ **無撕裂**：Core 1 讀取時 Core 0 不干擾  
-✅ **低延遲**：指針交換 < 1μs
+✅ **零拷貝**：讀取端直接取得 `memoryview`  
+✅ **低 GC 壓力**：啟動時預分配 buffers 與 views  
+✅ **可吸收抖動**：預設 3 buffers，降低生產/消費瞬時失配的撕裂風險
 
 ---
 
@@ -682,10 +707,10 @@ hub = AtomicStreamHub(2048)
 
 # ✅ 正確：在 register 時檢查後註冊
 def register(app):
-    hub = app.bus.get_service("stream_hub")
+    hub = app.bus.get_service("pixel_stream")
     if hub is None:
-        hub = AtomicStreamHub(app.config.get("num_leds", 2048))
-        app.bus.register_service("stream_hub", hub)
+        hub = AtomicStreamHub(size_bytes, num_buffers=3)
+        app.bus.register_service("pixel_stream", hub)
 ```
 
 ### 10.2 Provider 註冊規範
@@ -708,13 +733,14 @@ def register(app):
 ```python
 # Core 0（生產者）
 view = hub.get_write_view()
-for i, pixel in enumerate(pixels):
-    view[i*3:(i+1)*3] = pixel
-hub.commit()
+if view is not None:
+    for i, pixel in enumerate(pixels):
+        view[i*3:(i+1)*3] = pixel
+    hub.commit()
 
 # Core 1（消費者）
-if hub.is_dirty():
-    view = hub.get_read_view()
+view = hub.get_read_view()
+if view is not None:
     spi.write(view)
 ```
 
@@ -767,9 +793,10 @@ gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
 - Payload 格式由 /schema/*.json 定義，使用 schema_codec.py 解碼
 
 **現有分層**：
-- /lib：底座（proto.py, schema_loader.py, dispatch.py, sys_bus.py, buffer_hub.py）
-- /action：行為層（file_actions.py, fs_actions.py, status_actions.py）
-- /schema：協議定義（sys.json, status.json, file.json, stream.json）
+- /lib：底座（proto.py, schema_loader.py, dispatch.py, sys_bus.py, buffer_hub.py, task_manager.py）
+- /action：行為層（file_actions.py, fs_actions.py, stream_actions.py, status_actions.py, heartbeat_actions.py, sys_actions.py）
+- /tasks：任務層（network.py, render.py, web_ui.py）
+- /schema：協議定義（sys.json, status.json, heartbeat.json, file.json, fs.json, stream.json）
 
 **我要新增功能**：
 {描述新指令：例如「新增 LED 模式切換指令 MODE_SET (0x3010)，payload 包含 mode_id(u8) 和 params(bytes_rest)」}
@@ -795,7 +822,7 @@ gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
 **現有架構**：
 - Core 0：網路接收、Schema 解碼、Dispatcher 分發
 - Core 1：LED 渲染（APA102/WS2812）、本地特效運算
-- 數據同步：SysBus (Services/Providers/Shared) + AtomicStreamHub (雙緩衝指針交換)
+- 數據同步：SysBus (Services/Providers/Shared) + AtomicStreamHub (三緩衝狀態機)
 
 **我要新增功能**：
 {描述：例如「新增本地特效引擎，Core 1 在無網路時自動運行呼吸燈，需與串流模式互斥」}
@@ -807,7 +834,7 @@ gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
 
 請提供：
 - 新 Service 定義（如需要）
-- rendering_task.py 修改內容
+- tasks/render.py 修改內容
 - 狀態回報邏輯
 ```
 
