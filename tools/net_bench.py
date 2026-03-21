@@ -94,39 +94,13 @@ def _ws_try_recv_payload(conn):
     if not raw:
         return None
     if raw[0] == 0x82:
-        masked = (raw[1] & 0x80) != 0
         pl_len = raw[1] & 0x7F
         offset = 2
         if pl_len == 126:
-            if len(raw) < 4:
-                return None
-            pl_len = struct.unpack(">H", raw[2:4])[0]
             offset = 4
         elif pl_len == 127:
-            if len(raw) < 10:
-                return None
-            pl_len = struct.unpack(">Q", raw[2:10])[0]
             offset = 10
-
-        if masked:
-            if len(raw) < offset + 4:
-                return None
-            mask = raw[offset : offset + 4]
-            offset += 4
-        else:
-            mask = None
-
-        if len(raw) < offset + pl_len:
-            return None
-        payload = raw[offset : offset + pl_len]
-
-        if mask is None:
-            return payload
-
-        out = bytearray(payload)
-        for i in range(pl_len):
-            out[i] ^= mask[i & 3]
-        return bytes(out)
+        return raw[offset:]
     return raw
 
 
@@ -143,59 +117,6 @@ class NetBenchServer:
         self._announce_thread = None
         self._udp = None
         self._local_ip = None
-        self._ws_acc = bytearray()
-
-    def _ws_extract_payloads(self):
-        out = []
-        buf = self._ws_acc
-        i = 0
-        while True:
-            if len(buf) - i < 2:
-                break
-            b0 = buf[i]
-            b1 = buf[i + 1]
-            opcode = b0 & 0x0F
-            masked = (b1 & 0x80) != 0
-            pl_len = b1 & 0x7F
-            hlen = 2
-            if pl_len == 126:
-                if len(buf) - i < 4:
-                    break
-                pl_len = struct.unpack(">H", buf[i + 2 : i + 4])[0]
-                hlen = 4
-            elif pl_len == 127:
-                if len(buf) - i < 10:
-                    break
-                pl_len = struct.unpack(">Q", buf[i + 2 : i + 10])[0]
-                hlen = 10
-
-            if masked:
-                if len(buf) - i < hlen + 4:
-                    break
-                mask = buf[i + hlen : i + hlen + 4]
-                hlen += 4
-            else:
-                mask = None
-
-            total = hlen + pl_len
-            if len(buf) - i < total:
-                break
-
-            if opcode in (2, 0):
-                payload = buf[i + hlen : i + hlen + pl_len]
-                if mask is not None:
-                    tmp = bytearray(payload)
-                    for k in range(pl_len):
-                        tmp[k] ^= mask[k & 3]
-                    out.append(bytes(tmp))
-                else:
-                    out.append(bytes(payload))
-
-            i += total
-
-        if i:
-            del buf[:i]
-        return out
 
     def _get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -262,14 +183,12 @@ class NetBenchServer:
         while self.running and self.conn:
             payload = _ws_try_recv_payload(self.conn)
             if payload:
-                self._ws_acc.extend(payload if isinstance(payload, (bytes, bytearray)) else bytes(payload))
-                for pl_bytes in self._ws_extract_payloads():
-                    self.parser.feed(pl_bytes)
-                    for _ver, _addr, cmd, pl in self.parser.pop():
-                        if cmd == 0x1804:
-                            cmd_def = self.store.get(cmd)
-                            args = SchemaCodec.decode(cmd_def, pl)
-                            self._print_report(args)
+                self.parser.feed(payload)
+                for _ver, _addr, cmd, pl in self.parser.pop():
+                    if cmd == 0x1804:
+                        cmd_def = self.store.get(cmd)
+                        args = SchemaCodec.decode(cmd_def, pl)
+                        self._print_report(args)
             time.sleep(0.001)
 
     def _print_report(self, args):
@@ -337,7 +256,7 @@ class NetBenchServer:
 def main():
     server = NetBenchServer(port=8000, discovery_port=9000, announce_interval_s=0.5)
     server.start()
-    server.bench(run_id=1, seconds=5, chunk_size=16384, report_interval_ms=10)
+    server.bench(run_id=1, seconds=10, chunk_size=16384, report_interval_ms=100)
     time.sleep(1)
 
 
