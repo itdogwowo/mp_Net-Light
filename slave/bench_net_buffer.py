@@ -160,21 +160,88 @@ def _report(name, dt_us, total_in, total_pkt):
     print("  time_us:", dt_us, "kb_s:", int(kb_s), "pps:", int(pps))
 
 
-def run(payload_len=4096, pkt_count=200, chunk_size=4096, max_len=65535, hub_buffers=4):
+def _median(vals):
+    s = sorted(vals)
+    n = len(s)
+    if n == 0:
+        return 0
+    mid = n // 2
+    if n & 1:
+        return s[mid]
+    return (s[mid - 1] + s[mid]) // 2
+
+
+def _run_once(pkt, pkt_count, chunk_size, max_len, hub_buffers, gc_off):
+    gc.collect()
+    if gc_off and hasattr(gc, "disable"):
+        gc.disable()
+    try:
+        t1, n1, p1 = _bench_direct(pkt, pkt_count, chunk_size, max_len)
+        t2, n2, p2 = _bench_hub(pkt, pkt_count, chunk_size, max_len, num_buffers=hub_buffers)
+    finally:
+        if gc_off and hasattr(gc, "enable"):
+            gc.enable()
+    return (t1, n1, p1), (t2, n2, p2)
+
+
+def run(payload_len=4096, pkt_count=200, chunk_size=4096, max_len=65535, hub_buffers=4, repeat=1, warmup=0, gc_off=False):
     gc.collect()
     print("mem_free:", _mem_free())
     pkt = _mk_packet(payload_len)
-    print("packet_len:", len(pkt), "payload_len:", payload_len, "pkt_count:", pkt_count, "chunk:", chunk_size)
+    print(
+        "packet_len:",
+        len(pkt),
+        "payload_len:",
+        payload_len,
+        "pkt_count:",
+        pkt_count,
+        "chunk:",
+        chunk_size,
+        "repeat:",
+        repeat,
+        "warmup:",
+        warmup,
+        "gc_off:",
+        1 if gc_off else 0,
+    )
 
-    gc.collect()
-    t, n, p = _bench_direct(pkt, pkt_count, chunk_size, max_len)
-    _report("direct_buffer", t, n, p)
+    for _ in range(warmup):
+        _run_once(pkt, pkt_count, chunk_size, max_len, hub_buffers, gc_off)
 
-    gc.collect()
-    t, n, p = _bench_hub(pkt, pkt_count, chunk_size, max_len, num_buffers=hub_buffers)
-    _report("hub_queue", t, n, p)
+    direct_times = []
+    hub_times = []
+    last_direct = None
+    last_hub = None
+    for _ in range(repeat):
+        direct, hub = _run_once(pkt, pkt_count, chunk_size, max_len, hub_buffers, gc_off)
+        last_direct = direct
+        last_hub = hub
+        direct_times.append(direct[0])
+        hub_times.append(hub[0])
+
+    if last_direct:
+        _report("direct_buffer", last_direct[0], last_direct[1], last_direct[2])
+    if last_hub:
+        _report("hub_queue", last_hub[0], last_hub[1], last_hub[2])
+
+    if repeat > 1:
+        print("direct_time_us_median:", _median(direct_times), "min:", min(direct_times), "max:", max(direct_times))
+        print("hub_time_us_median:", _median(hub_times), "min:", min(hub_times), "max:", max(hub_times))
 
     print("mem_free:", _mem_free())
+
+
+def run_large(payload_len=65535, chunk_size=4096, pkt_count=10, repeat=5, warmup=1, gc_off=True, hub_buffers=4):
+    run(
+        payload_len=payload_len,
+        pkt_count=pkt_count,
+        chunk_size=chunk_size,
+        max_len=65535,
+        hub_buffers=hub_buffers,
+        repeat=repeat,
+        warmup=warmup,
+        gc_off=gc_off,
+    )
 
 
 if __name__ == "__main__":
