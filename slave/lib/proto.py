@@ -23,40 +23,34 @@ if not IS_MICROPYTHON:
 else:
     # 這裡是 MicroPython 環境
     import micropython
+    import ubinascii as binascii
+
+if not IS_MICROPYTHON:
+    import binascii
 
 # --- 協議常量 ---
 SOF = b"NL"
-CUR_VER = 3
+CUR_VER = 4
 ADDR_BROADCAST = 0xFFFF
 MAX_LEN_DEFAULT = 8192
 
 HDR_FMT = "<2sBHHH"
 HDR_LEN = 9 # struct.calcsize(HDR_FMT)
-CRC_FMT = "<H"
-CRC_LEN = 2
+CRC_FMT = "<I"
+CRC_LEN = 4
 
 class Proto:
-    @micropython.viper
-    def crc16(data: ptr8, length: int) -> int:
-        """高性能 CRC16 內核"""
-        crc: int = 0xFFFF
-        for i in range(length):
-            crc ^= data[i] << 8
-            for _ in range(8):
-                if crc & 0x8000:
-                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-                else:
-                    crc = (crc << 1) & 0xFFFF
-        return crc
+    @staticmethod
+    def crc32_update(data, crc=0):
+        return binascii.crc32(data, crc)
 
     @staticmethod
     def pack(cmd: int, payload: bytes = b"", addr: int = ADDR_BROADCAST) -> bytes:
         if payload is None: payload = b""
         ln = len(payload)
         header = struct.pack(HDR_FMT, SOF, CUR_VER, addr, cmd, ln)
-        crc_data = header[2:] + payload
-        # 注意：在 PC 上傳入內容給 Viper (crc16) 函數也是沒問題的
-        crc_val = Proto.crc16(crc_data, len(crc_data))
+        crc_val = Proto.crc32_update(header[2:], 0)
+        crc_val = Proto.crc32_update(payload, crc_val)
         return header + payload + struct.pack(CRC_FMT, crc_val)
 
 class StreamParser:
@@ -121,8 +115,10 @@ class StreamParser:
             payload_end = payload_start + ln
             crc_received = struct.unpack_from(CRC_FMT, self._buf, payload_end)[0]
 
-            calc_area = self._mv[self._start + 2 : payload_end]
-            if Proto.crc16(calc_area, len(calc_area)) == crc_received:
+            crc_start = self._start + 2
+            crc_len = payload_end - crc_start
+            crc_calc = Proto.crc32_update(self._mv[crc_start:payload_end], 0)
+            if (crc_calc & 0xFFFFFFFF) == crc_received:
                 payload = self._mv[payload_start:payload_end]
                 self._start += total_len
                 if self._start == self._end:

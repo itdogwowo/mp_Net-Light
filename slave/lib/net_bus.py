@@ -25,6 +25,19 @@ class NetBus:
             buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
         self._buf = bytearray(buf_size)
         self._ptr = 0
+        self._ws_buf = bytearray(buf_size + 14)
+        self._ws_mv = memoryview(self._ws_buf)
+        self._ws_start = 0
+        self._ws_end = 0
+        self._ws_need = 0
+        self._ws_plen = 0
+        self._ws_hlen = 0
+        self._ws_masked = 0
+        self._ws_mask0 = 0
+        self._ws_mask1 = 0
+        self._ws_mask2 = 0
+        self._ws_mask3 = 0
+        self._ws_poff = 0
 
     def connect(self, host, port, path="/ws"):
         """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
@@ -81,37 +94,165 @@ class NetBus:
             self.connected = False
             self.target_addr = None
             self._ptr = 0 # 清空緩衝區指針
+            self._ws_start = 0
+            self._ws_end = 0
+            self._ws_need = 0
+            self._ws_plen = 0
+            self._ws_hlen = 0
+            self._ws_masked = 0
             print(f"🔌 [{self.label}] Connection Closed.")
+
+    def _ws_feed(self, data):
+        if not data:
+            return
+        ln = len(data)
+        cap = len(self._ws_buf)
+        if ln > cap:
+            self._ws_start = 0
+            self._ws_end = 0
+            self._ws_need = 0
+            return
+
+        free = cap - self._ws_end
+        if free < ln and self._ws_start:
+            keep = self._ws_end - self._ws_start
+            if keep:
+                self._ws_mv[:keep] = self._ws_mv[self._ws_start:self._ws_end]
+            self._ws_start = 0
+            self._ws_end = keep
+            free = cap - self._ws_end
+
+        if free < ln:
+            self._ws_start = 0
+            self._ws_end = 0
+            self._ws_need = 0
+            return
+
+        self._ws_mv[self._ws_end:self._ws_end + ln] = data
+        self._ws_end += ln
+
+    def _ws_deframe_to_out(self):
+        out = self._buf
+        out_cap = len(out)
+        out_pos = 0
+
+        while out_pos < out_cap:
+            avail = self._ws_end - self._ws_start
+            if self._ws_need and avail < self._ws_need:
+                break
+
+            if self._ws_need == 0:
+                if avail < 2:
+                    break
+                b0 = self._ws_buf[self._ws_start]
+                b1 = self._ws_buf[self._ws_start + 1]
+                plen = b1 & 0x7F
+                masked = 1 if (b1 & 0x80) else 0
+                hlen = 2
+                if plen == 126:
+                    if avail < 4:
+                        break
+                    plen = struct.unpack_from(">H", self._ws_buf, self._ws_start + 2)[0]
+                    hlen = 4
+                elif plen == 127:
+                    if avail < 10:
+                        break
+                    plen = struct.unpack_from(">Q", self._ws_buf, self._ws_start + 2)[0]
+                    hlen = 10
+                if masked:
+                    if avail < hlen + 4:
+                        break
+                    mpos = self._ws_start + hlen
+                    self._ws_mask0 = self._ws_buf[mpos]
+                    self._ws_mask1 = self._ws_buf[mpos + 1]
+                    self._ws_mask2 = self._ws_buf[mpos + 2]
+                    self._ws_mask3 = self._ws_buf[mpos + 3]
+                    hlen += 4
+
+                opcode = b0 & 0x0F
+                if opcode == 8:
+                    self.connected = False
+                    return 0
+                if opcode in (9, 10):
+                    self._ws_start += hlen + plen
+                    if self._ws_start >= self._ws_end:
+                        self._ws_start = 0
+                        self._ws_end = 0
+                    continue
+
+                self._ws_plen = plen
+                self._ws_hlen = hlen
+                self._ws_masked = masked
+                self._ws_poff = 0
+                self._ws_need = hlen + plen
+
+            avail = self._ws_end - self._ws_start
+            if avail < self._ws_need:
+                break
+
+            payload_pos = self._ws_start + self._ws_hlen + self._ws_poff
+            remain = self._ws_plen - self._ws_poff
+            space = out_cap - out_pos
+            take = remain if remain < space else space
+
+            if self._ws_masked:
+                for i in range(take):
+                    mi = (self._ws_poff + i) & 3
+                    m = self._ws_mask0 if mi == 0 else self._ws_mask1 if mi == 1 else self._ws_mask2 if mi == 2 else self._ws_mask3
+                    out[out_pos + i] = self._ws_buf[payload_pos + i] ^ m
+            else:
+                out[out_pos:out_pos + take] = self._ws_buf[payload_pos:payload_pos + take]
+
+            out_pos += take
+            self._ws_poff += take
+
+            if self._ws_poff >= self._ws_plen:
+                self._ws_start += self._ws_hlen + self._ws_plen
+                if self._ws_start >= self._ws_end:
+                    self._ws_start = 0
+                    self._ws_end = 0
+                self._ws_need = 0
+                self._ws_plen = 0
+                self._ws_hlen = 0
+                self._ws_masked = 0
+                self._ws_poff = 0
+
+        self._ptr = out_pos
+        return out_pos
 
     def poll(self):
         if not self.connected or not self.sock: return
-        
+        self._ptr = 0
+
         try:
             if self.type == self.TYPE_UDP:
-                n, addr = self.sock.recvfrom_into(self._buf)
-                self.target_addr = addr # 自動鎖定最後一個來源
-                raw = memoryview(self._buf)[:n]
+                if hasattr(self.sock, "recvfrom_into"):
+                    n, addr = self.sock.recvfrom_into(self._buf)
+                    self.target_addr = addr # 自動鎖定最後一個來源
+                    raw = memoryview(self._buf)[:n]
+                else:
+                    raw_bytes, addr = self.sock.recvfrom(len(self._buf))
+                    self.target_addr = addr
+                    n = len(raw_bytes)
+                    if n:
+                        self._buf[:n] = raw_bytes
+                    raw = memoryview(self._buf)[:n]
             else:
                 n = self.sock.readinto(self._buf)
-                if not n:
+                if n is None:
+                    return
+                if n == 0:
                     self.connected = False
                     return
-                raw = memoryview(self._buf)[:n]
-
-            data = raw
-            if self.type == self.TYPE_WS:
-                off = 2
-                pl_len = raw[1] & 0x7F
-                if pl_len == 126: off = 4
-                elif pl_len == 127: off = 10
-                data = raw[off:]
-
-            l = len(data)
-            self._buf[:l] = data
-            self._ptr = l
+                if self.type == self.TYPE_WS:
+                    self._ws_feed(memoryview(self._buf)[:n])
+                    self._ws_deframe_to_out()
+                else:
+                    self._ptr = n
 
         except OSError:
-            pass # 沒有數據
+            self._ptr = 0
+            return
 
     def write(self, data: bytes):
         """大一統寫入"""

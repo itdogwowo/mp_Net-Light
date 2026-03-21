@@ -20,7 +20,7 @@ print(PROJECT_ROOT)
 
 
 
-# 引用 NL3 協議模型
+# 引用 NL 協議模型 (VER=4 + CRC32)
 from slave.lib.proto import Proto, StreamParser
 from slave.lib.schema_loader import SchemaStore
 from slave.lib.schema_codec import SchemaCodec
@@ -80,7 +80,7 @@ class PCTestTool:
                 raw = conn.recv(4096)
                 if not raw: break
                 
-                # WS Binary 解包 ( NL3 封裝在 WS 載荷內 )
+                # WS Binary 解包 ( NL 封裝在 WS 載荷內 )
                 if raw[0] == 0x82:
                     pl_len = raw[1] & 0x7F
                     offset = 2

@@ -149,7 +149,8 @@ class NetworkIOTask(Task):
         url = bus.shared.get("net_connect_url")
         if url:
             bus.shared["net_connect_url"] = ""
-            self._on_connect_wrapper(url)
+            if not self.ctrl_bus.connected:
+                self._on_connect_wrapper(url)
 
         time.sleep_ms(0)
 

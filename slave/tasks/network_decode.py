@@ -91,7 +91,8 @@ class NetworkDecodeTask(Task):
                 )
 
     def _request_connect(self, url):
-        bus.shared["net_connect_url"] = url
+        if not bus.shared.get("app_connected"):
+            bus.shared["net_connect_url"] = url
 
     def loop(self):
         if not self.running:

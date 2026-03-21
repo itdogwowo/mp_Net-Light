@@ -1,0 +1,41 @@
+{
+  "group": "bench",
+  "cmds": [
+    {
+      "cmd": "0x1801",
+      "name": "NET_BENCH_START",
+      "payload": [
+        {"name": "run_id", "type": "u32"},
+        {"name": "report_interval_ms", "type": "u16"},
+        {"name": "mode", "type": "u8"}
+      ]
+    },
+    {
+      "cmd": "0x1802",
+      "name": "NET_BENCH_CHUNK",
+      "payload": [
+        {"name": "run_id", "type": "u32"},
+        {"name": "seq", "type": "u32"},
+        {"name": "data", "type": "bytes_rest"}
+      ]
+    },
+    {
+      "cmd": "0x1803",
+      "name": "NET_BENCH_STOP",
+      "payload": [
+        {"name": "run_id", "type": "u32"}
+      ]
+    },
+    {
+      "cmd": "0x1804",
+      "name": "NET_BENCH_REPORT",
+      "payload": [
+        {"name": "run_id", "type": "u32"},
+        {"name": "elapsed_ms", "type": "u32"},
+        {"name": "total_bytes", "type": "u32"},
+        {"name": "total_chunks", "type": "u32"},
+        {"name": "last_seq", "type": "u32"}
+      ]
+    }
+  ]
+}

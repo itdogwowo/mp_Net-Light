@@ -1,5 +1,6 @@
 import gc
 import time
+import sys
 from lib.sys_bus import bus
 
 class TaskManager:
@@ -134,7 +135,21 @@ class TaskManager:
                         self.config[name] = (0, 0)
                         
                 except Exception as e:
-                    print(f"❌ [Core {core_id}] Task {task.name} Loop Error: {e}")
+                    try:
+                        mod = task.__class__.__module__
+                        cls = task.__class__.__name__
+                        print(f"❌ [Core {core_id}] Task {task.name} ({mod}.{cls}) Loop Error: {e}")
+                    except Exception:
+                        print(f"❌ [Core {core_id}] Task {task.name} Loop Error: {e}")
+
+                    try:
+                        if hasattr(sys, "print_exception"):
+                            sys.print_exception(e)
+                        else:
+                            import traceback
+                            traceback.print_exc()
+                    except Exception:
+                        pass
                     time.sleep_ms(1000) # Prevent tight loop on error
 
             # 3. Performance Monitoring

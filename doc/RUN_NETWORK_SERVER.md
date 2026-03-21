@@ -10,7 +10,7 @@
 - `main.py` 啟動後：
   - 啟動 TCP server，等待 master 連線
   - 連線後持續 `recv()`，把 bytes 丟給 `app.on_rx_bytes()`
-- 你只需要在 master 端用同一協議送封包（SOF/VER/ADDR/CMD/LEN/DATA/CRC16）
+- 你只需要在 master 端用同一協議送封包（SOF/VER=4/ADDR/CMD/LEN/DATA/CRC32）
 
 ---
 
