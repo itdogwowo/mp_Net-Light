@@ -62,41 +62,72 @@ class Proto:
 class StreamParser:
     def __init__(self, max_len=MAX_LEN_DEFAULT):
         self.max_len = max_len
-        self.buf = bytearray()
+        self._buf = bytearray(max_len + HDR_LEN + CRC_LEN)
+        self._mv = memoryview(self._buf)
+        self._start = 0
+        self._end = 0
         
-    def feed(self, data: bytes):
-        if data: self.buf.extend(data)
+    def feed(self, data):
+        if not data:
+            return
+        ln = len(data)
+        cap = len(self._buf)
+        if ln > cap:
+            self._start = 0
+            self._end = 0
+            return
+
+        free = cap - self._end
+        if free < ln and self._start:
+            keep = self._end - self._start
+            if keep:
+                self._mv[:keep] = self._mv[self._start:self._end]
+            self._start = 0
+            self._end = keep
+            free = cap - self._end
+
+        if free < ln:
+            self._start = 0
+            self._end = 0
+            return
+
+        self._mv[self._end:self._end + ln] = data
+        self._end += ln
 
     def pop(self):
-        # 這裡直接使用 HDR_LEN
-        while len(self.buf) >= HDR_LEN:
-            idx = self.buf.find(SOF)
+        while (self._end - self._start) >= HDR_LEN:
+            idx = self._buf.find(SOF, self._start, self._end)
             if idx < 0:
-                self.buf = bytearray()
+                self._start = 0
+                self._end = 0
                 return
-            if idx > 0:
-                self.buf = self.buf[idx:]
-            
-            if len(self.buf) < HDR_LEN: return
-            
-            # 使用 struct.unpack 替代 Struct.unpack_from
-            hdr = struct.unpack(HDR_FMT, self.buf[:HDR_LEN])
-            sof, ver, addr, cmd, ln = hdr
-            
+
+            if idx != self._start:
+                self._start = idx
+                if (self._end - self._start) < HDR_LEN:
+                    return
+
+            sof, ver, addr, cmd, ln = struct.unpack_from(HDR_FMT, self._buf, self._start)
+
             if ver != CUR_VER or ln > self.max_len:
-                self.buf = self.buf[1:]
+                self._start += 1
                 continue
-                
+
             total_len = HDR_LEN + ln + CRC_LEN
-            if len(self.buf) < total_len: return
-            
-            payload = self.buf[HDR_LEN : HDR_LEN + ln]
-            # 獲取最後兩個字節作為 CRC
-            crc_received = struct.unpack(CRC_FMT, self.buf[HDR_LEN + ln : total_len])[0]
-            
-            calc_area = self.buf[2 : HDR_LEN + ln]
+            if (self._end - self._start) < total_len:
+                return
+
+            payload_start = self._start + HDR_LEN
+            payload_end = payload_start + ln
+            crc_received = struct.unpack_from(CRC_FMT, self._buf, payload_end)[0]
+
+            calc_area = self._mv[self._start + 2 : payload_end]
             if Proto.crc16(calc_area, len(calc_area)) == crc_received:
-                self.buf = self.buf[total_len:]
-                yield ver, addr, cmd, bytes(payload)
+                payload = self._mv[payload_start:payload_end]
+                self._start += total_len
+                if self._start == self._end:
+                    self._start = 0
+                    self._end = 0
+                yield ver, addr, cmd, payload
             else:
-                self.buf = self.buf[1:]
+                self._start += 1

@@ -12,20 +12,19 @@ class NetBus:
     TYPE_WS  = 1
     TYPE_UDP = 2
 
-    def __init__(self, bus_type=TYPE_WS, app=None, label="Bus"):
+    def __init__(self, bus_type=TYPE_WS, label="Bus", buf_size=None):
         self.type = bus_type
         self.label = label
-        self.app = app
         self.sock = None
         self.connected = False
         self.target_addr = None # UDP 發送對象
         
         # 內存隔離：每個 Bus 實例擁有獨立的緩衝區與解析器
         # 統一使用 Buffer.size 作為接收緩衝區大小
-        buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
+        if buf_size is None:
+            buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
         self._buf = bytearray(buf_size)
         self._ptr = 0
-        self.parser = app.create_parser() if app else None
 
     def connect(self, host, port, path="/ws"):
         """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
@@ -84,51 +83,32 @@ class NetBus:
             self._ptr = 0 # 清空緩衝區指針
             print(f"🔌 [{self.label}] Connection Closed.")
 
-    def poll(self, **extra_ctx):
-        """
-        核心智能輪詢：
-        1. 從網路吸取數據
-        2. 如果有 app，自動處理 NL3 協議
-        3. 處理失敗自動標記斷線
-        """
+    def poll(self):
         if not self.connected or not self.sock: return
         
         try:
-            # 確保接收大小與緩衝區一致
-            recv_size = bus.shared.get('Buffer', {}).get('size', 4096)
             if self.type == self.TYPE_UDP:
-                raw, addr = self.sock.recvfrom(recv_size)
+                n, addr = self.sock.recvfrom_into(self._buf)
                 self.target_addr = addr # 自動鎖定最後一個來源
+                raw = memoryview(self._buf)[:n]
             else:
-                raw = self.sock.recv(recv_size)
-                if not raw: 
+                n = self.sock.readinto(self._buf)
+                if not n:
                     self.connected = False
                     return
+                raw = memoryview(self._buf)[:n]
 
-            # --- 解析數據 (WS 剝皮 或 直接取用) ---
             data = raw
             if self.type == self.TYPE_WS:
-                # 簡易 WS 解幀 (忽略 Mask, 只取 Payload)
                 off = 2
                 pl_len = raw[1] & 0x7F
                 if pl_len == 126: off = 4
                 elif pl_len == 127: off = 10
                 data = raw[off:]
 
-            # --- 智能分發 ---
-            if self.app and self.parser:
-                # 自動餵入專屬 Parser
-                self.app.handle_stream(
-                    self.parser, data, 
-                    transport_name=self.label, 
-                    send_func=self.write,
-                    **extra_ctx
-                )
-            else:
-                # 手動模式：存入緩衝區供 readinto 讀取
-                l = len(data)
-                self._buf[:l] = data
-                self._ptr = l
+            l = len(data)
+            self._buf[:l] = data
+            self._ptr = l
 
         except OSError:
             pass # 沒有數據
@@ -152,6 +132,14 @@ class NetBus:
             self.connected = False
 
     def any(self): return self._ptr
+
+    def get_view(self):
+        if not self._ptr:
+            return None
+        return memoryview(self._buf)[:self._ptr]
+
+    def clear(self):
+        self._ptr = 0
     
     def readinto(self, buf):
         ln = self._ptr

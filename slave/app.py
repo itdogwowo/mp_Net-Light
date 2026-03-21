@@ -20,10 +20,11 @@ class App:
         # 3. 註冊行為
         register_all(self)
 
-    def create_parser(self):
-        # 協議緩衝區上限設為基礎緩衝的 2 倍，以容納跨包重組
-        base_size = bus.shared.get('Buffer', {}).get('size', 4096)
-        return StreamParser(max_len=base_size * 2)
+    def create_parser(self, max_len=None):
+        if max_len is None:
+            base_size = bus.shared.get('Buffer', {}).get('size', 4096)
+            max_len = base_size * 2
+        return StreamParser(max_len=max_len)
 
     def handle_stream(self, parser, data, transport_name="Bus", send_func=None, **kwargs):
         """

@@ -5,7 +5,8 @@ from lib.sys_bus import bus
 from lib.buffer_hub import AtomicStreamHub
 from lib.fs_manager import fs
 from lib.task_manager import TaskManager
-from tasks.network import NetworkTask
+from tasks.network_io import NetworkIOTask
+from tasks.network_decode import NetworkDecodeTask
 from tasks.render import RenderTask
 from tasks.web_ui import WebUITask
 from apa102 import APA102
@@ -25,6 +26,10 @@ def launcher():
     hub = AtomicStreamHub(st_LED.total_bytes * bus_sys["buffer_frames"]) 
     bus.register_service("pixel_stream", hub)
 
+    base_size = bus.shared.get("Buffer", {}).get("size", 4096)
+    bus.register_service("net_rx", AtomicStreamHub(base_size + 3, num_buffers=4))
+    bus.register_service("net_tx", AtomicStreamHub(base_size + 2, num_buffers=8))
+
     # 4. App
     app = App()
     
@@ -41,8 +46,8 @@ def launcher():
     # Register Tasks
     # Default: Network & Web on Core 0, Render on Core 1
     # 這裡實現了您要求的 "靈活控制"
-    # 您可以隨時透過 tm.set_affinity('network', (0, 1)) 來遷移任務
-    tm.register_task("network", NetworkTask, default_affinity=(1, 0)) # Core 0
+    tm.register_task("network_io",     NetworkIOTask,    default_affinity=(1, 0)) # Core 0
+    tm.register_task("network_decode", NetworkDecodeTask, default_affinity=(1, 0)) # Core 0
     tm.register_task("web_ui",  WebUITask,   default_affinity=(1, 0)) # Core 0
     tm.register_task("render",  RenderTask,  default_affinity=(0, 1)) # Core 1
 

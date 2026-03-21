@@ -81,8 +81,11 @@ def on_discover(ctx, args):
     slave_id = "".join(f"{b:02X}" for b in machine.unique_id())
     full_url = f"{ws_base.rstrip('/')}/{slave_id}"
     
-    # 呼叫上面的重連函數
-    # 從 ctx 中獲取 ctrl_bus 實例
+    on_connect = ctx.get("on_connect")
+    if on_connect:
+        on_connect(full_url)
+        return
+
     ctrl_bus = ctx.get("ctrl_bus")
     if ctrl_bus:
         on_connect_request(ctrl_bus, full_url)

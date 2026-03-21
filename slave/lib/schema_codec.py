@@ -2,7 +2,7 @@ import struct
 
 class SchemaCodec:
     @staticmethod
-    def decode(cmd_def: dict, payload: bytes) -> dict:
+    def decode(cmd_def: dict, payload) -> dict:
         """穩定版解碼：優化內存開銷"""
         pos = 0
         payload_len = len(payload)
@@ -29,8 +29,7 @@ class SchemaCodec:
                     # 這裡必須拷貝一份，因為 Parser 的 Buffer 是會變動的
                     out[name] = bytes(payload[pos : pos + flen]); pos += flen
                 elif t == "bytes_rest":
-                    # 🚀 [修正] 提取剩下的所有數據到 data
-                    out[name] = bytes(payload[pos:])
+                    out[name] = memoryview(payload)[pos:]
                     pos = payload_len
             except Exception as e:
                 print(f"❌ [Codec] Decode field '{name}' error: {e}")

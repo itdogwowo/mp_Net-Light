@@ -79,7 +79,7 @@ class LEDController:
 
         elif tid == 3: # i2c_LED (PCA9685)
             # 專門提取 W 通道 (src[+3]) 給 PWM 控制器
-            dst = ptr16(self.led.buf)
+            dst = self.led.buf
             ro = int(self._r)
             go = int(self._g)
             bo = int(self._b)
