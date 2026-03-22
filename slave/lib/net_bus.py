@@ -125,6 +125,38 @@ class NetBus:
             self._ptr = 0
             return
 
+    def _send_all(self, data):
+        if not self.connected or not self.sock or not data:
+            return False
+        mv = data if isinstance(data, memoryview) else memoryview(data)
+        total = len(mv)
+        pos = 0
+        while pos < total:
+            try:
+                n = self.sock.send(mv[pos:])
+                if n is None:
+                    n = 0
+                if n <= 0:
+                    try:
+                        time.sleep_ms(1)
+                    except AttributeError:
+                        time.sleep(0.001)
+                    continue
+                pos += n
+            except OSError as e:
+                if e.args and e.args[0] == 11:
+                    try:
+                        time.sleep_ms(1)
+                    except AttributeError:
+                        time.sleep(0.001)
+                    continue
+                self.connected = False
+                return False
+            except Exception:
+                self.connected = False
+                return False
+        return True
+
     def write(self, data: bytes):
         """大一統寫入"""
         if not self.connected: return
@@ -137,9 +169,11 @@ class NetBus:
                 l = len(data)
                 if l < 126: hdr.append(l)
                 else: hdr.append(126); hdr.extend(struct.pack(">H", l))
-                self.sock.send(hdr + data)
+                if not self._send_all(hdr):
+                    return
+                self._send_all(data)
             else:
-                self.sock.send(data)
+                self._send_all(data)
         except:
             self.connected = False
 
