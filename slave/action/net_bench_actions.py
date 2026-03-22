@@ -9,6 +9,7 @@ _state = {
     "start_ms": 0,
     "last_report_ms": 0,
     "report_interval_ms": 1000,
+    "mode": 0,
     "total_bytes": 0,
     "total_chunks": 0,
     "last_seq": 0,
@@ -53,17 +54,20 @@ def _send_report(ctx, final=False):
 def on_net_bench_start(ctx, args):
     run_id = int(args.get("run_id", 0))
     interval = int(args.get("report_interval_ms", 1000))
+    mode = int(args.get("mode", 0))
 
     _state["active"] = True
     _state["run_id"] = run_id
     _state["start_ms"] = _ticks_ms()
     _state["last_report_ms"] = _state["start_ms"]
     _state["report_interval_ms"] = interval if interval > 0 else 1000
+    _state["mode"] = mode
     _state["total_bytes"] = 0
     _state["total_chunks"] = 0
     _state["last_seq"] = 0
 
-    _send_report(ctx)
+    if mode == 0:
+        _send_report(ctx)
 
 
 def on_net_bench_chunk(ctx, args):
@@ -80,7 +84,7 @@ def on_net_bench_chunk(ctx, args):
     _state["last_seq"] = int(args.get("seq", _state["last_seq"]))
 
     now = _ticks_ms()
-    if _elapsed_ms(now, _state["last_report_ms"]) >= _state["report_interval_ms"]:
+    if _state["mode"] == 0 and _elapsed_ms(now, _state["last_report_ms"]) >= _state["report_interval_ms"]:
         _state["last_report_ms"] = now
         _send_report(ctx)
 

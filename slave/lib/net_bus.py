@@ -26,6 +26,18 @@ class NetBus:
         self._buf = bytearray(buf_size)
         self._ptr = 0
 
+        self._ws_hdr = bytearray(14)
+        self._ws_hdr_mv = memoryview(self._ws_hdr)
+        self._ws_hdr_pos = 0
+        self._ws_hdr_need = 2
+        self._ws_payload_len = 0
+        self._ws_payload_rem = 0
+        self._ws_chunk_len = 0
+        self._ws_chunk_pos = 0
+        self._ws_view = None
+        self._ws_chan = 0
+        self._ws_hub = None
+
     def connect(self, host, port, path="/ws"):
         """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
         try:
@@ -192,3 +204,115 @@ class NetBus:
         buf[:ln] = self._buf[:ln]
         self._ptr = 0
         return ln
+
+    def poll_to_hub(self, hub, chan=0):
+        if not self.connected or not self.sock or hub is None:
+            return 0
+        if self.type != self.TYPE_WS:
+            return 0
+
+        self._ws_hub = hub
+        self._ws_chan = chan & 0xFF
+
+        total_payload = 0
+        max_payload = hub.size - 3
+        if max_payload <= 0:
+            return 0
+
+        while True:
+            if self._ws_hdr_pos < self._ws_hdr_need:
+                try:
+                    n = self.sock.readinto(self._ws_hdr_mv[self._ws_hdr_pos : self._ws_hdr_need])
+                except OSError:
+                    return total_payload
+                if n is None:
+                    return total_payload
+                if n == 0:
+                    self.connected = False
+                    return total_payload
+                self._ws_hdr_pos += n
+                if self._ws_hdr_pos < self._ws_hdr_need:
+                    return total_payload
+
+            if self._ws_hdr_need == 2:
+                b0 = self._ws_hdr[0]
+                b1 = self._ws_hdr[1]
+                opcode = b0 & 0x0F
+                fin = (b0 >> 7) & 1
+                masked = (b1 >> 7) & 1
+                ln7 = b1 & 0x7F
+
+                if opcode == 0x8:
+                    self.connected = False
+                    return total_payload
+
+                if fin != 1 or masked:
+                    self.connected = False
+                    return total_payload
+
+                if ln7 <= 125:
+                    self._ws_payload_len = ln7
+                    self._ws_payload_rem = ln7
+                    self._ws_hdr_pos = 0
+                    self._ws_hdr_need = 2
+                elif ln7 == 126:
+                    self._ws_hdr_need = 4
+                else:
+                    self._ws_hdr_need = 10
+                if self._ws_hdr_need != 2:
+                    continue
+
+            if self._ws_hdr_need == 4 and self._ws_hdr_pos >= 4:
+                self._ws_payload_len = (int(self._ws_hdr[2]) << 8) | int(self._ws_hdr[3])
+                self._ws_payload_rem = self._ws_payload_len
+                self._ws_hdr_pos = 0
+                self._ws_hdr_need = 2
+
+            if self._ws_hdr_need == 10 and self._ws_hdr_pos >= 10:
+                l = 0
+                for i in range(2, 10):
+                    l = (l << 8) | int(self._ws_hdr[i])
+                if l > 0x7FFFFFFF:
+                    self.connected = False
+                    return total_payload
+                self._ws_payload_len = l
+                self._ws_payload_rem = l
+                self._ws_hdr_pos = 0
+                self._ws_hdr_need = 2
+
+            if self._ws_payload_rem <= 0:
+                continue
+
+            if self._ws_view is None:
+                w = hub.get_write_view()
+                if w is None:
+                    return total_payload
+                take = self._ws_payload_rem
+                if take > max_payload:
+                    take = max_payload
+                self._ws_chunk_len = take
+                self._ws_chunk_pos = 0
+                self._ws_view = w
+                w[0] = self._ws_chan
+                w[1] = take & 0xFF
+                w[2] = (take >> 8) & 0xFF
+
+            try:
+                n = self.sock.readinto(self._ws_view[3 + self._ws_chunk_pos : 3 + self._ws_chunk_len])
+            except OSError:
+                return total_payload
+            if n is None:
+                return total_payload
+            if n == 0:
+                self.connected = False
+                return total_payload
+            self._ws_chunk_pos += n
+            if self._ws_chunk_pos < self._ws_chunk_len:
+                return total_payload
+
+            hub.commit()
+            total_payload += self._ws_chunk_len
+            self._ws_payload_rem -= self._ws_chunk_len
+            self._ws_view = None
+            self._ws_chunk_len = 0
+            self._ws_chunk_pos = 0

@@ -1,4 +1,5 @@
 import time
+import struct
 
 from lib.sys_bus import bus
 
@@ -40,6 +41,15 @@ class Dispatcher:
         if not handler:
             if self.debug_level > 0:
                 print(f"⚠️  [No-Handler] {cmd_def['name']} (0x{cmd_int:04X})")
+            return
+
+        if cmd_int == 0x1802:
+            try:
+                run_id = struct.unpack_from("<I", payload_bytes, 0)[0]
+                seq = struct.unpack_from("<I", payload_bytes, 4)[0]
+            except Exception:
+                return
+            handler(ctx, {"run_id": run_id, "seq": seq, "data": memoryview(payload_bytes)[8:]})
             return
 
         # 2. 解析數據

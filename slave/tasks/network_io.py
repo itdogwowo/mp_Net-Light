@@ -55,7 +55,16 @@ class NetworkIOTask(Task):
         print("🚀 [NetworkIO] Online")
 
     def _on_connect_wrapper(self, url):
-        return on_connect_request(self.ctrl_bus, url)
+        if bus.shared.get("net_connecting"):
+            return False
+        bus.shared["net_connecting"] = True
+        try:
+            res = on_connect_request(self.ctrl_bus, url)
+            if res:
+                bus.shared["app_connected"] = True
+            return res
+        finally:
+            bus.shared["net_connecting"] = False
 
     def _drain_tx(self):
         if not self.tx_hub or not self.ctrl_bus or not self.ctrl_bus.connected:
@@ -117,15 +126,16 @@ class NetworkIOTask(Task):
                 if m_ip and m_port:
                     full_url = f"ws://{m_ip}:{m_port}/ws/{bus.slave_id}"
                     self._on_connect_wrapper(full_url)
-            self.discovery_bus.poll()
-            d = self.discovery_bus.get_view()
-            if d is not None:
-                self._pending = d
-                self._pending_pos = 0
-                self._pending_chan = 1
-                if self._try_push_rx(self._pending_chan, self._pending):
-                    self._pending = None
+            if not self.ctrl_bus.connected:
+                self.discovery_bus.poll()
+                d = self.discovery_bus.get_view()
+                if d is not None:
+                    self._pending = d
                     self._pending_pos = 0
+                    self._pending_chan = 1
+                    if self._try_push_rx(self._pending_chan, self._pending):
+                        self._pending = None
+                        self._pending_pos = 0
 
         self._drain_tx()
 
@@ -136,15 +146,18 @@ class NetworkIOTask(Task):
             return
 
         if self.ctrl_bus and self.ctrl_bus.connected:
-            self.ctrl_bus.poll()
-            data = self.ctrl_bus.get_view()
-            if data is not None:
-                self._pending = data
-                self._pending_pos = 0
-                self._pending_chan = 0
-                if self._try_push_rx(self._pending_chan, self._pending):
-                    self._pending = None
+            if self.rx_hub and hasattr(self.ctrl_bus, "poll_to_hub"):
+                self.ctrl_bus.poll_to_hub(self.rx_hub, chan=0)
+            else:
+                self.ctrl_bus.poll()
+                data = self.ctrl_bus.get_view()
+                if data is not None:
+                    self._pending = data
                     self._pending_pos = 0
+                    self._pending_chan = 0
+                    if self._try_push_rx(self._pending_chan, self._pending):
+                        self._pending = None
+                        self._pending_pos = 0
 
         url = bus.shared.get("net_connect_url")
         if url:

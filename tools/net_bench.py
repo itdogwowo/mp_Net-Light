@@ -61,10 +61,14 @@ def _ws_send_binary(conn, payload: bytes):
     else:
         hdr.append(127)
         hdr.extend(struct.pack(">Q", l))
-    frame = hdr + payload
-    mv = memoryview(frame)
+    _send_all(conn, memoryview(hdr))
+    _send_all(conn, memoryview(payload))
+
+def _send_all(conn, data: memoryview):
+    mv = data if isinstance(data, memoryview) else memoryview(data)
     sent = 0
-    while sent < len(mv):
+    ln = len(mv)
+    while sent < ln:
         try:
             n = conn.send(mv[sent:])
             if n is None:
@@ -84,24 +88,84 @@ def _ws_send_binary(conn, payload: bytes):
             raise
 
 
-def _ws_try_recv_payload(conn):
-    try:
-        raw = conn.recv(4096)
-    except (socket.timeout, BlockingIOError):
-        return None
-    except OSError:
-        return None
-    if not raw:
-        return None
-    if raw[0] == 0x82:
-        pl_len = raw[1] & 0x7F
-        offset = 2
-        if pl_len == 126:
-            offset = 4
-        elif pl_len == 127:
-            offset = 10
-        return raw[offset:]
-    return raw
+class WSFrameReader:
+    def __init__(self, recv_size=65536):
+        self._rx = bytearray()
+        self._tmp = bytearray(recv_size)
+
+    def recv_payloads(self, conn):
+        out = []
+        while True:
+            try:
+                n = conn.recv_into(self._tmp)
+            except (socket.timeout, BlockingIOError):
+                break
+            except OSError:
+                break
+            if not n:
+                break
+            self._rx.extend(self._tmp[:n])
+
+        while True:
+            if len(self._rx) < 2:
+                return out
+            b0 = self._rx[0]
+            b1 = self._rx[1]
+            opcode = b0 & 0x0F
+            fin = (b0 >> 7) & 1
+            masked = (b1 >> 7) & 1
+            ln7 = b1 & 0x7F
+            if fin != 1:
+                self._rx.clear()
+                return out
+            if opcode == 0x8:
+                self._rx.clear()
+                return out
+            if opcode != 0x2:
+                self._rx.clear()
+                return out
+
+            off = 2
+            if ln7 == 126:
+                if len(self._rx) < 4:
+                    return out
+                pl_len = (self._rx[2] << 8) | self._rx[3]
+                off = 4
+            elif ln7 == 127:
+                if len(self._rx) < 10:
+                    return out
+                pl_len = 0
+                for i in range(2, 10):
+                    pl_len = (pl_len << 8) | self._rx[i]
+                off = 10
+            else:
+                pl_len = ln7
+
+            if masked:
+                if len(self._rx) < off + 4:
+                    return out
+                mask0 = self._rx[off]
+                mask1 = self._rx[off + 1]
+                mask2 = self._rx[off + 2]
+                mask3 = self._rx[off + 3]
+                off += 4
+            else:
+                mask0 = mask1 = mask2 = mask3 = 0
+
+            end = off + pl_len
+            if len(self._rx) < end:
+                return out
+
+            payload = bytes(self._rx[off:end]) if masked else bytes(self._rx[off:end])
+            if masked and pl_len:
+                b = bytearray(payload)
+                for i in range(pl_len):
+                    m = (mask0, mask1, mask2, mask3)[i & 3]
+                    b[i] ^= m
+                payload = bytes(b)
+
+            out.append(payload)
+            del self._rx[:end]
 
 
 class NetBenchServer:
@@ -113,6 +177,7 @@ class NetBenchServer:
         self.conn = None
         self.addr = None
         self.parser = StreamParser(max_len=65535)
+        self.ws = WSFrameReader()
         self.store = SchemaStore(dir_path=schema_dir or f"{PROJECT_ROOT}/slave/schema")
         self._announce_thread = None
         self._udp = None
@@ -131,6 +196,23 @@ class NetBenchServer:
             except Exception:
                 pass
 
+    def _get_discovery_targets(self, local_ip: str):
+        env = os.environ.get("NET_BENCH_DISCOVERY_TARGETS", "").strip()
+        if env:
+            out = []
+            for part in env.split(","):
+                ip = part.strip()
+                if ip:
+                    out.append(ip)
+            if out:
+                return out
+
+        targets = ["255.255.255.255"]
+        if local_ip and local_ip.count(".") == 3:
+            p = local_ip.split(".")
+            targets.append(".".join([p[0], p[1], p[2], "255"]))
+        return targets
+
     def _announce_loop(self):
         self._local_ip = self._get_local_ip()
         ws_url = f"ws://{self._local_ip}:{self.port}/ws"
@@ -144,13 +226,17 @@ class NetBenchServer:
         except Exception:
             pass
 
-        print(f"[NET_BENCH] announce ws_url={ws_url} udp_port={self.discovery_port}")
+        targets = self._get_discovery_targets(self._local_ip)
+        print(
+            f"[NET_BENCH] announce ws_url={ws_url} udp_port={self.discovery_port} targets={','.join(targets)}"
+        )
 
         while self.running and self.conn is None:
-            try:
-                self._udp.sendto(pkt, ("255.255.255.255", self.discovery_port))
-            except Exception:
-                pass
+            for ip in targets:
+                try:
+                    self._udp.sendto(pkt, (ip, self.discovery_port))
+                except Exception:
+                    pass
             time.sleep(self.announce_interval_s)
 
         try:
@@ -181,14 +267,15 @@ class NetBenchServer:
 
     def _rx_loop(self):
         while self.running and self.conn:
-            payload = _ws_try_recv_payload(self.conn)
-            if payload:
-                self.parser.feed(payload)
-                for _ver, _addr, cmd, pl in self.parser.pop():
-                    if cmd == 0x1804:
-                        cmd_def = self.store.get(cmd)
-                        args = SchemaCodec.decode(cmd_def, pl)
-                        self._print_report(args)
+            payloads = self.ws.recv_payloads(self.conn)
+            for payload in payloads:
+                if payload:
+                    self.parser.feed(payload)
+                    for _ver, _addr, cmd, pl in self.parser.pop():
+                        if cmd == 0x1804:
+                            cmd_def = self.store.get(cmd)
+                            args = SchemaCodec.decode(cmd_def, pl)
+                            self._print_report(args)
             time.sleep(0.001)
 
     def _print_report(self, args):
@@ -210,7 +297,7 @@ class NetBenchServer:
         pkt = Proto.pack(cmd, payload)
         _ws_send_binary(self.conn, pkt)
 
-    def bench(self, run_id=1, seconds=5, chunk_size=16384, report_interval_ms=1000):
+    def bench(self, run_id=1, seconds=5, chunk_size=65000, report_interval_ms=1000, mode=0):
         if not self.conn:
             return
 
@@ -222,7 +309,7 @@ class NetBenchServer:
             f"[NET_BENCH] start run_id={run_id} seconds={seconds} chunk_size={chunk_size} report_interval_ms={report_interval_ms}"
         )
         print("[NET_BENCH] send: NET_BENCH_START(0x1801)")
-        self.send_cmd(0x1801, {"run_id": run_id, "report_interval_ms": report_interval_ms, "mode": 0})
+        self.send_cmd(0x1801, {"run_id": run_id, "report_interval_ms": report_interval_ms, "mode": mode})
 
         t0 = time.time()
         seq = 0
@@ -256,7 +343,7 @@ class NetBenchServer:
 def main():
     server = NetBenchServer(port=8000, discovery_port=9000, announce_interval_s=0.5)
     server.start()
-    server.bench(run_id=1, seconds=10, chunk_size=16384, report_interval_ms=100)
+    server.bench(run_id=1, seconds=10, chunk_size=65000, report_interval_ms=100, mode=0)
     time.sleep(1)
 
 
