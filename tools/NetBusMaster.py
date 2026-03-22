@@ -369,10 +369,12 @@ class MonitorPanel:
         # 簡單處理包含進度的狀態字串 (如 "Up 1/32")
         if "Up " in monitor.status:
             status_color = "\033[93m"
+        if monitor.status.startswith("下載 "):
+            status_color = "\033[93m"
             
         status_str = f"{status_color}{monitor.status:<6}{ConsoleUI.reset_color()}"
         
-        if monitor.status == "傳輸中" or monitor.status == "下載中" or "Up " in monitor.status:
+        if monitor.status == "傳輸中" or monitor.status == "下載中" or "Up " in monitor.status or monitor.status.startswith("下載 "):
             progress_bar = ConsoleUI.draw_progress_bar(monitor.upload_progress, width=20)
             speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
             size_str = f"{monitor.uploaded_bytes//1024}/{monitor.total_bytes//1024} KB"
