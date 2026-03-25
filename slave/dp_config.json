@@ -1,0 +1,51 @@
+{
+    "display_Layout": [
+        {
+            "type": "background",
+            "height": 240,
+            "width": 320,
+            "x": 0,
+            "y": 0,
+            "depth": 1
+        },
+        {
+            "type": "mod",
+            "height": 240,
+            "width": 120,
+            "x": 0,
+            "y": 0,
+            "depth": 5
+        },
+        {
+            "type": "brightness",
+            "height": 9,
+            "width": 197,
+            "x": 7,
+            "y": 123,
+            "depth": 37
+        },
+        {
+            "type": "text",
+            "height": 30,
+            "width": 25,
+            "x": 105,
+            "y": 160,
+            "depth": 10
+        },
+        {
+            "type": "loop",
+            "height": 139,
+            "width": 164,
+            "x": 50,
+            "y": 140,
+            "depth": 121
+        }
+    ],
+    "counter_time": [
+        5,
+        4,
+        8,
+        3,
+        120
+    ]
+}

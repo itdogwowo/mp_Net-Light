@@ -93,6 +93,17 @@ class NetworkManager:
                     raise Exception(f"Invalid SPI bus index: {spi_idx}")
                 
                 spi = spi_list[spi_idx]
+                if spi is None:
+                    spi_bus_list = self.bus.get_service("spi_bus_list")
+                    if spi_bus_list and spi_idx < len(spi_bus_list) and hasattr(machine.SPI, "Device"):
+                        spi_bus = spi_bus_list[spi_idx]
+                        baudrate = int(config.get("baudrate", 8_000_000) or 8_000_000)
+                        polarity = int(config.get("polarity", 0) or 0)
+                        phase = int(config.get("phase", 0) or 0)
+                        try:
+                            spi = machine.SPI.Device(spi_bus=spi_bus, freq=baudrate, polarity=polarity, phase=phase)
+                        except TypeError:
+                            spi = machine.SPI.Device(spi_bus=spi_bus, baudrate=baudrate, polarity=polarity, phase=phase)
                 
                 # 檢查 CS/RST 引腳 (從 GPIO 讀取)
                 cs_pin_num = gpio_cfg.get('cs', -1)

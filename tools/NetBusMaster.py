@@ -1171,7 +1171,7 @@ class NetBusMaster:
         cfg = self._load_cached_json(self._get_cached_config_path(tid))
         mount = self._get_sd_mount_from_config(cfg)
         if mount:
-            return f"{mount}/data.bin"
+            return f"/{mount}/data.bin"
 
         manifest = self._load_cached_json(self._get_cached_manifest_path(tid))
         if self._manifest_has_path_prefix(manifest, "/sd"):

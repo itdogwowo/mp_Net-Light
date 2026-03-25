@@ -3,6 +3,7 @@ from lib.LEDController import *
 from lib.ConfigManager import *
 from lib.sys_bus import bus
 from lib.network_manager import NetworkManager
+from lib.display_factory import init_display
 import machine, os
 
 
@@ -31,21 +32,68 @@ def init_network_manager(sysBus):
 
 def init_bus(sysBus):
     
-    # 這裡保持你的硬體配置
     SPI_config = sysBus.shared['SPI']
     spi_list = []
     if SPI_config['enable']:
-        for i in SPI_config['list']:
-            spi = machine.SPI(i['id'],
-                baudrate=i['baudrate'],
-                polarity=i['polarity'],
-                phase=i['phase'],
-                sck=machine.Pin(i['GPIO']['sck']) if i['GPIO']['sck'] else None ,
-                mosi=machine.Pin(i['GPIO']['mosi']) if i['GPIO']['mosi'] else None ,
-                miso=machine.Pin(i['GPIO']['miso']) if i['GPIO']['miso'] else None
-            )
-            spi_list.append(spi)            
+        spi_bus_list = []
+        use_bus = hasattr(machine.SPI, "Bus")
+        use_dev = hasattr(machine.SPI, "Device")
+
+        def _pin(v):
+            if v is None:
+                return None
+            return machine.Pin(int(v))
+
+        for cfg in SPI_config['list']:
+            host = int(cfg['id'])
+            baudrate = int(cfg.get('baudrate', 8_000_000) or 8_000_000)
+            polarity = int(cfg.get('polarity', 0) or 0)
+            phase = int(cfg.get('phase', 0) or 0)
+            gpio = cfg.get('GPIO') or {}
+            sck = _pin(gpio.get('sck'))
+            mosi = _pin(gpio.get('mosi'))
+            miso = _pin(gpio.get('miso'))
+
+            spi = None
+            spi_bus = None
+
+            if use_bus:
+                try:
+                    spi_bus = machine.SPI.Bus(host=host, mosi=mosi, miso=miso, sck=sck)
+                except Exception:
+                    spi_bus = None
+
+            if spi_bus is not None and use_dev:
+                try:
+                    spi = machine.SPI.Device(spi_bus=spi_bus, freq=baudrate, polarity=polarity, phase=phase)
+                except TypeError:
+                    try:
+                        spi = machine.SPI.Device(spi_bus=spi_bus, baudrate=baudrate, polarity=polarity, phase=phase)
+                    except Exception:
+                        spi = None
+                except Exception:
+                    spi = None
+
+            if spi is None:
+                try:
+                    spi = machine.SPI(
+                        host,
+                        baudrate=baudrate,
+                        polarity=polarity,
+                        phase=phase,
+                        sck=sck,
+                        mosi=mosi,
+                        miso=miso,
+                    )
+                except Exception:
+                    spi = None
+
+            spi_bus_list.append(spi_bus)
+            spi_list.append(spi)
+
         sysBus.register_service("spi_list", spi_list)
+        if use_bus:
+            sysBus.register_service("spi_bus_list", spi_bus_list)
         
     I2C_config = sysBus.shared['I2C']
     i2c_list = []
@@ -109,7 +157,24 @@ def init_led(sysBus):
             for i in APA102_config['list']:
                 try:
                     spi_list = sysBus.get_service("spi_list")
-                    apa = APA102(spi_list[i['GPIO']['spi']], num_leds=i['Q'])
+                    spi_idx = i['GPIO']['spi']
+                    spi = spi_list[spi_idx] if spi_list and spi_idx < len(spi_list) else None
+                    if spi is None:
+                        spi_bus_list = sysBus.get_service("spi_bus_list")
+                        if spi_bus_list and spi_idx < len(spi_bus_list) and hasattr(machine.SPI, "Device"):
+                            cfg_spi = sysBus.shared.get("SPI", {}).get("list", [])[spi_idx]
+                            baudrate = int(cfg_spi.get('baudrate', 8_000_000) or 8_000_000)
+                            polarity = int(cfg_spi.get('polarity', 0) or 0)
+                            phase = int(cfg_spi.get('phase', 0) or 0)
+                            spi_bus = spi_bus_list[spi_idx]
+                            try:
+                                spi = machine.SPI.Device(spi_bus=spi_bus, freq=baudrate, polarity=polarity, phase=phase)
+                            except TypeError:
+                                spi = machine.SPI.Device(spi_bus=spi_bus, baudrate=baudrate, polarity=polarity, phase=phase)
+                    if spi is None:
+                        raise Exception("SPI not available for APA102")
+
+                    apa = APA102(spi, num_leds=i['Q'])
                     apa1022_list.append(LEDController('APA102', {'led_IO': apa, 'Q': i['Q'], 'order': i['order']}))
                 except Exception as e:
                     print(f"❌ APA102 at SPI ID {i['GPIO']['spi']} error: {e}")
@@ -151,6 +216,7 @@ def init_sd(sysBus):
 init_network_manager(bus)
 init_bus(bus)
 init_led(bus)
+init_display(bus)
 init_st(bus)
 init_sd(bus)
 
