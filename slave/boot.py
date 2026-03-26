@@ -198,10 +198,15 @@ def init_sd(sysBus):
     config = sysBus.shared['SDcard']
     _phat = ''
     if config['enable'] and not exists(config["phat"]):
+        _phat = config["phat"]
         try:
             from esp32 import LDO
-            _phat = config["phat"]
             ldo = LDO(config['LDO']['id'], config['LDO']['mv'], adjustable=True)
+            
+        except Exception as e:
+            print(f"❌ SD card init error: {e}")
+            
+        try:
             sd = machine.SDCard(slot=config['config']['slot'], width=config['config']['width'],
                 sck=config['GPIO']['sck'], cmd=config['GPIO']['cmd'],
                 data=config['GPIO']['data'],
