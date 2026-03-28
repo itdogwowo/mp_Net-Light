@@ -4,6 +4,13 @@
     "upt_port": 9000,
     "deploy_timeout": 120,
     "max_workers": 50,
+    "download_chunk_size": 2048,
+    "download_chunk_min": 1024,
+    "upload_chunk_size": 1024,
+    "upload_ack_timeout": 5.0,
+    "upload_begin_timeout": 5.0,
+    "upload_validation_timeout": 30.0,
+    "download_read_timeout": 5.0,
     "mapping": {
         "80F1B2D1F7DE": {
             "play_id": 0,
@@ -158,8 +165,8 @@
             "last_sha": ""
         },
         "80F1B2D1F63B": {
-            "play_id": 38,
-            "last_sha": ""
+            "play_id": 0,
+            "last_sha": "9e8e4d1848b6146e3a4ad37c38a8de9ea2dcc5cfec426df9bc9136268477c3dc"
         },
         "80F1B2D1B823": {
             "play_id": 39,
