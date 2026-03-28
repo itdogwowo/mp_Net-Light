@@ -30,7 +30,7 @@ class SchemaCodec:
                     out[name] = bytes(payload[pos : pos + flen]); pos += flen
                 elif t == "bytes_rest":
                     # 🚀 [修正] 提取剩下的所有數據到 data
-                    out[name] = bytes(payload[pos:])
+                    out[name] = memoryview(payload)[pos:]
                     pos = payload_len
             except Exception as e:
                 print(f"❌ [Codec] Decode field '{name}' error: {e}")

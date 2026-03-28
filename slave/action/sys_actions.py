@@ -21,6 +21,13 @@ def on_connect_request(bus_manager, url):
     url: 完整的 ws://... 網址
     """
     try:
+        last_url = getattr(bus_manager, "_last_url", None)
+        if bus_manager.connected and last_url == url:
+            if hasattr(bus_manager, "ping") and bus_manager.ping():
+                return True
+            bus_manager.disconnect()
+            time.sleep_ms(50)
+
         # 1. 解析 URL
         parts = url.replace("ws://", "").split("/", 1)
         hp = parts[0].split(":")
@@ -37,12 +44,15 @@ def on_connect_request(bus_manager, url):
         if bus_manager.connected:
             peer = getattr(bus_manager, "_peer", None)
             if peer == (h, p, path):
-                return True
+                if hasattr(bus_manager, "ping") and bus_manager.ping():
+                    return True
+                bus_manager.disconnect()
+                time.sleep_ms(50)
+            else:
+                print(f"🔄 [Network] Active connection detected, resetting for: {h}:{p}{path}")
+                bus_manager.disconnect()
+                time.sleep_ms(50)
 
-            print(f"🔄 [Network] Active connection detected, resetting for: {h}:{p}{path}")
-            bus_manager.disconnect()
-            time.sleep_ms(50)
-            
         # 3. 執行新連接
         # 注意: bus_manager.connect 內部的 settimeout(5) 會阻塞 Core0 少許時間
         # 但對於控制信道切換這是必要的。
@@ -50,6 +60,8 @@ def on_connect_request(bus_manager, url):
         res = bus_manager.connect(h, p, path=path)
 
         if res:
+             bus_manager._last_url = url
+             bus_manager._peer = (h, p, path)
              bus_sys = bus.shared["System"]
              # 針對性無損更新 
              if bus_sys.get("master_IP") != h: 
@@ -83,8 +95,6 @@ def on_discover(ctx, args):
     # 從 ctx 中獲取 ctrl_bus 實例
     ctrl_bus = ctx.get("ctrl_bus")
     if ctrl_bus:
-        if ctrl_bus.connected:
-            return
         on_connect_request(ctrl_bus, full_url)
 
 def on_sys_info_get(ctx, args):
