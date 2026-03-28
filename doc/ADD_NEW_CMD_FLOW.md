@@ -31,15 +31,14 @@
 ### Step 2：在對應的 schema 檔新增 cmd 定義
 例如新增 status 指令，就改 `/schema/status.json`
 
-範例（新增一個 payload 有 2 個欄位的 cmd）：
+範例（在 `cmds` 內新增一個 payload 有 1 個欄位的 cmd）：
 
 ```json
 {
   "cmd": "0x1101",
   "name": "STATUS_GET",
   "payload": [
-    {"name": "flags", "type": "u16"},
-    {"name": "detail", "type": "u8"}
+    {"name": "query_type", "type": "u8"}
   ]
 }
 ```
@@ -77,9 +76,7 @@ def on_xxx(ctx, args):
 在同一個 action 檔（或 registry 檔）加入：
 
 ```python
-from lib.schema_loader import cmd_str_to_int
-
-CMD_STATUS_GET = cmd_str_to_int("0x1101")
+CMD_STATUS_GET = int("0x1101", 16)
 app.disp.on(CMD_STATUS_GET, on_status_get)
 ```
 
@@ -91,9 +88,9 @@ app.disp.on(CMD_STATUS_GET, on_status_get)
 ## 2) 新增完如何驗證？
 ### A) 離線 loopback 測試（最快）
 在 `main.py` 或你自己的測試腳本：
-1) 用 `encode_payload(cmd_def, obj)` 建 payload
-2) 用 `pack_packet(cmd, payload)` 組包
-3) 丟給 `app.on_rx_bytes(pkt)`
+1) 用 `SchemaCodec.encode(cmd_def, obj)` 建 payload
+2) 用 `Proto.pack(cmd, payload)` 組包
+3) 建立 `parser = app.create_parser()`，丟給 `app.handle_stream(parser, pkt)`
 
 ### B) 網路測試（真實接收）
 啟動 `main.py` 的 TCP server（見 RUN_NETWORK_SERVER.md），用 server 端發送封包即可測。

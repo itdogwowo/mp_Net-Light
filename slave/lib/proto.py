@@ -23,80 +23,107 @@ if not IS_MICROPYTHON:
 else:
     # 這裡是 MicroPython 環境
     import micropython
+    import ubinascii as binascii
+
+if not IS_MICROPYTHON:
+    import binascii
 
 # --- 協議常量 ---
 SOF = b"NL"
-CUR_VER = 3
+CUR_VER = 4
 ADDR_BROADCAST = 0xFFFF
 MAX_LEN_DEFAULT = 8192
 
 HDR_FMT = "<2sBHHH"
 HDR_LEN = 9 # struct.calcsize(HDR_FMT)
-CRC_FMT = "<H"
-CRC_LEN = 2
+CRC_FMT = "<I"
+CRC_LEN = 4
 
 class Proto:
-    @micropython.viper
-    def crc16(data: ptr8, length: int) -> int:
-        """高性能 CRC16 內核"""
-        crc: int = 0xFFFF
-        for i in range(length):
-            crc ^= data[i] << 8
-            for _ in range(8):
-                if crc & 0x8000:
-                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-                else:
-                    crc = (crc << 1) & 0xFFFF
-        return crc
+    @staticmethod
+    def crc32_update(data, crc=0):
+        return binascii.crc32(data, crc)
 
     @staticmethod
     def pack(cmd: int, payload: bytes = b"", addr: int = ADDR_BROADCAST) -> bytes:
         if payload is None: payload = b""
         ln = len(payload)
         header = struct.pack(HDR_FMT, SOF, CUR_VER, addr, cmd, ln)
-        crc_data = header[2:] + payload
-        # 注意：在 PC 上傳入內容給 Viper (crc16) 函數也是沒問題的
-        crc_val = Proto.crc16(crc_data, len(crc_data))
+        crc_val = Proto.crc32_update(header[2:], 0)
+        crc_val = Proto.crc32_update(payload, crc_val)
         return header + payload + struct.pack(CRC_FMT, crc_val)
 
 class StreamParser:
     def __init__(self, max_len=MAX_LEN_DEFAULT):
         self.max_len = max_len
-        self.buf = bytearray()
+        self._buf = bytearray(max_len + HDR_LEN + CRC_LEN)
+        self._mv = memoryview(self._buf)
+        self._start = 0
+        self._end = 0
         
-    def feed(self, data: bytes):
-        if data: self.buf.extend(data)
+    def feed(self, data):
+        if not data:
+            return
+        ln = len(data)
+        cap = len(self._buf)
+        if ln > cap:
+            self._start = 0
+            self._end = 0
+            return
+
+        free = cap - self._end
+        if free < ln and self._start:
+            keep = self._end - self._start
+            if keep:
+                self._mv[:keep] = self._mv[self._start:self._end]
+            self._start = 0
+            self._end = keep
+            free = cap - self._end
+
+        if free < ln:
+            self._start = 0
+            self._end = 0
+            return
+
+        self._mv[self._end:self._end + ln] = data
+        self._end += ln
 
     def pop(self):
-        # 這裡直接使用 HDR_LEN
-        while len(self.buf) >= HDR_LEN:
-            idx = self.buf.find(SOF)
+        while (self._end - self._start) >= HDR_LEN:
+            idx = self._buf.find(SOF, self._start, self._end)
             if idx < 0:
-                self.buf = bytearray()
+                self._start = 0
+                self._end = 0
                 return
-            if idx > 0:
-                self.buf = self.buf[idx:]
-            
-            if len(self.buf) < HDR_LEN: return
-            
-            # 使用 struct.unpack 替代 Struct.unpack_from
-            hdr = struct.unpack(HDR_FMT, self.buf[:HDR_LEN])
-            sof, ver, addr, cmd, ln = hdr
-            
+
+            if idx != self._start:
+                self._start = idx
+                if (self._end - self._start) < HDR_LEN:
+                    return
+
+            sof, ver, addr, cmd, ln = struct.unpack_from(HDR_FMT, self._buf, self._start)
+
             if ver != CUR_VER or ln > self.max_len:
-                self.buf = self.buf[1:]
+                self._start += 1
                 continue
-                
+
             total_len = HDR_LEN + ln + CRC_LEN
-            if len(self.buf) < total_len: return
-            
-            payload = self.buf[HDR_LEN : HDR_LEN + ln]
-            # 獲取最後兩個字節作為 CRC
-            crc_received = struct.unpack(CRC_FMT, self.buf[HDR_LEN + ln : total_len])[0]
-            
-            calc_area = self.buf[2 : HDR_LEN + ln]
-            if Proto.crc16(calc_area, len(calc_area)) == crc_received:
-                self.buf = self.buf[total_len:]
-                yield ver, addr, cmd, bytes(payload)
+            if (self._end - self._start) < total_len:
+                return
+
+            payload_start = self._start + HDR_LEN
+            payload_end = payload_start + ln
+            crc_received = struct.unpack_from(CRC_FMT, self._buf, payload_end)[0]
+
+            crc_start = self._start + 2
+            crc_len = payload_end - crc_start
+            crc_calc = Proto.crc32_update(self._mv[crc_start:payload_end], 0)
+            if (crc_calc & 0xFFFFFFFF) == crc_received:
+                payload = self._mv[payload_start:payload_end]
+                self._start += total_len
+                if self._start == self._end:
+                    self._start = 0
+                    self._end = 0
+                yield ver, addr, cmd, payload
             else:
-                self.buf = self.buf[1:]
+                self._start += 1

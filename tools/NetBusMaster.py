@@ -18,7 +18,14 @@ DEFAULT_CONFIG = {
     "ws_port": 8000,
     "upt_port": 9000,
     "deploy_timeout": 120,
-    "max_workers": 50
+    "max_workers": 50,
+    "download_chunk_size": 1024 *2,
+    "download_chunk_min": 1024,
+    "upload_chunk_size": 1024,
+    "upload_ack_timeout": 5.0,
+    "upload_begin_timeout": 5.0,
+    "upload_validation_timeout": 30.0,
+    "download_read_timeout": 5.0
 }
 
 # ==================== 跨平台輸入處理 ====================
@@ -141,6 +148,7 @@ class DeviceMonitor:
         self.uploaded_bytes = 0
         self.total_bytes = 0
         self.upload_start_time = 0
+        self.transfer_label = ""
         
         # ========== 播放階段數據 ==========
         self.total_frames = 0
@@ -257,6 +265,7 @@ class MonitorPanel:
         self.refresh_rate = 0.1
         self.render_thread = None
         self.interactive_mode = False
+        self.controls_text = None
     
     def register_device(self, device_id, play_id=None, total_frames=0):
         with self.lock:
@@ -292,10 +301,11 @@ class MonitorPanel:
             if device_id in self.monitors:
                 self.monitors[device_id].status = "離線"
     
-    def start(self, interactive=False):
+    def start(self, interactive=False, controls_text=None):
+        self.controls_text = controls_text
+        self.interactive_mode = interactive or bool(controls_text)
         if not self.running:
             self.running = True
-            self.interactive_mode = interactive
             ConsoleUI.hide_cursor()
             ConsoleUI.clear_screen()
             self.render_thread = threading.Thread(target=self._render_loop, daemon=True)
@@ -340,7 +350,7 @@ class MonitorPanel:
             buffer.append(bottom)
             
             if self.interactive_mode:
-                controls = "║  [SPACE] 暫停/繼續  │  [S] 停止播放  │  [Q] 退出                                                              ║"
+                controls = self.controls_text or "║  [SPACE] 暫停/繼續  │  [S] 停止  │  [Q] 退出                                                                  ║"
                 buffer.append(controls)
             
             footer = "╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝"
@@ -366,17 +376,21 @@ class MonitorPanel:
             "無響應": "\033[31m" # 暗紅/紅色
         }
         status_color = status_colors.get(monitor.status, "\033[0m")
-        # 簡單處理包含進度的狀態字串 (如 "Up 1/32")
-        if "Up " in monitor.status:
+        if monitor.transfer_label:
             status_color = "\033[93m"
             
-        status_str = f"{status_color}{monitor.status:<6}{ConsoleUI.reset_color()}"
+        status_disp = monitor.status
+        if len(status_disp) > 6:
+            status_disp = status_disp[:6]
+        status_str = f"{status_color}{status_disp:<6}{ConsoleUI.reset_color()}"
         
-        if monitor.status == "傳輸中" or monitor.status == "下載中" or "Up " in monitor.status:
+        if monitor.status == "傳輸中" or monitor.status == "下載中" or monitor.transfer_label:
             progress_bar = ConsoleUI.draw_progress_bar(monitor.upload_progress, width=20)
             speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
             size_str = f"{monitor.uploaded_bytes//1024}/{monitor.total_bytes//1024} KB"
             info = f"{progress_bar} │ {speed_str} │ {size_str}"
+            if monitor.transfer_label:
+                info = f"{info} │ {monitor.transfer_label[:16]}"
         
         elif monitor.status in ["播放中", "暫停"]:
             play_progress = monitor.get_play_progress()
@@ -551,6 +565,9 @@ class NetBusMaster:
         self.selected_targets = []
         self.prepared_data = {}
         self.pxld_metadata = {}
+        self.transfer_cancel = threading.Event()
+        self._transfer_kb_stop = threading.Event()
+        self._transfer_kb_thread = None
         
         threading.Thread(target=self.start_ws_server, daemon=True).start()
     
@@ -897,6 +914,332 @@ class NetBusMaster:
         input("\n按 Enter 返回...")
         self.panel.start()
 
+    def _cfg_int(self, key, default):
+        try:
+            return int(self.config.get(key, default))
+        except Exception:
+            return int(default)
+
+    def _cfg_float(self, key, default):
+        try:
+            return float(self.config.get(key, default))
+        except Exception:
+            return float(default)
+
+    def _transfer_begin(self):
+        self.transfer_cancel.clear()
+        self._transfer_kb_stop.clear()
+        self.panel.start(
+            interactive=True,
+            controls_text="║  [S] 停止傳輸  │  [Q] 退出                                                                  ║",
+        )
+        input_handler.enter_raw_mode()
+        input_handler.flush_input()
+
+        def _kb_loop():
+            while not self._transfer_kb_stop.is_set():
+                if input_handler.kbhit():
+                    try:
+                        key = input_handler.getch()
+                        if isinstance(key, bytes):
+                            key = key.decode('utf-8', errors='ignore')
+                        key = (key or "").lower()
+                        if key in ("s", "q", "\x03"):
+                            self.transfer_cancel.set()
+                            return
+                    except Exception:
+                        pass
+                time.sleep(0.05)
+
+        t = threading.Thread(target=_kb_loop, daemon=True)
+        self._transfer_kb_thread = t
+        t.start()
+
+    def _transfer_end(self):
+        self._transfer_kb_stop.set()
+        t = self._transfer_kb_thread
+        if t:
+            try:
+                t.join(timeout=0.2)
+            except Exception:
+                pass
+        self._transfer_kb_thread = None
+        input_handler.exit_raw_mode()
+        input_handler.flush_input()
+        if self.panel.running:
+            self.panel.start(interactive=False, controls_text=None)
+        else:
+            self.panel.interactive_mode = False
+            self.panel.controls_text = None
+
+    def _wait_evt(self, evt, timeout):
+        end = time.time() + float(timeout)
+        while time.time() < end:
+            if self.transfer_cancel.is_set():
+                return False, "cancel"
+            if evt.wait(timeout=0.05):
+                return True, None
+        return False, "timeout"
+
+    def _upload_bytes(self, tid, data, remote_path, file_idx=1, total_files=1, file_id=None):
+        node = self.slaves.get(tid)
+        if not node:
+            raise Exception("Device Offline")
+        if self.transfer_cancel.is_set():
+            raise Exception("已停止")
+
+        if data is None:
+            data = b""
+
+        local_sha = hashlib.sha256(data).digest()
+        total_len = len(data)
+        chunk_size = self._cfg_int("upload_chunk_size", 1024)
+        ack_timeout = self._cfg_float("upload_ack_timeout", 5.0)
+        begin_timeout = self._cfg_float("upload_begin_timeout", 5.0)
+        validation_timeout = self._cfg_float("upload_validation_timeout", 30.0)
+
+        if file_id is None:
+            file_id = int(file_idx)
+
+        self.panel.update_device(
+            tid,
+            status="傳輸中",
+            transfer_label=f"Up {file_idx}/{total_files}",
+            upload_progress=0,
+            uploaded_bytes=0,
+            total_bytes=total_len,
+            upload_start_time=time.time()
+        )
+
+        self.send_pkt([tid], 0x2001, {
+            "file_id": file_id,
+            "total_size": total_len,
+            "chunk_size": chunk_size,
+            "sha256": local_sha,
+            "path": remote_path
+        })
+
+        node["query_event"].clear()
+        node["remote_sha"] = None
+        self.send_pkt([tid], 0x2005, {"path": remote_path})
+
+        ok, why = self._wait_evt(node["query_event"], begin_timeout)
+        if not ok:
+            if why == "cancel":
+                raise Exception("已停止")
+            raise Exception("FILE_BEGIN Handshake Timeout")
+
+        start_time = time.time()
+
+        for off in range(0, total_len, chunk_size):
+            if self.transfer_cancel.is_set():
+                raise Exception("已停止")
+            chunk = data[off : off + chunk_size]
+            node["ack_event"].clear()
+            self.send_pkt([tid], 0x2002, {
+                "file_id": file_id,
+                "offset": off,
+                "data": chunk
+            })
+
+            ok, why = self._wait_evt(node["ack_event"], ack_timeout)
+            if not ok:
+                if why == "cancel":
+                    raise Exception("已停止")
+                raise Exception(f"Timeout at offset {off}")
+
+            done = off + len(chunk)
+            elapsed = time.time() - start_time
+            speed = (done / 1024) / elapsed if elapsed > 0 else 0
+            progress = (done / total_len) * 100 if total_len > 0 else 100
+
+            self.panel.update_device(
+                tid,
+                upload_progress=progress,
+                upload_speed=speed,
+                uploaded_bytes=done
+            )
+
+        node["query_event"].clear()
+        node["remote_sha"] = None
+        self.send_pkt([tid], 0x2003, {"file_id": file_id})
+
+        ok, why = self._wait_evt(node["query_event"], validation_timeout)
+        if ok:
+            remote_sha = node["remote_sha"]
+            if remote_sha != local_sha:
+                raise Exception(f"SHA Mismatch: {remote_sha.hex()[:8]} != {local_sha.hex()[:8]}")
+        else:
+            if why == "cancel":
+                raise Exception("已停止")
+            raise Exception("Validation Timeout (No 0x2006 response)")
+
+        return local_sha
+
+    def _download_to_writer(self, target, remote_path, writer, expected_size=None, status="下載中"):
+        node = self.slaves.get(target)
+        if not node:
+            raise Exception("設備離線")
+        if self.transfer_cancel.is_set():
+            raise Exception("已停止")
+
+        if expected_size is None:
+            node["query_event"].clear()
+            node["remote_size"] = 0
+            self.send_pkt([target], 0x2005, {"path": remote_path})
+            ok, why = self._wait_evt(node["query_event"], 3.0)
+            if not ok:
+                if why == "cancel":
+                    raise Exception("已停止")
+                raise Exception("查詢超時, 無法獲取文件大小")
+            expected_size = node["remote_size"]
+
+        expected_size = int(expected_size or 0)
+        if expected_size <= 0:
+            return 0, expected_size
+
+        chunk_size = self._cfg_int("download_chunk_size", 1024)
+        chunk_min = self._cfg_int("download_chunk_min", 1024)
+        read_timeout = self._cfg_float("download_read_timeout", 5.0)
+
+        self.panel.update_device(
+            target,
+            status="傳輸中",
+            transfer_label=status,
+            uploaded_bytes=0,
+            total_bytes=expected_size,
+            upload_start_time=time.time(),
+            upload_progress=0,
+            upload_speed=0
+        )
+
+        offset = 0
+        start_time = time.time()
+        while offset < expected_size:
+            if self.transfer_cancel.is_set():
+                raise Exception("已停止")
+            node["read_event"].clear()
+            node["read_data"] = None
+
+            req_len = chunk_size
+            remain = expected_size - offset
+            if req_len > remain:
+                req_len = remain
+
+            self.send_pkt([target], 0x2007, {
+                "path": remote_path,
+                "offset": offset,
+                "length": req_len
+            })
+
+            ok, why = self._wait_evt(node["read_event"], read_timeout)
+            if not ok:
+                if why == "cancel":
+                    raise Exception("已停止")
+                if chunk_size > chunk_min:
+                    next_req = chunk_size // 2
+                    if next_req < chunk_min:
+                        next_req = chunk_min
+                    print(f"⚠️ 下載超時，chunk {chunk_size} -> {next_req} (path={remote_path}, off={offset})")
+                    chunk_size = next_req
+                    continue
+                raise Exception(f"下載超時 at offset {offset} (chunk={chunk_size})")
+
+            chunk = node["read_data"]
+            if not chunk:
+                break
+
+            writer(chunk)
+            offset += len(chunk)
+
+            elapsed = time.time() - start_time
+            speed = (offset / 1024) / elapsed if elapsed > 0 else 0
+            progress = (offset / expected_size) * 100 if expected_size > 0 else 100
+
+            self.panel.update_device(
+                target,
+                upload_progress=progress,
+                upload_speed=speed,
+                uploaded_bytes=offset,
+                total_bytes=expected_size
+            )
+
+        return offset, expected_size
+
+    def _download_bytes(self, target, remote_path, expected_size=None, status="下載中"):
+        buf = bytearray()
+        done, total = self._download_to_writer(
+            target,
+            remote_path,
+            buf.extend,
+            expected_size=expected_size,
+            status=status
+        )
+        if total > 0 and done <= 0:
+            return None
+        return bytes(buf)
+
+    def _download_file(self, target, remote_path, local_path, expected_size=None, status="下載中"):
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "wb") as f:
+            done, total = self._download_to_writer(
+                target,
+                remote_path,
+                f.write,
+                expected_size=expected_size,
+                status=status
+            )
+        if total > 0 and done <= 0:
+            return False
+        return True
+
+    def _run_upload_batch(self, files_to_upload, targets=None):
+        if targets is None:
+            targets = self.selected_targets
+
+        if not targets:
+            return
+
+        self._transfer_begin()
+
+        for tid in targets:
+            self.panel.update_device(tid, status="準備中", transfer_label="", upload_progress=0)
+
+        max_workers = self.config.get("max_workers", 10)
+
+        def _task(tid):
+            try:
+                for i, (l_path, r_path) in enumerate(files_to_upload):
+                    if self.transfer_cancel.is_set():
+                        raise Exception("已停止")
+                    retry_count = 0
+                    while retry_count < 3:
+                        try:
+                            with open(l_path, "rb") as f:
+                                data = f.read()
+                            self._upload_bytes(tid, data, r_path, file_idx=i + 1, total_files=len(files_to_upload))
+                            break
+                        except Exception as e:
+                            if str(e) == "已停止":
+                                raise
+                            retry_count += 1
+                            if retry_count >= 3:
+                                raise e
+                            self.panel.update_device(tid, status=f"Retry {retry_count} {r_path[:10]}...")
+                            time.sleep(1)
+                self.panel.update_device(tid, status="完成", transfer_label="", upload_progress=100)
+            except Exception as e:
+                if str(e) == "已停止" or self.transfer_cancel.is_set():
+                    self.panel.update_device(tid, status="已停止", transfer_label="", error_msg="")
+                else:
+                    self.panel.update_device(tid, status="錯誤", transfer_label="", error_msg=str(e))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_task, tid): tid for tid in targets}
+            for f in futures:
+                f.result()
+        self._transfer_end()
+
     def _upload_generic_file(self, tid, local_path, remote_path, file_idx=1, total_files=1):
         try:
             with open(local_path, "rb") as f:
@@ -904,85 +1247,7 @@ class NetBusMaster:
         except Exception as e:
             raise Exception(f"Read local file failed: {e}")
 
-        node = self.slaves.get(tid)
-        if not node:
-            raise Exception("Device Offline")
-
-        local_sha = hashlib.sha256(data).digest()
-        total_len = len(data)
-        chunk_size = 1024 # 降低 Chunk Size 避免緩衝區擁塞
-        
-        # Update panel
-        self.panel.update_device(
-            tid,
-            status=f"Up {file_idx}/{total_files}",
-            upload_progress=0,
-            uploaded_bytes=0,
-            total_bytes=total_len,
-            upload_start_time=time.time()
-        )
-        
-        # 1. Send FILE_BEGIN
-        self.send_pkt([tid], 0x2001, {
-            "file_id": file_idx,
-            "total_size": total_len,
-            "chunk_size": chunk_size,
-            "sha256": local_sha,
-            "path": remote_path
-        })
-        
-        # 2. Wait for Ready (Handshake)
-        # 利用 Query 確認 MCU 已經處理完 BEGIN 並且文件句柄已打開
-        # 這比單純 sleep 更可靠，能防止 Begin 還沒處理完就塞 Chunk
-        node["query_event"].clear()
-        node["remote_sha"] = None
-        self.send_pkt([tid], 0x2005, {"path": remote_path})
-        
-        if not node["query_event"].wait(timeout=5.0):
-             raise Exception("FILE_BEGIN Handshake Timeout")
-             
-        start_time = time.time()
-        
-        # 3. Send FILE_CHUNK
-        for off in range(0, total_len, chunk_size):
-            chunk = data[off : off + chunk_size]
-            node["ack_event"].clear()
-            self.send_pkt([tid], 0x2002, {
-                "file_id": file_idx,
-                "offset": off,
-                "data": chunk
-            })
-            
-            if not node["ack_event"].wait(timeout=5.0):
-                raise Exception(f"Timeout at offset {off}")
-            
-            done = off + len(chunk)
-            elapsed = time.time() - start_time
-            speed = (done / 1024) / elapsed if elapsed > 0 else 0
-            progress = (done / total_len) * 100
-            
-            self.panel.update_device(
-                tid,
-                upload_progress=progress,
-                upload_speed=speed,
-                uploaded_bytes=done
-            )
-            
-        # 4. Send FILE_END
-        node["query_event"].clear()
-        node["remote_sha"] = None
-        self.send_pkt([tid], 0x2003, {"file_id": file_idx})
-        
-        # 5. Wait for Final SHA (via 0x2006 from Slave)
-        # Slave will automatically send 0x2006 after validation in on_file_end
-        if node["query_event"].wait(timeout=10.0):
-            remote_sha = node["remote_sha"]
-            if remote_sha == local_sha:
-                pass # Success
-            else:
-                raise Exception(f"SHA Mismatch: {remote_sha.hex()[:8]} != {local_sha.hex()[:8]}")
-        else:
-            raise Exception("Validation Timeout (No 0x2006 response)")
+        return self._upload_bytes(tid, data, remote_path, file_idx=file_idx, total_files=total_files)
 
     def _file_explorer(self):
         while True:
@@ -1026,13 +1291,8 @@ class NetBusMaster:
             return
             
         is_dir = os.path.isdir(local_input)
-        
-        # 2. 輸入目標路徑 (如果是文件夾，則作為根目錄前綴)
-        remote_input = input("👉 輸入目標路徑 [默認=/]: ").strip().replace("\\", "/")
-        if not remote_input:
-            remote_input = "/"
-        
-        # 3. 掃描文件
+
+        # 2. 掃描文件
         files_to_upload = []
         if is_dir:
             base_dir = os.path.abspath(local_input)
@@ -1043,25 +1303,12 @@ class NetBusMaster:
                     if file.endswith(".pyc"): continue
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, base_dir)
-                    # 構造遠端路徑: 目標路徑/相對路徑
-                    remote_path = os.path.join(remote_input, rel_path).replace("\\", "/")
-                    # 確保路徑以 / 開頭且無雙斜槓
-                    if not remote_path.startswith("/"):
-                        remote_path = "/" + remote_path
-                    remote_path = remote_path.replace("//", "/")
+                    remote_path = ("/" + rel_path.replace("\\", "/")).replace("//", "/")
                     files_to_upload.append((full_path, remote_path))
         else:
             # 單個文件
             filename = os.path.basename(local_input)
-            # 如果目標路徑以 / 結尾，視為目錄
-            if remote_input.endswith("/"):
-                remote_path = remote_input + filename
-            else:
-                remote_path = remote_input
-                
-            if not remote_path.startswith("/"):
-                remote_path = "/" + remote_path
-            remote_path = remote_path.replace("//", "/")
+            remote_path = ("/" + filename).replace("//", "/")
             files_to_upload.append((local_input, remote_path))
             
         if not files_to_upload:
@@ -1076,39 +1323,8 @@ class NetBusMaster:
         confirm = input("\n👉 確認上傳? (y/n): ").lower()
         if confirm != 'y':
             return
-            
-        self.panel.start()
-        
-        # Reset Status
-        for tid in self.selected_targets:
-            self.panel.update_device(tid, status="準備中", upload_progress=0)
-            
-        max_workers = self.config.get("max_workers", 10)
-        
-        # Helper for thread pool
-        def _task(tid):
-            try:
-                for i, (l_path, r_path) in enumerate(files_to_upload):
-                    retry_count = 0
-                    while retry_count < 3:
-                        try:
-                            self._upload_generic_file(tid, l_path, r_path, i+1, len(files_to_upload))
-                            break
-                        except Exception as e:
-                            retry_count += 1
-                            if retry_count >= 3:
-                                raise e
-                            self.panel.update_device(tid, status=f"Retry {retry_count} {r_path[:10]}...")
-                            time.sleep(1)
-                            
-                self.panel.update_device(tid, status="完成", upload_progress=100)
-            except Exception as e:
-                self.panel.update_device(tid, status="錯誤", error_msg=str(e))
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_task, tid): tid for tid in self.selected_targets}
-            for f in futures:
-                f.result()
+        self._run_upload_batch(files_to_upload, targets=self.selected_targets)
                 
         time.sleep(1)
         print("\n✅ 手動上傳完成")
@@ -1116,6 +1332,10 @@ class NetBusMaster:
         ConsoleUI.show_cursor()
 
     def _fe_download(self):
+        if self.panel.running:
+            self.panel.stop()
+        ConsoleUI.show_cursor()
+
         target = self.selected_targets[0]
         print(f"\n📥 [下載模式] 連接設備: {target}")
         
@@ -1126,32 +1346,20 @@ class NetBusMaster:
 
         # 1. 獲取 Manifest
         print("  正在獲取文件列表 (manifest.json)...")
-        # Reuse logic to download manifest content
-        node["query_event"].clear()
-        node["remote_size"] = 0
-        self.send_pkt([target], 0x2005, {"path": "/manifest.json"})
-        if not node["query_event"].wait(timeout=3.0):
-            print("⚠️ 無法獲取 manifest (可能需要先執行 Scan)")
+        self._transfer_begin()
+        try:
+            config_data = self._download_bytes(target, "/manifest.json", expected_size=None, status="Manifest")
+        finally:
+            self._transfer_end()
+        if not config_data:
+            if self.transfer_cancel.is_set():
+                print("ℹ️ 已停止")
+                return
+            print("❌ Manifest 下載失敗")
             return
-            
-        size = node["remote_size"]
-        if size == 0:
-            print("⚠️ Manifest 為空")
-            return
-            
-        # Download Manifest content
-        config_data = bytearray()
-        chunk_size = 1024
-        offset = 0
-        while offset < size:
-            node["read_event"].clear()
-            node["read_data"] = None
-            self.send_pkt([target], 0x2007, {"path": "/manifest.json", "offset": offset, "length": chunk_size})
-            if not node["read_event"].wait(timeout=5.0): break
-            chunk = node["read_data"]
-            if not chunk: break
-            config_data.extend(chunk)
-            offset += len(chunk)
+        if self.panel.running:
+            self.panel.stop()
+        ConsoleUI.show_cursor()
             
         try:
             manifest = json.loads(config_data.decode('utf-8'))
@@ -1191,59 +1399,40 @@ class NetBusMaster:
             os.makedirs(save_dir)
             
         print(f"\n📂 保存至: {save_dir}")
-        self.panel.start()
+        self._transfer_begin()
         
         # 執行下載
-        total_files = len(files_to_download)
-        for i, r_path in enumerate(files_to_download):
-            l_path = os.path.join(save_dir, r_path.lstrip("/"))
-            # Ensure dir
-            os.makedirs(os.path.dirname(l_path), exist_ok=True)
-            
-            # Update Panel
-            self.panel.update_device(target, status=f"下載 {i+1}/{total_files}", upload_progress=0)
-            
-            # Get Size from manifest
-            f_size = manifest[r_path]['s']
-            
-            with open(l_path, "wb") as f:
-                offset = 0
-                start_time = time.time()
-                while offset < f_size:
-                    node["read_event"].clear()
-                    node["read_data"] = None
-                    # Request chunk
-                    chunk_req = 1024 # 下載時可以大一點
-                    self.send_pkt([target], 0x2007, {"path": r_path, "offset": offset, "length": chunk_req})
-                    
-                    if not node["read_event"].wait(timeout=5.0):
-                        print(f"\n❌ Timeout {r_path}")
-                        break
-                        
-                    chunk = node["read_data"]
-                    if not chunk: break
-                    
-                    f.write(chunk)
-                    offset += len(chunk)
-                    
-                    # Progress
-                    progress = (offset / f_size) * 100 if f_size > 0 else 100
-                    elapsed = time.time() - start_time
-                    speed = (offset / 1024) / elapsed if elapsed > 0 else 0
-                    
-                    self.panel.update_device(
-                        target, 
-                        status=f"下載 {i+1}/{total_files}", 
-                        upload_progress=progress,
-                        upload_speed=speed,
-                        uploaded_bytes=offset,
-                        total_bytes=f_size
+        try:
+            total_files = len(files_to_download)
+            for i, r_path in enumerate(files_to_download):
+                if self.transfer_cancel.is_set():
+                    break
+                l_path = os.path.join(save_dir, r_path.lstrip("/"))
+                f_size = manifest[r_path]['s']
+                try:
+                    ok = self._download_file(
+                        target,
+                        r_path,
+                        l_path,
+                        expected_size=f_size,
+                        status=f"下載 {i+1}/{total_files}"
                     )
-                    
-        self.panel.update_device(target, status="下載完成", upload_progress=100)
-        time.sleep(1)
-        self.panel.stop()
-        ConsoleUI.show_cursor()
+                    if not ok:
+                        break
+                except Exception as e:
+                    if str(e) == "已停止" or self.transfer_cancel.is_set():
+                        break
+                    raise
+
+            if self.transfer_cancel.is_set():
+                self.panel.update_device(target, status="已停止", transfer_label="", upload_progress=0)
+            else:
+                self.panel.update_device(target, status="完成", transfer_label="", upload_progress=100)
+            time.sleep(1)
+        finally:
+            self._transfer_end()
+            self.panel.stop()
+            ConsoleUI.show_cursor()
         print("\n✅ 所有下載完成")
         input("按 Enter 返回...")
 
@@ -1330,38 +1519,7 @@ class NetBusMaster:
         if confirm != 'y':
             return
 
-        self.panel.start()
-        
-        # Reset Status
-        for tid in self.selected_targets:
-            self.panel.update_device(tid, status="準備中", upload_progress=0)
-            
-        max_workers = self.config.get("max_workers", 10)
-        
-        # Helper for thread pool
-        def _task(tid):
-            try:
-                for i, (l_path, r_path) in enumerate(files_to_upload):
-                    retry_count = 0
-                    while retry_count < 3:
-                        try:
-                            self._upload_generic_file(tid, l_path, r_path, i+1, len(files_to_upload))
-                            break
-                        except Exception as e:
-                            retry_count += 1
-                            if retry_count >= 3:
-                                raise e
-                            self.panel.update_device(tid, status=f"Retry {retry_count} {r_path[:10]}...")
-                            time.sleep(1)
-                            
-                self.panel.update_device(tid, status="完成", upload_progress=100)
-            except Exception as e:
-                self.panel.update_device(tid, status="錯誤", error_msg=str(e))
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_task, tid): tid for tid in self.selected_targets}
-            for f in futures:
-                f.result()
+        self._run_upload_batch(files_to_upload, targets=self.selected_targets)
                 
         time.sleep(1)
         print("\n✅ 固件更新完成")
@@ -1380,71 +1538,30 @@ class NetBusMaster:
         node["remote_sha"] = None
         node["remote_size"] = 0
         self.send_pkt([target], 0x2005, {"path": "/config.json"})
-        if node["query_event"].wait(timeout=3.0):
+        ok, why = self._wait_evt(node["query_event"], 3.0)
+        if ok:
             sha_hex = node["remote_sha"].hex() if node["remote_sha"] else "None"
             size = node["remote_size"]
             print(f"  Remote SHA: {sha_hex}")
             print(f"  Remote Size: {size} bytes")
         else:
+            if why == "cancel":
+                self.panel.update_device(target, status="已停止", transfer_label="", error_msg="")
+                return
             print("⚠️ 查詢超時, 無法獲取文件大小")
             return
             
-        # Download Loop
-        config_data = bytearray()
-        chunk_size = 1024
-        
-        # Init progress bar
-        self.panel.update_device(
-            target,
-            status="下載中",
-            uploaded_bytes=0,
-            total_bytes=size,
-            upload_start_time=time.time()
-        )
-        
-        offset = 0
-        start_time = time.time()
-        
-        while offset < size:
-            node["read_event"].clear()
-            node["read_data"] = None
-            
-            # Request chunk
-            # 這裡的 length 如果超過剩餘大小也沒關係，f.read 會處理
-            self.send_pkt([target], 0x2007, {
-                "path": "/config.json",
-                "offset": offset,
-                "length": chunk_size
-            })
-            
-            if not node["read_event"].wait(timeout=5.0):
-                print(f"❌ 下載超時 at offset {offset}")
-                self.panel.update_device(target, status="錯誤")
-                return
-                
-            chunk = node["read_data"]
-            if not chunk:
-                break # EOF or error
-                
-            config_data.extend(chunk)
-            offset += len(chunk)
-            
-            # Update Panel
-            elapsed = time.time() - start_time
-            speed = (offset / 1024) / elapsed if elapsed > 0 else 0
-            progress = (offset / size) * 100 if size > 0 else 0
-            
-            self.panel.update_device(
-                target,
-                upload_progress=progress,
-                upload_speed=speed,
-                uploaded_bytes=offset
-            )
-            
-            # Small delay to prevent flooding if network is super fast (optional)
-            # time.sleep(0.01) 
-            
-        self.panel.update_device(target, status="下載完成", upload_progress=100)
+        self._transfer_begin()
+        try:
+            config_data = self._download_bytes(target, "/config.json", expected_size=size, status="Config")
+        finally:
+            self._transfer_end()
+
+        if not config_data:
+            self.panel.update_device(target, status="錯誤", transfer_label="")
+            return
+
+        self.panel.update_device(target, status="完成", transfer_label="", upload_progress=100)
         temp_path = "temp_config.json"
         
         try:
@@ -1475,20 +1592,11 @@ class NetBusMaster:
         confirm = input(f"👉 確認上傳到 {len(self.selected_targets)} 個設備? (y/n): ").lower()
         if confirm != 'y':
             return
-            
-        self.panel.start()
-        
-        def _task_config(tid):
-            try:
-                self._upload_generic_file(tid, temp_path, "/config.json", 1, 1)
-                self.panel.update_device(tid, status="配置更新", upload_progress=100)
-            except Exception as e:
-                self.panel.update_device(tid, status="錯誤", error_msg=str(e))
 
-        with ThreadPoolExecutor(max_workers=self.config.get("max_workers", 10)) as executor:
-            futures = {executor.submit(_task_config, tid): tid for tid in self.selected_targets}
-            for f in futures:
-                f.result()
+        self._run_upload_batch([(temp_path, "/config.json")], targets=self.selected_targets)
+
+        for tid in self.selected_targets:
+            self.panel.update_device(tid, status="配置更新", upload_progress=100)
                 
         print("\n✅ Config 更新完成")
         time.sleep(1)
@@ -1561,7 +1669,10 @@ class NetBusMaster:
         node["query_event"].clear()
         node["remote_size"] = 0
         self.send_pkt([target], 0x2005, {"path": "/manifest.json"})
-        if not node["query_event"].wait(timeout=3.0):
+        ok, why = self._wait_evt(node["query_event"], 3.0)
+        if not ok:
+            if why == "cancel":
+                return
             print("⚠️ 查詢超時 (Manifest 可能不存在)")
             return
             
@@ -1572,33 +1683,17 @@ class NetBusMaster:
             print("⚠️ 文件為空")
             return
 
-        # 2. Download Loop
-        config_data = bytearray()
-        chunk_size = 1024
-        offset = 0
-        
-        while offset < size:
-            node["read_event"].clear()
-            node["read_data"] = None
-            
-            self.send_pkt([target], 0x2007, {
-                "path": "/manifest.json",
-                "offset": offset,
-                "length": chunk_size
-            })
-            
-            if not node["read_event"].wait(timeout=5.0):
-                print(f"❌ 下載超時 at offset {offset}")
-                return
-                
-            chunk = node["read_data"]
-            if not chunk: break
-                
-            config_data.extend(chunk)
-            offset += len(chunk)
-            print(f"  Downloading... {offset}/{size} bytes", end='\r')
-            
+        self._transfer_begin()
+        try:
+            config_data = self._download_bytes(target, "/manifest.json", expected_size=size, status="Manifest")
+        finally:
+            self._transfer_end()
+        if not config_data:
+            print("❌ 下載失敗")
+            return
+
         print("\n✅ 下載完成")
+        self.panel.update_device(target, status="待機", transfer_label="")
         
         try:
             # Decode and Print
@@ -2100,25 +2195,30 @@ class NetBusMaster:
             self.panel.start()
             return
         
-        self.panel.start()
-        
-        for tid in self.selected_targets:
-            if tid not in final_targets:
-                self.panel.update_device(tid, status="待機", upload_progress=100)
-            else:
-                self.panel.update_device(tid, status="傳輸中", upload_progress=0)
-        
-        max_workers = self.config.get("max_workers", 50)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
+        self._transfer_begin()
+        try:
+            for tid in self.selected_targets:
+                if tid not in final_targets:
+                    self.panel.update_device(tid, status="待機", transfer_label="", upload_progress=100)
+                else:
+                    self.panel.update_device(tid, status="傳輸中", transfer_label="Deploy", upload_progress=0)
             
-            for future in futures:
-                tid = futures[future]
-                try:
-                    future.result()
-                    self.panel.update_device(tid, status="待機", upload_progress=100)
-                except Exception as e:
-                    self.panel.update_device(tid, status="錯誤", error_msg=str(e))
+            max_workers = self.config.get("max_workers", 50)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(self._deploy_to_single_slave, tid): tid for tid in final_targets}
+                
+                for future in futures:
+                    tid = futures[future]
+                    try:
+                        future.result()
+                        self.panel.update_device(tid, status="待機", transfer_label="", upload_progress=100)
+                    except Exception as e:
+                        if str(e) == "已停止" or self.transfer_cancel.is_set():
+                            self.panel.update_device(tid, status="已停止", transfer_label="", error_msg="")
+                        else:
+                            self.panel.update_device(tid, status="錯誤", transfer_label="", error_msg=str(e))
+        finally:
+            self._transfer_end()
         
         time.sleep(2)
         print("\n✅ 部署完成")
@@ -2130,57 +2230,8 @@ class NetBusMaster:
         
         if not node or data is None:
             raise Exception("無數據或離線")
-        
-        local_sha = hashlib.sha256(data).digest()
-        target_path = "/data.bin"
-        total_len = len(data)
-        chunk_size = 1024 * 1
-        
-        start_time = time.time()
-        
-        self.panel.update_device(
-            tid,
-            uploaded_bytes=0,
-            total_bytes=total_len,
-            upload_start_time=start_time
-        )
-        
-        self.send_pkt([tid], 0x2001, {
-            "file_id": 1,
-            "total_size": total_len,
-            "chunk_size": chunk_size,
-            "sha256": local_sha,
-            "path": target_path
-        })
-        time.sleep(0.1)
-        
-        for off in range(0, total_len, chunk_size):
-            chunk = data[off : off + chunk_size]
-            
-            node["ack_event"].clear()
-            self.send_pkt([tid], 0x2002, {
-                "file_id": 1,
-                "offset": off,
-                "data": chunk
-            })
-            
-            if not node["ack_event"].wait(timeout=5.0):
-                raise Exception(f"Offset {off} 超時")
-            
-            done = off + len(chunk)
-            elapsed = time.time() - start_time
-            speed = (done / 1024) / elapsed if elapsed > 0 else 0
-            progress = (done / total_len) * 100
-            
-            self.panel.update_device(
-                tid,
-                upload_progress=progress,
-                upload_speed=speed,
-                uploaded_bytes=done
-            )
-        
-        self.send_pkt([tid], 0x2003, {"file_id": 1})
-        
+
+        local_sha = self._upload_bytes(tid, data, "/data.bin", file_idx=1, total_files=1, file_id=1)
         self.config["mapping"][tid]["last_sha"] = local_sha.hex()
         self.save_config()
     
