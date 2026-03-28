@@ -2,6 +2,7 @@ import socket
 import struct
 import time
 from lib.sys_bus import bus
+from lib.buffer_hub import AtomicStreamHub
 
 class NetBus:
     """
@@ -19,13 +20,19 @@ class NetBus:
         self.sock = None
         self.connected = False
         self.target_addr = None # UDP 發送對象
+        self._peer = None
         
         # 內存隔離：每個 Bus 實例擁有獨立的緩衝區與解析器
         # 統一使用 Buffer.size 作為接收緩衝區大小
-        buf_size = bus.shared.get('Buffer', {}).get('size', 4096)
+        buf_cfg = bus.shared.get('Buffer', {}) or {}
+        buf_size = buf_cfg.get('size', 4096)
         self._buf = bytearray(buf_size)
         self._ptr = 0
         self.parser = app.create_parser() if app else None
+        self.rx_hub = None
+        rx_buffers = int(buf_cfg.get("rx_hub_buffers", 0) or 0)
+        if rx_buffers > 0:
+            self.rx_hub = AtomicStreamHub(buf_size, num_buffers=rx_buffers)
 
     def connect(self, host, port, path="/ws"):
         """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
@@ -54,6 +61,10 @@ class NetBus:
                 self.connected = True
             
             self.sock.settimeout(0)  # 統一進入非阻塞模式
+            if self.type == self.TYPE_UDP:
+                self._peer = ("0.0.0.0", port, "")
+            else:
+                self._peer = (host, port, path)
             print(f"✅ [{self.label}] Initialized")
             return True
         except Exception as e:
@@ -82,6 +93,7 @@ class NetBus:
             self.connected = False
             self.target_addr = None
             self._ptr = 0 # 清空緩衝區指針
+            self._peer = None
             print(f"🔌 [{self.label}] Connection Closed.")
 
     def poll(self, **extra_ctx):
@@ -94,16 +106,84 @@ class NetBus:
         if not self.connected or not self.sock: return
         
         try:
-            # 確保接收大小與緩衝區一致
-            recv_size = bus.shared.get('Buffer', {}).get('size', 4096)
-            if self.type == self.TYPE_UDP:
-                raw, addr = self.sock.recvfrom(recv_size)
-                self.target_addr = addr # 自動鎖定最後一個來源
-            else:
-                raw = self.sock.recv(recv_size)
-                if not raw: 
-                    self.connected = False
+            if self.rx_hub is not None:
+                view = self.rx_hub.get_write_view()
+                if view is None:
+                    if self.type == self.TYPE_UDP:
+                        try:
+                            self.sock.recvfrom(1024)
+                        except OSError:
+                            pass
+                    else:
+                        try:
+                            self.sock.recv(1024)
+                        except OSError:
+                            pass
                     return
+
+                n = 0
+                raw_mv = None
+                if self.type == self.TYPE_UDP:
+                    if hasattr(self.sock, "recvfrom_into"):
+                        n, addr = self.sock.recvfrom_into(view)
+                        self.target_addr = addr
+                        raw_mv = view[:n]
+                    else:
+                        raw_bytes, addr = self.sock.recvfrom(len(view))
+                        self.target_addr = addr
+                        n = len(raw_bytes)
+                        if n:
+                            view[:n] = raw_bytes
+                        raw_mv = view[:n]
+                else:
+                    if hasattr(self.sock, "recv_into"):
+                        n = self.sock.recv_into(view)
+                    elif hasattr(self.sock, "readinto"):
+                        n = self.sock.readinto(view)
+                    else:
+                        raw_bytes = self.sock.recv(len(view))
+                        n = len(raw_bytes)
+                        if n:
+                            view[:n] = raw_bytes
+                    if n is None:
+                        return
+                    if n == 0:
+                        self.connected = False
+                        return
+                    raw_mv = view[:n]
+
+                raw = raw_mv
+                self.rx_hub.commit()
+            else:
+                recv_size = len(self._buf)
+                if self.type == self.TYPE_UDP:
+                    if hasattr(self.sock, "recvfrom_into"):
+                        n, addr = self.sock.recvfrom_into(self._buf)
+                        self.target_addr = addr
+                        raw = memoryview(self._buf)[:n]
+                    else:
+                        raw_bytes, addr = self.sock.recvfrom(recv_size)
+                        self.target_addr = addr
+                        n = len(raw_bytes)
+                        if n:
+                            self._buf[:n] = raw_bytes
+                        raw = memoryview(self._buf)[:n]
+                else:
+                    if hasattr(self.sock, "recv_into"):
+                        n = self.sock.recv_into(self._buf)
+                    elif hasattr(self.sock, "readinto"):
+                        n = self.sock.readinto(self._buf)
+                    else:
+                        raw_bytes = self.sock.recv(recv_size)
+                        n = len(raw_bytes)
+                        if n:
+                            self._buf[:n] = raw_bytes
+                    if n is None:
+                        return
+                    if n == 0:
+                        self.connected = False
+                        return
+                    raw = memoryview(self._buf)[:n]
 
             # --- 解析數據 (WS 剝皮 或 直接取用) ---
             data = raw
@@ -131,7 +211,7 @@ class NetBus:
                 self._ptr = l
 
         except OSError:
-            pass # 沒有數據
+            return
 
     def write(self, data: bytes):
         """大一統寫入"""

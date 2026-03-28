@@ -33,17 +33,15 @@ def on_connect_request(bus_manager, url):
         else:
             path = "/"
 
-        # 2. 🚀 重連邏輯：如果已經在線，強制斷開
+        # 2. 防止 DISCOVER 重複觸發造成反覆重連
         if bus_manager.connected:
-            # 檢查是否連到同一個目標
-            # 如果 IP, Port 和 Path 都一樣，且連線狀態良好，則不需要重連
-            # 注意: 這裡簡化檢查，如果已經連接且目標相同，直接返回 True
-            # 但為了保證狀態同步，通常還是建議重連一次，或者至少發送一個 ping
-            
-            # 目前策略：總是重連以確保乾淨狀態
+            peer = getattr(bus_manager, "_peer", None)
+            if peer == (h, p, path):
+                return True
+
             print(f"🔄 [Network] Active connection detected, resetting for: {h}:{p}{path}")
             bus_manager.disconnect()
-            time.sleep_ms(50) # 短暫休眠確保底層資源釋放
+            time.sleep_ms(50)
             
         # 3. 執行新連接
         # 注意: bus_manager.connect 內部的 settimeout(5) 會阻塞 Core0 少許時間
@@ -85,6 +83,8 @@ def on_discover(ctx, args):
     # 從 ctx 中獲取 ctrl_bus 實例
     ctrl_bus = ctx.get("ctrl_bus")
     if ctrl_bus:
+        if ctrl_bus.connected:
+            return
         on_connect_request(ctrl_bus, full_url)
 
 def on_sys_info_get(ctx, args):
