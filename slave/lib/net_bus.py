@@ -30,9 +30,17 @@ class NetBus:
         self._ptr = 0
         self.parser = app.create_parser() if app else None
         self.rx_hub = None
+        self._drop_buf = bytearray(min(2048, buf_size))
         rx_buffers = int(buf_cfg.get("rx_hub_buffers", 0) or 0)
         if rx_buffers > 0:
             self.rx_hub = AtomicStreamHub(buf_size, num_buffers=rx_buffers)
+        self._drop_on_full = int(buf_cfg.get("drop_on_full", 0) or 0)
+        self._ws_need = 0
+        self._ws_masked = 0
+        self._ws_mask = bytearray(4)
+        self._ws_mask_i = 0
+        self._ws_hdr = bytearray(14)
+        self._ws_hdr_len = 0
 
     def connect(self, host, port, path="/ws"):
         """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
@@ -109,32 +117,38 @@ class NetBus:
             if self.rx_hub is not None:
                 view = self.rx_hub.get_write_view()
                 if view is None:
-                    if self.type == self.TYPE_UDP:
-                        try:
-                            self.sock.recvfrom(1024)
-                        except OSError:
-                            pass
-                    else:
-                        try:
-                            self.sock.recv(1024)
-                        except OSError:
-                            pass
+                    if self._drop_on_full:
+                        if self.type == self.TYPE_UDP:
+                            try:
+                                if hasattr(self.sock, "recvfrom_into"):
+                                    self.sock.recvfrom_into(self._drop_buf)
+                                else:
+                                    self.sock.recvfrom(len(self._drop_buf))
+                            except OSError:
+                                pass
+                        else:
+                            try:
+                                if hasattr(self.sock, "recv_into"):
+                                    self.sock.recv_into(self._drop_buf)
+                                elif hasattr(self.sock, "readinto"):
+                                    self.sock.readinto(self._drop_buf)
+                                else:
+                                    self.sock.recv(len(self._drop_buf))
+                            except OSError:
+                                pass
                     return
 
                 n = 0
-                raw_mv = None
                 if self.type == self.TYPE_UDP:
                     if hasattr(self.sock, "recvfrom_into"):
                         n, addr = self.sock.recvfrom_into(view)
                         self.target_addr = addr
-                        raw_mv = view[:n]
                     else:
                         raw_bytes, addr = self.sock.recvfrom(len(view))
                         self.target_addr = addr
                         n = len(raw_bytes)
                         if n:
                             view[:n] = raw_bytes
-                        raw_mv = view[:n]
                 else:
                     if hasattr(self.sock, "recv_into"):
                         n = self.sock.recv_into(view)
@@ -150,10 +164,14 @@ class NetBus:
                     if n == 0:
                         self.connected = False
                         return
-                    raw_mv = view[:n]
+                if n is None or n <= 0:
+                    return
 
-                raw = raw_mv
                 self.rx_hub.commit()
+                rview = self.rx_hub.get_read_view()
+                if rview is None:
+                    return
+                raw = rview[:n]
             else:
                 recv_size = len(self._buf)
                 if self.type == self.TYPE_UDP:
@@ -185,27 +203,162 @@ class NetBus:
                         return
                     raw = memoryview(self._buf)[:n]
 
-            # --- 解析數據 (WS 剝皮 或 直接取用) ---
-            data = raw
-            if self.type == self.TYPE_WS:
-                # 簡易 WS 解幀 (忽略 Mask, 只取 Payload)
-                off = 2
-                pl_len = raw[1] & 0x7F
-                if pl_len == 126: off = 4
-                elif pl_len == 127: off = 10
-                data = raw[off:]
-
             # --- 智能分發 ---
             if self.app and self.parser:
-                # 自動餵入專屬 Parser
+                if self.type == self.TYPE_WS:
+                    mv = raw
+                    ln_mv = len(mv)
+                    i = 0
+                    while i < ln_mv:
+                        if self._ws_need <= 0:
+                            need_hdr = 2
+                            if self._ws_hdr_len and self._ws_hdr_len < need_hdr:
+                                take = need_hdr - self._ws_hdr_len
+                                if take > (ln_mv - i):
+                                    take = ln_mv - i
+                                if take > 0:
+                                    self._ws_hdr[self._ws_hdr_len:self._ws_hdr_len + take] = mv[i:i + take]
+                                    self._ws_hdr_len += take
+                                    i += take
+                                if self._ws_hdr_len < need_hdr:
+                                    return
+
+                            if self._ws_hdr_len >= 2:
+                                b0 = self._ws_hdr[0]
+                                b1 = self._ws_hdr[1]
+                                hdr_src = self._ws_hdr
+                                hdr_off = 2
+                            else:
+                                if (ln_mv - i) < 2:
+                                    return
+                                b0 = int(mv[i])
+                                b1 = int(mv[i + 1])
+                                hdr_src = mv
+                                hdr_off = i + 2
+                                i += 2
+
+                            plen7 = b1 & 0x7F
+                            masked = 1 if (b1 & 0x80) else 0
+                            ext_len = 0
+                            if plen7 == 126:
+                                ext_len = 2
+                            elif plen7 == 127:
+                                ext_len = 8
+                            need = 2 + ext_len + (4 if masked else 0)
+
+                            if hdr_src is mv:
+                                if (ln_mv - (hdr_off)) < (need - 2):
+                                    self._ws_hdr[0] = b0
+                                    self._ws_hdr[1] = b1
+                                    take = ln_mv - i
+                                    if take > (need - 2):
+                                        take = need - 2
+                                    if take > 0:
+                                        self._ws_hdr[2:2 + take] = mv[i:i + take]
+                                        self._ws_hdr_len = 2 + take
+                                        i += take
+                                    return
+                                if ext_len == 0:
+                                    pay_len = plen7
+                                elif ext_len == 2:
+                                    pay_len = (int(mv[hdr_off]) << 8) | int(mv[hdr_off + 1])
+                                else:
+                                    pay_len = 0
+                                    for k in range(8):
+                                        pay_len = (pay_len << 8) | int(mv[hdr_off + k])
+                                if masked:
+                                    moff = hdr_off + ext_len
+                                    self._ws_mask[0] = int(mv[moff])
+                                    self._ws_mask[1] = int(mv[moff + 1])
+                                    self._ws_mask[2] = int(mv[moff + 2])
+                                    self._ws_mask[3] = int(mv[moff + 3])
+                                i = hdr_off + ext_len + (4 if masked else 0)
+                            else:
+                                if self._ws_hdr_len < need:
+                                    take = need - self._ws_hdr_len
+                                    if take > (ln_mv - i):
+                                        take = ln_mv - i
+                                    if take > 0:
+                                        self._ws_hdr[self._ws_hdr_len:self._ws_hdr_len + take] = mv[i:i + take]
+                                        self._ws_hdr_len += take
+                                        i += take
+                                    if self._ws_hdr_len < need:
+                                        return
+                                if ext_len == 0:
+                                    pay_len = plen7
+                                elif ext_len == 2:
+                                    pay_len = (int(self._ws_hdr[2]) << 8) | int(self._ws_hdr[3])
+                                else:
+                                    pay_len = 0
+                                    for k in range(8):
+                                        pay_len = (pay_len << 8) | int(self._ws_hdr[2 + k])
+                                if masked:
+                                    moff = 2 + ext_len
+                                    self._ws_mask[0] = int(self._ws_hdr[moff])
+                                    self._ws_mask[1] = int(self._ws_hdr[moff + 1])
+                                    self._ws_mask[2] = int(self._ws_hdr[moff + 2])
+                                    self._ws_mask[3] = int(self._ws_hdr[moff + 3])
+                                self._ws_hdr_len = 0
+
+                            self._ws_need = pay_len
+                            self._ws_masked = masked
+                            self._ws_mask_i = 0
+                            if self._ws_need <= 0:
+                                continue
+
+                        take = self._ws_need
+                        avail = ln_mv - i
+                        if take > avail:
+                            take = avail
+                        if take <= 0:
+                            return
+                        chunk = mv[i:i + take]
+                        if self._ws_masked:
+                            mi = self._ws_mask_i
+                            m0 = self._ws_mask[0]
+                            m1 = self._ws_mask[1]
+                            m2 = self._ws_mask[2]
+                            m3 = self._ws_mask[3]
+                            for j in range(take):
+                                b = int(chunk[j])
+                                if mi == 0:
+                                    chunk[j] = b ^ m0
+                                elif mi == 1:
+                                    chunk[j] = b ^ m1
+                                elif mi == 2:
+                                    chunk[j] = b ^ m2
+                                else:
+                                    chunk[j] = b ^ m3
+                                mi = (mi + 1) & 3
+                            self._ws_mask_i = mi
+
+                        self.app.handle_stream(
+                            self.parser, chunk,
+                            transport_name=self.label,
+                            send_func=self.write,
+                            **extra_ctx
+                        )
+                        i += take
+                        self._ws_need -= take
+                    return
+
                 self.app.handle_stream(
-                    self.parser, data, 
-                    transport_name=self.label, 
+                    self.parser, raw,
+                    transport_name=self.label,
                     send_func=self.write,
                     **extra_ctx
                 )
             else:
                 # 手動模式：存入緩衝區供 readinto 讀取
+                data = raw
+                if self.type == self.TYPE_WS:
+                    off = 2
+                    pl_len = raw[1] & 0x7F
+                    if pl_len == 126:
+                        off = 4
+                    elif pl_len == 127:
+                        off = 10
+                    data = raw[off:]
                 l = len(data)
                 self._buf[:l] = data
                 self._ptr = l

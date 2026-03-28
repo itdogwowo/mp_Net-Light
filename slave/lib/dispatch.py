@@ -1,6 +1,9 @@
 import time
+import struct
 
 from lib.sys_bus import bus
+
+QUIET_CMDS = {0x1812}
 
 def dprint(msg, level=1):
     """
@@ -23,6 +26,7 @@ class Dispatcher:
     def __init__(self, store):
         self.store = store
         self.handlers = {}
+        self._fast_args = {}
 
     def on(self, cmd_int, handler):
         self.handlers[cmd_int] = handler
@@ -44,12 +48,27 @@ class Dispatcher:
 
         # 2. 解析數據
         try:
-            from lib.schema_codec import SchemaCodec
-            args = SchemaCodec.decode(cmd_def, payload_bytes)
+            args = None
+            if cmd_int == 0x1812:
+                a = self._fast_args.get(0x1812)
+                if a is None:
+                    a = {}
+                    self._fast_args[0x1812] = a
+                if len(payload_bytes) >= 6:
+                    a["run_id"] = struct.unpack_from("<H", payload_bytes, 0)[0]
+                    a["seq"] = struct.unpack_from("<I", payload_bytes, 2)[0]
+                    a["data"] = memoryview(payload_bytes)[6:]
+                else:
+                    a["run_id"] = 0
+                    a["seq"] = 0
+                    a["data"] = memoryview(payload_bytes)[0:0]
+                args = a
+            else:
+                from lib.schema_codec import SchemaCodec
+                args = SchemaCodec.decode(cmd_def, payload_bytes)
             
             # 3. 調試輸出面板 (現代化風格)
-            if self.debug_level >= 1:
-                t = time.ticks_ms()
+            if self.debug_level >= 1 and cmd_int not in QUIET_CMDS:
                 source = ctx.get("transport", "Unknown")
                 print(f"🔹 [{source}] {cmd_def['name']} (0x{cmd_int:04X})")
                 if self.debug_level >= 2:

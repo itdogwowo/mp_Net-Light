@@ -1390,15 +1390,15 @@ class NetBusMaster:
         if chunk_size > 65000:
             chunk_size = 65000
         try:
-            mode = int(input("👉 Mode 0=discard 1=copy [默認 0]: ").strip() or "0")
+            mode = int(input("👉 Mode 0=discard 1=ring_copy 2=hub_copy [默認 2]: ").strip() or "2")
         except:
-            mode = 0
-        if mode not in (0, 1):
-            mode = 0
+            mode = 2
+        if mode not in (0, 1, 2):
+            mode = 2
         try:
-            ring_kb = int(input("👉 Ring KB (copy 模式用) [默認 64]: ").strip() or "64")
+            ring_kb = int(input("👉 Param (mode1=Ring KB, mode2=Hub Buffers) [默認 8]: ").strip() or "8")
         except:
-            ring_kb = 64
+            ring_kb = 8
         if ring_kb < 0:
             ring_kb = 0
         

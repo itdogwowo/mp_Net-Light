@@ -32,7 +32,10 @@ Schema 檔：`/schema/ram_bench.json`（Repo 對應：`slave/schema/ram_bench.js
 - `mode (u8)`
   - `0`：discard（只統計 bytes/chunks，不做 memcpy）
   - `1`：copy（把 data copy 進 ring buffer，模擬「落 RAM/PSRAM」的 memcpy 成本）
+-  `2`：hub_copy（把 data copy 進 AtomicStreamHub，模擬「跨階段移交」的成本）
 - `ring_kb (u16)`：copy 模式的 ring buffer 大小（KB）
+  - mode=1：Ring KB
+  - mode=2：Hub buffers（槽位數；建議 4~16）
 
 ### RAM_BENCH_REPORT 回報值
 - `mb_s_x1000 (u32)`：吞吐 MB/s 的 1000 倍（例如 6123 代表 6.123 MB/s）
@@ -67,6 +70,36 @@ Step 7 目前行為：
 
 ---
 
+## 4.1) 目標 1–2MB/s 的實務建議（吞吐瓶頸排查）
+
+若你看到吞吐卡在數百 KB/s（例如 ~600KB/s），通常不是 CRC/解碼，而是「框架性開銷」造成。
+
+### A) 逐包列印（print）幾乎必定是第一號瓶頸
+- Dispatcher 在 debug_level >= 1 時會對每個指令列印一行。
+- RAM_BENCH_CHUNK 屬於高頻指令，逐包列印會顯著壓低吞吐。
+- 目前已對 `0x1812 (RAM_BENCH_CHUNK)` 進行靜音（不逐包列印），其餘指令仍可正常輸出。
+
+### B) Buffer/Chunk 設定要匹配
+建議先用以下組合找上限：
+- `chunk_size=16384`
+- `Buffer.size >= 16384`（否則容易變成多次 recv、多次 feed）
+
+### C) AtomicStreamHub 的正確用法（避免 Hub 塞滿）
+若 `Buffer.rx_hub_buffers > 0` 啟用接收 Hub：
+- 需要成對進行「寫入(commit) → 讀取(get_read_view)」以釋放槽位
+- 否則會在提交幾次後把 Hub 塞滿，導致 `get_write_view()` 返 None，進而出現 drop/drain 行為或吞吐崩落
+
+目前 NetBus 已修正：commit 後會立即取出 read_view 作為本次 raw buffer 使用，並在下次讀取時釋放上一個 READING buffer，避免積壓。
+
+### D) Hub 滿載時的策略
+NetBus 支援 `Buffer.drop_on_full`：
+- `0`：Hub 滿就直接 return（對 TCP/WS 會形成 backpressure；UDP 由 OS buffer 決定是否 drop）
+- `1`：Hub 滿時會讀取一小段資料丟棄以清空 socket（可用於「寧可丟包也要保持互動」的情境）
+
+建議做吞吐上限量測時先用 `drop_on_full=0`，避免「丟包式 drain」影響結果。
+
+---
+
 ## 5) Step 8（Raw Stream Test）狀態
 
 Step 8 已在工具端停用，原因是 Raw Mode 的「進入指令」與目前 Slave schema/handler 不一致，容易造成錯誤測試與連線混亂。
@@ -90,4 +123,3 @@ Step 8 已在工具端停用，原因是 Raw Mode 的「進入指令」與目前
 影響面：
 - handler 若只用 `len(data)` / `file.write(data)` / `sock.send(data)`：通常不需修改（buffer protocol 可直接用）。
 - 若 handler 依賴 `isinstance(data, bytes)` 或對 bytes 做 `.decode()`：需自行 `bytes(data)` 轉型。
-

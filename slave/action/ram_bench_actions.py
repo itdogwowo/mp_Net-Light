@@ -1,7 +1,9 @@
 import time
 import gc
+import struct
 from lib.proto import Proto
 from lib.schema_codec import SchemaCodec
+from lib.buffer_hub import AtomicStreamHub
 
 CMD_RAM_BENCH_START = 0x1811
 CMD_RAM_BENCH_CHUNK = 0x1812
@@ -60,6 +62,9 @@ def on_ram_bench_start(ctx, args):
     ring_kb = int(args.get("ring_kb", 0)) & 0xFFFF
     ring = None
     ring_len = 0
+    hub = None
+    hub_buf_size = 0
+    hub_drops = 0
     if mode == 1:
         ring_len = ring_kb * 1024
         if ring_len <= 0:
@@ -70,6 +75,18 @@ def on_ram_bench_start(ctx, args):
             except MemoryError:
                 ring = None
                 ring_len = 0
+    elif mode == 2:
+        nbuf = ring_kb
+        if nbuf <= 0:
+            nbuf = 4
+        if nbuf > 32:
+            nbuf = 32
+        hub_buf_size = chunk_size + 2
+        try:
+            hub = AtomicStreamHub(hub_buf_size, num_buffers=nbuf)
+        except MemoryError:
+            hub = None
+            hub_buf_size = 0
     _SESS[run_id] = {
         "start_ms": time.ticks_ms(),
         "bytes": 0,
@@ -80,6 +97,9 @@ def on_ram_bench_start(ctx, args):
         "ring": ring,
         "ring_len": ring_len,
         "pos": 0,
+        "hub": hub,
+        "hub_buf_size": hub_buf_size,
+        "hub_drops": hub_drops,
         "mem_free_start": gc.mem_free(),
     }
 
@@ -88,14 +108,35 @@ def on_ram_bench_chunk(ctx, args):
     sess = _SESS.get(run_id)
     if not sess:
         return
-    data = args.get("data", b"")
+    data = args.get("data")
+    if data is None:
+        return
     ln = len(data)
     if ln <= 0:
         return
+    mode = sess.get("mode", 0)
+    if mode == 1:
+        _ring_write(sess, data)
+    elif mode == 2:
+        hub = sess.get("hub")
+        if hub is None:
+            sess["hub_drops"] = (sess.get("hub_drops", 0) + 1) & 0xFFFFFFFF
+            return
+        if ln + 2 > sess.get("hub_buf_size", 0):
+            sess["hub_drops"] = (sess.get("hub_drops", 0) + 1) & 0xFFFFFFFF
+            return
+        w = hub.get_write_view()
+        if w is None:
+            hub.get_read_view()
+            w = hub.get_write_view()
+            if w is None:
+                sess["hub_drops"] = (sess.get("hub_drops", 0) + 1) & 0xFFFFFFFF
+                return
+        struct.pack_into("<H", w, 0, ln)
+        w[2:2 + ln] = data
+        hub.commit()
     sess["bytes"] = (sess.get("bytes", 0) + ln) & 0xFFFFFFFF
     sess["chunks"] = (sess.get("chunks", 0) + 1) & 0xFFFFFFFF
-    if sess.get("mode") == 1:
-        _ring_write(sess, data)
 
 def on_ram_bench_stop(ctx, args):
     run_id = int(args.get("run_id", 0)) & 0xFFFF
@@ -123,4 +164,3 @@ def register(app):
     app.disp.on(CMD_RAM_BENCH_CHUNK, on_ram_bench_chunk)
     app.disp.on(CMD_RAM_BENCH_STOP, on_ram_bench_stop)
     print("✅ [Action] RAM bench actions registered")
-
