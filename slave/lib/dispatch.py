@@ -1,6 +1,7 @@
 import time
 
 from lib.sys_bus import bus
+from lib.schema_codec import SchemaCodec
 
 def dprint(msg, level=1):
     """
@@ -44,7 +45,6 @@ class Dispatcher:
 
         # 2. 解析數據
         try:
-            from lib.schema_codec import SchemaCodec
             args = SchemaCodec.decode(cmd_def, payload_bytes)
             
             # 3. 調試輸出面板 (現代化風格)
