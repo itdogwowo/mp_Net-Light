@@ -43,6 +43,9 @@ class NetBus:
         self._ws_mask_i = 0
         self._ws_hdr = bytearray(14)
         self._ws_hdr_len = 0
+        self._send_retry = int(buf_cfg.get("send_retry", 64) or 0)
+        if self._send_retry <= 0:
+            self._send_retry = 64
 
     def connect(self, host, port, path="/ws"):
         """初始化連接 (TCP/WS) 或 綁定 (UDP)"""
@@ -64,7 +67,7 @@ class NetBus:
                         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
                         "Sec-WebSocket-Version: 13\r\n\r\n"
                     )
-                    self.sock.send(handshake.encode())
+                    self._send_all(handshake.encode())
                     if b"101 Switching Protocols" not in self.sock.recv(1024):
                         raise Exception("WS Handshake Failed")
                 
@@ -91,7 +94,7 @@ class NetBus:
             # 針對不同類型的協議做優雅收尾
             if self.type == self.TYPE_WS and self.connected:
                 # 嘗試發送 WS 關閉幀 (Opcode 0x8)
-                try: self.sock.send(b'\x88\x00') 
+                try: self._send_all(b'\x88\x00')
                 except: pass
             
             # 關閉 Socket (TCP/UDP/WS 均適用)
@@ -278,10 +281,6 @@ class NetBus:
 
                         view = self.rx_hub.get_write_view()
                         if view is None:
-                            if self._drop_on_full:
-                                i += take
-                                self._ws_need -= take
-                                continue
                             return
                         pv = memoryview(view)[self._hub_off:]
                         if take > len(pv):
@@ -298,7 +297,7 @@ class NetBus:
             for _ in range(dr):
                 view = self.rx_hub.get_write_view()
                 if view is None:
-                    if not self._drop_on_full:
+                    if not self._drop_on_full or self.type != self.TYPE_UDP:
                         break
                     try:
                         if self.type == self.TYPE_UDP:
@@ -356,18 +355,53 @@ class NetBus:
 
     def write(self, data: bytes):
         """大一統寫入"""
-        if not self.connected: return
+        if not self.connected:
+            return False
         try:
             if self.type == self.TYPE_UDP:
-                if self.target_addr: self.sock.sendto(data, self.target_addr)
+                if self.target_addr:
+                    self.sock.sendto(data, self.target_addr)
+                return True
             elif self.type == self.TYPE_WS:
-                # 簡單 WS 封裝
                 hdr = bytearray([0x82])
                 l = len(data)
                 if l < 126: hdr.append(l)
                 else: hdr.append(126); hdr.extend(struct.pack(">H", l))
-                self.sock.send(hdr + data)
+                return self._send_all(hdr) and self._send_all(data)
             else:
-                self.sock.send(data)
-        except:
+                return self._send_all(data)
+        except Exception:
             self.connected = False
+            return False
+
+    def _send_all(self, data):
+        mv = memoryview(data)
+        ln = len(mv)
+        off = 0
+        retry = 0
+        while off < ln:
+            try:
+                n = self.sock.send(mv[off:])
+                if n is None:
+                    n = 0
+                if n > 0:
+                    off += n
+                    retry = 0
+                    continue
+            except OSError as e:
+                code = e.args[0] if e.args else None
+                if code not in (11, 35):
+                    self.connected = False
+                    return False
+            retry += 1
+            if retry >= self._send_retry:
+                self.connected = False
+                return False
+            try:
+                time.sleep_ms(0)
+            except Exception:
+                try:
+                    time.sleep(0)
+                except Exception:
+                    pass
+        return True
