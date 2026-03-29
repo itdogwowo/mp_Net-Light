@@ -85,11 +85,9 @@ Step 7 目前行為：
 - `Buffer.size >= 16384`（否則容易變成多次 recv、多次 feed）
 
 ### C) AtomicStreamHub 的正確用法（避免 Hub 塞滿）
-若 `Buffer.rx_hub_buffers > 0` 啟用接收 Hub：
-- 需要成對進行「寫入(commit) → 讀取(get_read_view)」以釋放槽位
-- 否則會在提交幾次後把 Hub 塞滿，導致 `get_write_view()` 返 None，進而出現 drop/drain 行為或吞吐崩落
+若啟用 `Buffer.rx_hub_buffers > 0`，NetBus 接收端會把每次讀取到的資料寫入 RX Hub 槽位（格式為 `u16_len + payload_bytes`），並由 `bus_decode` task 持續消費 `get_read_view()` 釋放槽位。
 
-目前 NetBus 已修正：commit 後會立即取出 read_view 作為本次 raw buffer 使用，並在下次讀取時釋放上一個 READING buffer，避免積壓。
+若 `bus_decode` 的處理節奏追不上，Hub 會塞滿，`NetBus.get_write_view()` 返 None，然後進入你設定的 `drop_on_full` 行為。
 
 ### D) Hub 滿載時的策略
 NetBus 支援 `Buffer.drop_on_full`：
@@ -97,6 +95,10 @@ NetBus 支援 `Buffer.drop_on_full`：
 - `1`：Hub 滿時會讀取一小段資料丟棄以清空 socket（可用於「寧可丟包也要保持互動」的情境）
 
 建議做吞吐上限量測時先用 `drop_on_full=0`，避免「丟包式 drain」影響結果。
+
+另外 NetBus 支援 `Buffer.drain_reads`（每次 poll 內連續讀取 socket 次數）：
+- `1`：單次讀取（延遲偏好）
+- `>1`：drain 模式（吞吐偏好，減少碎片造成的解碼迴圈次數）
 
 ---
 

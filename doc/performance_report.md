@@ -41,9 +41,20 @@
   - `Buffer.size`: 定義為「網路接收 (NetBus RX) 的 Chunk 上限」，用於 socket 直接寫入的預分配槽位大小。
   - `pixel_stream hub size = st_LED.total_bytes * System.buffer_frames`: 定義為「渲染幀資料的工作緩衝」，不等同於 `Buffer.size`。
 - **策略**:
-  - NetBus 可為每個 bus instance 建立 `AtomicStreamHub(Buffer.size, rx_hub_buffers)` 作為 RX staging，使用 `socket.recv_into(view)` / `readinto(view)` / `recvfrom_into(view)` 直接寫入槽位。
-  - WS 模式在同一槽位內完成簡易解幀，僅以 `memoryview` 切片取得 payload 範圍再交給上層解析。
-  - 若 RX staging 已滿，會以小量 drain 方式讀取並丟棄，避免回壓導致控制平面卡死（僅建議用於可丟棄的高吞吐數據流）。
+  - NetBus 作為純傳輸層（TCP/UDP/WS），接收端只負責把資料寫入 RX staging（`AtomicStreamHub`），每個槽位採用 `u16_len + payload_bytes` 格式（前 2 bytes 為本次讀取長度）。
+  - WS 模式在 NetBus 內完成 de-frame/unmask，寫入 staging 的是「純 WS payload bytes stream」。
+  - 協議解析（NL StreamParser + Schema decode + Dispatcher/actions）由 `bus_decode` task 從 RX staging 取出資料後處理，實現 IO 與 decode 的節奏解耦（同 core 亦可，拆核更容易）。
+  - 若 RX staging 已滿：
+    - `Buffer.drop_on_full=0`：直接 return（對 TCP/WS 形成回壓；UDP 由 OS buffer 決定是否 drop）
+    - `Buffer.drop_on_full=1`：讀取一小段資料丟棄（保持互動/心跳，但會丟資料）
+
+#### 3.5.1 Buffer 設定（與行為對照）
+- `Buffer.size`：socket 讀取用 scratch buffer 大小，同時也是每個 RX staging 槽位可容納的 payload 上限（實際槽位 = `Buffer.size + 2`，多出的 2 bytes 用於寫入長度）。
+- `Buffer.rx_hub_buffers`：每個 NetBus 實例的 RX staging 槽位數（越大越能吸收 burst，但佔用更多 RAM）。
+- `Buffer.drop_on_full`：RX staging 滿載策略（`0` 回壓 / `1` drain+drop）。
+- `Buffer.drain_reads`：每次 `NetBus.poll()` 內最多連續讀取 socket 的次數：
+  - `1`：單次讀取（低延遲偏好）
+  - `>1`：drain 模式（吞吐偏好，減少碎片造成的解碼迴圈次數）
 
 ## 4. 最終成果
 - **穩定速度**: **1.5 MB/s** (提升約 75 倍)
@@ -55,9 +66,11 @@
   - CPU: Core 0 專注網路 IO，Core 1 專注渲染。
 
 ## 5. 核心代碼參考
-- **Slave (NetBus)**: [slave/lib/net_bus.py](slave/lib/net_bus.py) (Zero-Copy 實作)
+- **Slave (NetBus 純傳輸層)**: [slave/lib/net_bus.py](slave/lib/net_bus.py)
+- **Slave (Decode task)**: [slave/tasks/bus_decode.py](slave/tasks/bus_decode.py)
+- **Slave (Network task)**: [slave/tasks/network.py](slave/tasks/network.py)
 - **Slave (Hub)**: [slave/lib/buffer_hub.py](slave/lib/buffer_hub.py) (AtomicStreamHub)
-- **Master (Tool)**: [tools/NetBusMaster.py](tools/NetBusMaster.py) (Step 8 Raw Test)
+- **Master (Tool)**: [tools/NetBusMaster.py](tools/NetBusMaster.py)
 
 ## 6. 協議校驗 (CRC32)
 - 封包層校驗使用 **CRC32(4 bytes)**，以降低 CPU 成本並提升解碼吞吐上限。

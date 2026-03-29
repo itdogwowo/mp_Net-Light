@@ -74,17 +74,15 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                      Core 0 (Network)                   │
-│  [TCP/UDP] → [Parser] → [Dispatcher] → [Actions]       │
-│      ↓                                      ↓            │
-│  [Schema Decode]                    [寫入 Buffer B]     │
+│  [TCP/UDP/WS] → [NetBus(IO)] → [RX Hub]                │
 └──────────────────────────┬──────────────────────────────┘
                            │ SysBus (Services/Providers)
                            │ AtomicStreamHub (三緩衝狀態機)
 ┌──────────────────────────┴──────────────────────────────┐
-│                      Core 1 (Rendering)                 │
-│  [讀取 Buffer A] → [APA102/WS2812] → [本地特效運算]    │
-│      ↑                                                   │
-│  [hub.dirty 檢查]                                       │
+│                Core 0 (Decode Task) / 可拆 Core 1        │
+│  [bus_decode] → [StreamParser] → [Schema Decode] → [Dispatcher] → [Actions] │
+│                     │                                      │
+│                     └──────────────→ [pixel_stream Hub] ───┘
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -92,11 +90,11 @@
 
 ## 3) 二進位封包協議
 
-### 3.1 封包格式（VER=3，已定稿）
+### 3.1 封包格式（VER=4，CRC32）
 ```
 ┌───────┬───────┬────────┬────────┬────────┬──────────┬──────────┐
-│  SOF  │  VER  │  ADDR  │  CMD   │  LEN   │   DATA   │  CRC16   │
-│ (2B)  │ (1B)  │  (2B)  │  (2B)  │  (2B)  │ (LEN B)  │   (2B)   │
+│  SOF  │  VER  │  ADDR  │  CMD   │  LEN   │   DATA   │  CRC32   │
+│ (2B)  │ (1B)  │  (2B)  │  (2B)  │  (2B)  │ (LEN B)  │   (4B)   │
 └───────┴───────┴────────┴────────┴────────┴──────────┴──────────┘
 ```
 
@@ -104,17 +102,17 @@
 | 欄位   | 長度 | 說明                                      |
 |--------|------|-------------------------------------------|
 | SOF    | 2B   | 固定 `b"NL"` (0x4E4C)                     |
-| VER    | 1B   | 協議版本，固定 `3`                        |
+| VER    | 1B   | 協議版本，固定 `4`                        |
 | ADDR   | 2B   | 目的地址 (uint16 LE，loopback 可忽略)     |
 | CMD    | 2B   | 指令碼 (uint16 LE)，由 Schema 定義        |
 | LEN    | 2B   | DATA 長度 (uint16 LE)                     |
 | DATA   | 變長 | Payload，格式由 `/schema/*.json` 定義    |
-| CRC16  | 2B   | CRC16-CCITT-FALSE (poly=0x1021, init=0xFFFF) |
+| CRC32  | 4B   | CRC32（覆蓋範圍見下）                    |
 
 ### 3.3 CRC 計算範圍
 ```
-CRC16 覆蓋範圍 = VER + ADDR + CMD + LEN + DATA
-               （不含 SOF，不含 CRC16 自身）
+CRC32 覆蓋範圍 = VER + ADDR + CMD + LEN + DATA
+               （不含 SOF，不含 CRC32 自身）
 ```
 
 ### 3.4 解析策略
