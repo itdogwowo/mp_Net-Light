@@ -145,9 +145,14 @@ class DeviceMonitor:
         # ========== 傳輸階段數據 ==========
         self.upload_progress = 0.0
         self.upload_speed = 0.0
+        self.send_speed = 0.0
+        self.ack_rtt_ms = 0.0
         self.uploaded_bytes = 0
         self.total_bytes = 0
         self.upload_start_time = 0
+        self.upload_end_time = 0
+        self.upload_send_time = 0.0
+        self.upload_ack_time = 0.0
         self.transfer_label = ""
         
         # ========== 播放階段數據 ==========
@@ -295,6 +300,9 @@ class MonitorPanel:
                         setattr(monitor, key, value)
                 
                 monitor.last_update = time.time()
+                if monitor.total_bytes and monitor.uploaded_bytes >= monitor.total_bytes and monitor.upload_start_time:
+                    if not monitor.upload_end_time:
+                        monitor.upload_end_time = monitor.last_update
     
     def remove_device(self, device_id):
         with self.lock:
@@ -386,7 +394,10 @@ class MonitorPanel:
         
         if monitor.status == "傳輸中" or monitor.status == "下載中" or monitor.transfer_label:
             progress_bar = ConsoleUI.draw_progress_bar(monitor.upload_progress, width=20)
-            speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
+            if monitor.ack_rtt_ms > 0:
+                speed_str = f"{monitor.upload_speed:>6.1f} KB/s │ TX {monitor.send_speed:>6.1f} │ ACK {monitor.ack_rtt_ms:>5.1f}ms"
+            else:
+                speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
             size_str = f"{monitor.uploaded_bytes//1024}/{monitor.total_bytes//1024} KB"
             info = f"{progress_bar} │ {speed_str} │ {size_str}"
             if monitor.transfer_label:
@@ -1030,33 +1041,64 @@ class NetBusMaster:
             raise Exception("FILE_BEGIN Handshake Timeout")
 
         start_time = time.time()
+        last_t = time.perf_counter()
+        last_done = 0
+        speed_ema = 0.0
+        send_speed_ema = 0.0
+        ack_ms_ema = 0.0
+        send_total = 0.0
+        ack_total = 0.0
 
         for off in range(0, total_len, chunk_size):
             if self.transfer_cancel.is_set():
                 raise Exception("已停止")
             chunk = data[off : off + chunk_size]
             node["ack_event"].clear()
+            t_send0 = time.perf_counter()
             self.send_pkt([tid], 0x2002, {
                 "file_id": file_id,
                 "offset": off,
                 "data": chunk
             })
+            t_send1 = time.perf_counter()
 
+            t_ack0 = time.perf_counter()
             ok, why = self._wait_evt(node["ack_event"], ack_timeout)
+            t_ack1 = time.perf_counter()
+            send_total += (t_send1 - t_send0)
+            ack_total += (t_ack1 - t_ack0)
             if not ok:
                 if why == "cancel":
                     raise Exception("已停止")
                 raise Exception(f"Timeout at offset {off}")
 
             done = off + len(chunk)
-            elapsed = time.time() - start_time
-            speed = (done / 1024) / elapsed if elapsed > 0 else 0
+            now_t = time.perf_counter()
+            dt_total = now_t - last_t
+            if dt_total > 0:
+                delta_kb = (done - last_done) / 1024
+                inst = delta_kb / dt_total
+                speed_ema = inst if speed_ema <= 0 else (speed_ema * 0.8 + inst * 0.2)
+                dt_send = t_send1 - t_send0
+                if dt_send > 0:
+                    inst_tx = delta_kb / dt_send
+                    send_speed_ema = inst_tx if send_speed_ema <= 0 else (send_speed_ema * 0.8 + inst_tx * 0.2)
+                dt_ack = t_ack1 - t_ack0
+                ack_ms = dt_ack * 1000.0
+                ack_ms_ema = ack_ms if ack_ms_ema <= 0 else (ack_ms_ema * 0.8 + ack_ms * 0.2)
+                last_t = now_t
+                last_done = done
+            speed = speed_ema
             progress = (done / total_len) * 100 if total_len > 0 else 100
 
             self.panel.update_device(
                 tid,
                 upload_progress=progress,
                 upload_speed=speed,
+                send_speed=send_speed_ema,
+                ack_rtt_ms=ack_ms_ema,
+                upload_send_time=send_total,
+                upload_ack_time=ack_total,
                 uploaded_bytes=done
             )
 

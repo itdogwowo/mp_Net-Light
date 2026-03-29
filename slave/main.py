@@ -6,6 +6,7 @@ from lib.buffer_hub import AtomicStreamHub
 from lib.fs_manager import fs
 from lib.task_manager import TaskManager
 from tasks.network import NetworkTask
+from tasks.bus_decode import BusDecodeTask
 from tasks.render import RenderTask
 from tasks.web_ui import WebUITask
 from apa102 import APA102
@@ -43,6 +44,7 @@ def launcher():
     # 這裡實現了您要求的 "靈活控制"
     # 您可以隨時透過 tm.set_affinity('network', (0, 1)) 來遷移任務
     tm.register_task("network", NetworkTask, default_affinity=(1, 0)) # Core 0
+    tm.register_task("bus_decode", BusDecodeTask, default_affinity=(1, 0)) # Core 0
     tm.register_task("web_ui",  WebUITask,   default_affinity=(1, 0)) # Core 0
     tm.register_task("render",  RenderTask,  default_affinity=(0, 1)) # Core 1
 

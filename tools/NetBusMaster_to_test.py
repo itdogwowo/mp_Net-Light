@@ -138,9 +138,14 @@ class DeviceMonitor:
         # ========== 傳輸階段數據 ==========
         self.upload_progress = 0.0
         self.upload_speed = 0.0
+        self.send_speed = 0.0
+        self.ack_rtt_ms = 0.0
         self.uploaded_bytes = 0
         self.total_bytes = 0
         self.upload_start_time = 0
+        self.upload_end_time = 0
+        self.upload_send_time = 0.0
+        self.upload_ack_time = 0.0
         
         # ========== 播放階段數據 ==========
         self.total_frames = 0
@@ -286,6 +291,9 @@ class MonitorPanel:
                         setattr(monitor, key, value)
                 
                 monitor.last_update = time.time()
+                if monitor.total_bytes and monitor.uploaded_bytes >= monitor.total_bytes and monitor.upload_start_time:
+                    if not monitor.upload_end_time:
+                        monitor.upload_end_time = monitor.last_update
     
     def remove_device(self, device_id):
         with self.lock:
@@ -368,7 +376,10 @@ class MonitorPanel:
         
         if monitor.status == "傳輸中" or monitor.status == "測速中" or monitor.status == "Raw測速":
             progress_bar = ConsoleUI.draw_progress_bar(monitor.upload_progress, width=20)
-            speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
+            if monitor.ack_rtt_ms > 0:
+                speed_str = f"{monitor.upload_speed:>6.1f} KB/s │ TX {monitor.send_speed:>6.1f} │ ACK {monitor.ack_rtt_ms:>5.1f}ms"
+            else:
+                speed_str = f"{monitor.upload_speed:>6.1f} KB/s"
             size_str = f"{monitor.uploaded_bytes//1024}/{monitor.total_bytes//1024} KB"
             info = f"{progress_bar} │ {speed_str} │ {size_str}"
         
@@ -392,14 +403,19 @@ class MonitorPanel:
             info = f"Progress: {progress_percent} │ Frame: {frame_str:<12} │ FPS: {calc_fps_str} │ Mem: {mem_str}"
         
         elif monitor.status == "完成":
-            # 顯示最終平均速度
-            elapsed = monitor.last_update - monitor.upload_start_time
-            if elapsed > 0 and monitor.total_bytes > 0:
-                avg_speed = (monitor.total_bytes / 1024) / elapsed
-                speed_str = f"{avg_speed:>6.1f} KB/s"
-                info = f"完成 │ Avg: {speed_str} │ {monitor.total_bytes//1024} KB"
+            tx_elapsed = float(monitor.upload_send_time or 0.0)
+            e2e_elapsed = monitor.last_update - monitor.upload_start_time
+            if tx_elapsed > 0 and monitor.total_bytes > 0:
+                tx_avg = (monitor.total_bytes / 1024) / tx_elapsed
+                tx_str = f"{tx_avg:>6.1f} KB/s"
             else:
-                info = "完成"
+                tx_str = f"{0.0:>6.1f} KB/s"
+            if e2e_elapsed > 0 and monitor.total_bytes > 0:
+                e2e_avg = (monitor.total_bytes / 1024) / e2e_elapsed
+                e2e_str = f"{e2e_avg:>6.1f} KB/s"
+            else:
+                e2e_str = f"{0.0:>6.1f} KB/s"
+            info = f"完成 │ TX Avg: {tx_str} │ E2E Avg: {e2e_str} │ {monitor.total_bytes//1024} KB"
         
         elif monitor.status == "錯誤":
             info = f"\033[91m{monitor.error_msg[:70]}\033[0m"
@@ -1312,6 +1328,13 @@ class NetBusMaster:
         chunk_size = 1024 * 1
         
         start_time = time.time()
+        last_t = time.perf_counter()
+        last_done = 0
+        speed_ema = 0.0
+        send_speed_ema = 0.0
+        ack_ms_ema = 0.0
+        send_total = 0.0
+        ack_total = 0.0
         
         self.panel.update_device(
             tid,
@@ -1333,24 +1356,48 @@ class NetBusMaster:
             chunk = data[off : off + chunk_size]
             
             node["ack_event"].clear()
+            t_send0 = time.perf_counter()
             self.send_pkt([tid], 0x2002, {
                 "file_id": 1,
                 "offset": off,
                 "data": chunk
             })
+            t_send1 = time.perf_counter()
             
+            t_ack0 = time.perf_counter()
             if not node["ack_event"].wait(timeout=5.0):
                 raise Exception(f"Offset {off} 超時")
+            t_ack1 = time.perf_counter()
+            send_total += (t_send1 - t_send0)
+            ack_total += (t_ack1 - t_ack0)
             
             done = off + len(chunk)
-            elapsed = time.time() - start_time
-            speed = (done / 1024) / elapsed if elapsed > 0 else 0
+            now_t = time.perf_counter()
+            dt = now_t - last_t
+            if dt > 0:
+                delta_kb = (done - last_done) / 1024
+                inst = delta_kb / dt
+                speed_ema = inst if speed_ema <= 0 else (speed_ema * 0.8 + inst * 0.2)
+                dt_send = t_send1 - t_send0
+                if dt_send > 0:
+                    inst_tx = delta_kb / dt_send
+                    send_speed_ema = inst_tx if send_speed_ema <= 0 else (send_speed_ema * 0.8 + inst_tx * 0.2)
+                dt_ack = t_ack1 - t_ack0
+                ack_ms = dt_ack * 1000.0
+                ack_ms_ema = ack_ms if ack_ms_ema <= 0 else (ack_ms_ema * 0.8 + ack_ms * 0.2)
+                last_t = now_t
+                last_done = done
+            speed = speed_ema
             progress = (done / total_len) * 100
             
             self.panel.update_device(
                 tid,
                 upload_progress=progress,
                 upload_speed=speed,
+                send_speed=send_speed_ema,
+                ack_rtt_ms=ack_ms_ema,
+                upload_send_time=send_total,
+                upload_ack_time=ack_total,
                 uploaded_bytes=done
             )
         
@@ -1543,6 +1590,10 @@ class NetBusMaster:
             raise Exception("設備離線")
 
         start_time = time.time()
+        last_t = time.perf_counter()
+        last_sent = 0
+        speed_ema = 0.0
+        send_total = 0.0
         run_id = int(time.time() * 1000) & 0xFFFF
         node["ram_run_id"] = run_id
         node["ram_report"] = None
@@ -1570,22 +1621,35 @@ class NetBusMaster:
         while sent < total_len:
             rem = total_len - sent
             chunk = dummy_chunk if rem >= chunk_size else dummy_chunk[:rem]
+            t_send0 = time.perf_counter()
             self.send_pkt([tid], 0x1812, {
                 "run_id": run_id,
                 "seq": seq,
                 "data": chunk
             })
+            t_send1 = time.perf_counter()
+            send_total += (t_send1 - t_send0)
             seq += 1
             sent += len(chunk)
 
-            elapsed = time.time() - start_time
-            speed = (sent / 1024) / elapsed if elapsed > 0 else 0
+            now_t = time.perf_counter()
+            dt = now_t - last_t
+            if dt > 0:
+                inst = ((sent - last_sent) / 1024) / dt
+                speed_ema = inst if speed_ema <= 0 else (speed_ema * 0.8 + inst * 0.2)
+                last_t = now_t
+                last_sent = sent
+            speed = speed_ema
             progress = (sent / total_len) * 100 if total_len > 0 else 0
             
             self.panel.update_device(
                 tid,
                 upload_progress=progress,
                 upload_speed=speed,
+                send_speed=speed,
+                ack_rtt_ms=0.0,
+                upload_send_time=send_total,
+                upload_ack_time=0.0,
                 uploaded_bytes=sent
             )
             

@@ -36,9 +36,11 @@ class NetworkTask(Task):
         bus_sys = bus.shared["System"]
         
         # Initialize NetBus
-        self.ctrl_bus = NetBus(NetBus.TYPE_WS, app=self.app, label="CTRL-WS")
-        self.discovery_bus = NetBus(NetBus.TYPE_UDP, app=self.app, label="UDP-DISCV")
+        self.ctrl_bus = NetBus(NetBus.TYPE_WS, label="CTRL-WS")
+        self.discovery_bus = NetBus(NetBus.TYPE_UDP, label="UDP-DISCV")
         self.discovery_bus.connect(None, bus_sys["discovery_port"])
+        bus.register_service("net_bus_ctrl", self.ctrl_bus)
+        bus.register_service("net_bus_discovery", self.discovery_bus)
         
         self.hub = bus.get_service("pixel_stream")
         
