@@ -9,7 +9,9 @@ from tasks.network import NetworkTask
 from tasks.bus_decode import BusDecodeTask
 from tasks.render import RenderTask
 from tasks.web_ui import WebUITask
+from tasks.jpeg_decode_core import JpegDecodeCoreTask
 from apa102 import APA102
+from lib.jpeg_decoder_service import ensure_jpeg_decoder_service
 
 def launcher():
     print(f"📂 [FS] Initializing File System Manager...")
@@ -25,6 +27,7 @@ def launcher():
     # 3. 🚀 註冊核心交換服務 (不修改 lib，在此處申請)
     hub = AtomicStreamHub(st_LED.total_bytes * bus_sys["buffer_frames"]) 
     bus.register_service("pixel_stream", hub)
+    ensure_jpeg_decoder_service(bus)
 
     # 4. App
     app = App()
@@ -47,6 +50,7 @@ def launcher():
     tm.register_task("bus_decode", BusDecodeTask, default_affinity=(1, 0)) # Core 0
     tm.register_task("web_ui",  WebUITask,   default_affinity=(1, 0)) # Core 0
     tm.register_task("render",  RenderTask,  default_affinity=(0, 1)) # Core 1
+    tm.register_task("jpeg_decode", JpegDecodeCoreTask, default_affinity=(0, 0))
 
     try:
         # 7. 啟動 Core 1 Runner (新線程)
