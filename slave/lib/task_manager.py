@@ -9,11 +9,14 @@ class TaskManager:
         self.task_classes = {} # {name: TaskClass}
         self.config = {}      # {name: (core0_affinity, core1_affinity)}
         self.active_tasks = {0: {}, 1: {}} # {core_id: {name: TaskInstance}}
+        self.task_order = []  # [name] registration order
         
         # Register to bus
         bus.register_service("task_manager", self)
 
     def register_task(self, name, task_cls, default_affinity=(0, 0), run_once=False):
+        if name not in self.task_order:
+            self.task_order.append(name)
         self.task_classes[name] = task_cls
         self.config[name] = default_affinity
         self._run_once_flags = getattr(self, '_run_once_flags', {})
@@ -38,12 +41,15 @@ class TaskManager:
 
     def _update_tasks(self, core_id):
         """Check config and start/stop tasks for this core."""
-        # Iterate over a copy of items to avoid modification issues if any
-        # Also, task_classes might be updated? Unlikely.
-        # But config values (affinity) might be updated by another thread.
-        current_config = list(self.config.items())
+        extra_names = []
+        for name in list(self.config.keys()):
+            if name not in self.task_order:
+                extra_names.append(name)
 
-        for name, affinity in current_config:
+        current_order = list(self.task_order) + extra_names
+
+        for name in current_order:
+            affinity = self.config.get(name, (0, 0))
             should_run = (affinity[core_id] == 1)
             # Check if task is already running in THIS core's list
             is_running = name in self.active_tasks[core_id]
@@ -113,11 +119,17 @@ class TaskManager:
                 time.sleep_ms(100) # Idle wait
                 continue
 
-            # Run all tasks for this core
-            # Copy keys to allow modification during iteration (for one-shot removal)
-            current_tasks = list(self.active_tasks[core_id].items())
-            
-            for name, task in current_tasks:
+            extra_names = []
+            for name in list(self.active_tasks[core_id].keys()):
+                if name not in self.task_order:
+                    extra_names.append(name)
+
+            current_order = list(self.task_order) + extra_names
+
+            for name in current_order:
+                task = self.active_tasks[core_id].get(name)
+                if task is None:
+                    continue
                 try:
                     task.loop()
                     
@@ -126,7 +138,8 @@ class TaskManager:
                         print(f"[Core {core_id}] One-shot task {name} finished. Stopping.")
                         try: task.on_stop()
                         except: pass
-                        del self.active_tasks[core_id][name]
+                        if name in self.active_tasks[core_id]:
+                            del self.active_tasks[core_id][name]
                         # Also disable in config to prevent auto-restart?
                         # Or just rely on it being removed from active_tasks?
                         # If we don't update config, _update_tasks will restart it next loop!
