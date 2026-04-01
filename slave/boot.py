@@ -129,6 +129,56 @@ def init_st(sysBus):
     return
 
 
+def init_display(sysBus):
+    cfg = sysBus.shared.get("Display") or {}
+    if not cfg.get("enable"):
+        return
+    try:
+        import machine
+        import lib.TFT as tft_mod
+
+        gpio = cfg.get("GPIO") or {}
+        spi_idx = int(gpio.get("spi", 0) or 0)
+        spi_list = sysBus.get_service("spi_list") or []
+        if spi_idx < 0 or spi_idx >= len(spi_list):
+            raise ValueError("invalid spi index")
+
+        dc = machine.Pin(int(gpio.get("dc")))
+        cs = machine.Pin(int(gpio.get("cs")))
+        rst = machine.Pin(int(gpio.get("rst")))
+
+        driver = str(cfg.get("driver") or "ST7789")
+        cls = getattr(tft_mod, driver, None)
+        if cls is None:
+            raise ValueError("unknown display driver")
+
+        width = int(cfg.get("width", 240) or 240)
+        height = int(cfg.get("height", 240) or 240)
+        rotation = int(cfg.get("rotation", 0) or 0)
+        color_order = str(cfg.get("color_order") or "RGB")
+        invert = bool(int(cfg.get("invert", 0) or 0))
+
+        lcd = cls(spi_list[spi_idx], dc, cs, rst, width, height, rotation=rotation, color_order=color_order, invert=invert)
+
+        bl_pin = int(gpio.get("bl", -1) or -1)
+        if bl_pin >= 0:
+            bl_invert = bool(int(gpio.get("bl_invert", 0) or 0))
+            bl = machine.Pin(bl_pin, machine.Pin.OUT, value=(0 if bl_invert else 1))
+            sysBus.register_service("lcd_bl", bl)
+
+        if cfg.get("init_fill"):
+            try:
+                lcd.fill(0)
+            except Exception:
+                pass
+
+        sysBus.register_service("lcd", lcd)
+        sysBus.register_service("tft", lcd)
+    except Exception as e:
+        print(f"❌ Display init error: {e}")
+    return
+
+
 def init_sd(sysBus):
     config = sysBus.shared['SDcard']
     _phat = ''
@@ -150,7 +200,7 @@ def init_sd(sysBus):
 
 init_network_manager(bus)
 init_bus(bus)
+init_display(bus)
 init_led(bus)
 init_st(bus)
 init_sd(bus)
-

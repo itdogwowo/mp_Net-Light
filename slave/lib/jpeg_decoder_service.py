@@ -268,3 +268,18 @@ def get_state_entry(svc, label):
         return None
     return st[i]
 
+
+def pack_in_header(buf, payload_len, *, seq=0, x0=0, y0=0, flags=0, fmt_code=0, path_hash=0):
+    IN_STRUCT.pack_into(buf, 0, int(payload_len), int(seq), int(x0), int(y0), int(flags), int(fmt_code), int(path_hash))
+
+
+def unpack_in_header(buf):
+    return IN_STRUCT.unpack_from(buf, 0)
+
+
+def pack_block_header(buf, payload_len, *, seq=0, x=0, y=0, w=0, h=0, flags=0, fmt_code=0):
+    OUT_STRUCT.pack_into(buf, 0, int(payload_len), int(seq), int(x), int(y), int(w), int(h), int(flags), int(fmt_code))
+
+
+def unpack_block_header(buf):
+    return OUT_STRUCT.unpack_from(buf, 0)
