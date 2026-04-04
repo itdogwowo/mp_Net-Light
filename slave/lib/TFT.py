@@ -120,6 +120,13 @@ class TFT:
         """寫入數據到顯示器"""
         self.dc(1)
         self.cs(0)
+        try:
+            data = memoryview(data)
+        except TypeError:
+            if isinstance(data, int):
+                data = bytes((data & 0xFF,))
+            else:
+                data = bytes(data)
         self.spi.write(data)
         self.cs(1)
     

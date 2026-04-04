@@ -38,6 +38,9 @@ lum = bus.shared.get("System", {}).get("c_lum", 1.0)
 # 讀取 WiFi 設定 (密碼會自動從 secrets.db 填回)
 ssid = bus.shared["Network"]["wifi"]["ssid"]
 password = bus.shared["Network"]["wifi"]["ssid_pw"] 
+
+# Network service 開關
+net_enable = bus.shared["Network"].get("enable", 1)
 ```
 
 ---

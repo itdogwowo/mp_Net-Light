@@ -9,9 +9,11 @@ from tasks.network import NetworkTask
 from tasks.bus_decode import BusDecodeTask
 from tasks.render import RenderTask
 from tasks.web_ui import WebUITask
-from tasks.jpeg_decode_core import JpegDecodeCoreTask
+from tasks.jpeg_decode_task import JpegDecodeTask
+from tasks.display_task import DisplayTask
 from apa102 import APA102
-from lib.jpeg_decoder_service import ensure_jpeg_decoder_service
+from lib.jpeg_service import ensure_jpeg_service, load_dp_config, configure_from_dp_config
+from lib.display_service import ensure_display_service
 
 def launcher():
     print(f"📂 [FS] Initializing File System Manager...")
@@ -27,10 +29,11 @@ def launcher():
     # 3. 🚀 註冊核心交換服務 (不修改 lib，在此處申請)
     hub = AtomicStreamHub(st_LED.total_bytes * bus_sys["buffer_frames"]) 
     bus.register_service("pixel_stream", hub)
-    ensure_jpeg_decoder_service(bus)
+    ensure_jpeg_service(bus)
 
     # 4. App
     app = App()
+    ensure_display_service(bus)
     
     # 5. Task Manager Context
     ctx = {
@@ -50,7 +53,31 @@ def launcher():
     tm.register_task("bus_decode", BusDecodeTask, default_affinity=(1, 0)) # Core 0
     tm.register_task("web_ui",  WebUITask,   default_affinity=(1, 0)) # Core 0
     tm.register_task("render",  RenderTask,  default_affinity=(0, 1)) # Core 1
-    tm.register_task("jpeg_decode", JpegDecodeCoreTask, default_affinity=(0, 0))
+    tm.register_task("jpeg_decode", JpegDecodeTask, default_affinity=(0, 0))
+    tm.register_task("display", DisplayTask, default_affinity=(0, 0))
+
+    net_cfg = bus.shared.get("Network") or {}
+    if not int(net_cfg.get("enable", 1) or 0):
+        tm.set_affinity("network", (0, 0))
+        tm.set_affinity("bus_decode", (0, 0))
+        tm.set_affinity("web_ui", (0, 0))
+
+    disp_cfg = bus.shared.get("TFT") or bus.shared.get("Display") or {}
+    if disp_cfg.get("enable") and disp_cfg.get("auto_start", 1):
+        dp_path = disp_cfg.get("dp_config_path") or ""
+        if dp_path:
+            try:
+                dp = load_dp_config(dp_path)
+                configure_from_dp_config(bus, dp, dp_config_path=dp_path, manifest=getattr(fs, "manifest", None))
+            except Exception as e:
+                bus.shared.setdefault("task_errors", {})["display"] = str(e)
+        core = int(disp_cfg.get("task_core", 1) or 1)
+        if core == 0:
+            tm.set_affinity("jpeg_decode", (1, 0))
+            tm.set_affinity("display", (1, 0))
+        else:
+            tm.set_affinity("jpeg_decode", (0, 1))
+            tm.set_affinity("display", (0, 1))
 
     try:
         # 7. 啟動 Core 1 Runner (新線程)

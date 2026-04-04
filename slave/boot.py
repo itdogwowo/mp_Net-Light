@@ -17,6 +17,9 @@ def exists(path):
 def init_network_manager(sysBus):
     """使用 NetworkManager 統一初始化網絡"""
     try:
+        net_cfg = sysBus.shared.get("Network") or {}
+        if not int(net_cfg.get("enable", 1) or 0):
+            return
         nm = NetworkManager(sysBus)
         nm.init_from_config()
         sysBus.register_service("network_manager", nm)
@@ -130,12 +133,26 @@ def init_st(sysBus):
 
 
 def init_display(sysBus):
-    cfg = sysBus.shared.get("Display") or {}
+    cfg = sysBus.shared.get("TFT") or sysBus.shared.get("Display") or {}
     if not cfg.get("enable"):
         return
     try:
         import machine
         import lib.TFT as tft_mod
+        dp = None
+        dp_tft = {}
+        dp_path = cfg.get("dp_config_path") or ""
+        if dp_path:
+            try:
+                import ujson
+                with open(dp_path, "r") as f:
+                    dp = ujson.load(f) or {}
+                dp_tft = dp.get("tft") if isinstance(dp, dict) else {}
+                if not isinstance(dp_tft, dict):
+                    dp_tft = {}
+            except Exception:
+                dp = None
+                dp_tft = {}
 
         gpio = cfg.get("GPIO") or {}
         spi_idx = int(gpio.get("spi", 0) or 0)
@@ -143,20 +160,32 @@ def init_display(sysBus):
         if spi_idx < 0 or spi_idx >= len(spi_list):
             raise ValueError("invalid spi index")
 
-        dc = machine.Pin(int(gpio.get("dc")))
-        cs = machine.Pin(int(gpio.get("cs")))
-        rst = machine.Pin(int(gpio.get("rst")))
+        dc_pin = gpio.get("dc", None)
+        cs_pin = gpio.get("cs", None)
+        rst_pin = gpio.get("rst", None)
+        if dc_pin is None or cs_pin is None or rst_pin is None:
+            raise ValueError("missing TFT GPIO: dc/cs/rst")
+        dc = machine.Pin(int(dc_pin))
+        cs = machine.Pin(int(cs_pin))
+        rst = machine.Pin(int(rst_pin))
 
-        driver = str(cfg.get("driver") or "ST7789")
+        driver = str(cfg.get("driver") or dp_tft.get("driver") or "ST7789")
         cls = getattr(tft_mod, driver, None)
         if cls is None:
             raise ValueError("unknown display driver")
 
-        width = int(cfg.get("width", 240) or 240)
-        height = int(cfg.get("height", 240) or 240)
-        rotation = int(cfg.get("rotation", 0) or 0)
-        color_order = str(cfg.get("color_order") or "RGB")
-        invert = bool(int(cfg.get("invert", 0) or 0))
+        width = cfg.get("width", None)
+        height = cfg.get("height", None)
+        if width is None:
+            width = dp_tft.get("width", None)
+        if height is None:
+            height = dp_tft.get("height", None)
+
+        width = int(width or 240)
+        height = int(height or 240)
+        rotation = int(cfg.get("rotation", dp_tft.get("rotation", 0) or 0) or 0)
+        color_order = str(cfg.get("color_order") or dp_tft.get("color_order") or "RGB")
+        invert = bool(int(cfg.get("invert", dp_tft.get("invert", 0) or 0) or 0))
 
         lcd = cls(spi_list[spi_idx], dc, cs, rst, width, height, rotation=rotation, color_order=color_order, invert=invert)
 
@@ -166,9 +195,17 @@ def init_display(sysBus):
             bl = machine.Pin(bl_pin, machine.Pin.OUT, value=(0 if bl_invert else 1))
             sysBus.register_service("lcd_bl", bl)
 
-        if cfg.get("init_fill"):
+        init_fill = cfg.get("init_fill", None)
+        if init_fill is None:
+            init_fill = dp_tft.get("init_fill", 0)
+        if init_fill is not None and init_fill != 0 and init_fill is not False:
             try:
-                lcd.fill(0)
+                fill_val = init_fill
+                if fill_val is True:
+                    fill_val = (0, 0, 0)
+                if isinstance(fill_val, list) and len(fill_val) == 3:
+                    fill_val = (int(fill_val[0]), int(fill_val[1]), int(fill_val[2]))
+                lcd.fill(fill_val)
             except Exception:
                 pass
 

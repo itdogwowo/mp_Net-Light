@@ -15,10 +15,10 @@
 
 ## 模組與檔案結構
 
-- **[jpeg_decoder_service.py](../slave/lib/jpeg_decoder_service.py)**
+- **[jpeg_service.py](../slave/lib/jpeg_service.py)**
   提供 Service 註冊（`bus.register_service("jpeg_decoder")`）與從 `dp_config.json` 自動生成 source/output list 的輔助函式。
-- **[jpeg_decode_core.py](../slave/tasks/jpeg_decode_core.py)**
-  核心 Task 本體（`JpegDecodeCoreTask`），繼承自 `Task`，由 TaskManager 驅動。
+- **[jpeg_decode_task.py](../slave/tasks/jpeg_decode_task.py)**
+  核心 Task 本體（`JpegDecodeTask`），繼承自 `Task`，由 TaskManager 驅動。
 - **[dp_config.json](../temp/dp_config.json)**
   使用者只需要維護這份設定檔，裡面的 `display_Layout` 會被用來自動生成所有 label 與其對應的 Hub。
 
@@ -112,10 +112,10 @@
 ```python
 from lib.sys_bus import bus
 from lib.fs_manager import fs
-from lib.jpeg_decoder_service import ensure_jpeg_decoder_service, load_dp_config, configure_from_dp_config
+from lib.jpeg_service import ensure_jpeg_service, load_dp_config, configure_from_dp_config
 
 # 1. 確保 service 存在 (main.py 中已預設呼叫)
-ensure_jpeg_decoder_service(bus)
+ensure_jpeg_service(bus)
 
 # 2. 載入 dp_config
 dp = load_dp_config("/sd/my_anim/dp_config.json")
@@ -139,7 +139,7 @@ Scheduler 負責控制播放節奏。當要播放某一幀時，將檔案讀入 
 注意：必須使用 `pack_in_header` 寫入 16 bytes 的表頭。
 
 ```python
-from lib.jpeg_decoder_service import pack_in_header
+from lib.jpeg_service import pack_in_header
 
 svc = bus.get_service("jpeg_decoder")
 src = svc["source"][0] # 假設 label index 0 是 background
@@ -166,7 +166,7 @@ if wv is not None:
 解碼核心會將解碼後的 Block (8 或 16 行高) 寫入 `output[label].block_hub`。Display Task 只需要輪詢這些 hub 並推送到 LCD。
 
 ```python
-from lib.jpeg_decoder_service import unpack_block_header
+from lib.jpeg_service import unpack_block_header
 
 svc = bus.get_service("jpeg_decoder")
 out = svc["output"][0] # background 的輸出

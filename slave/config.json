@@ -18,6 +18,7 @@
         "drain_reads": 1
     },
     "Network": {
+        "enable": 1,
         "priority": ["lan", "wifi"],
         "lan": {
             "enable": 1,
@@ -112,5 +113,22 @@
         "list": [
             {"GPIO":{"spi":0 },"Q":290,"order":"BGRW"}
         ]
+    },
+    "TFT": {
+        "enable": 0,
+        "dp_config_path": "/dp_config.json",
+        "driver": "GC9A01",
+        "width": 240,
+        "height": 240,
+        "rotation": 0,
+        "color_order": "RGB",
+        "invert": 0,
+        "init_fill": [255, 255, 255],
+        "GPIO": {
+            "spi": 0,
+            "dc": 13,
+            "cs": 10,
+            "rst": 14
+        }
     }
 }

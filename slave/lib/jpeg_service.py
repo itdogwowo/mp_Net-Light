@@ -1,16 +1,35 @@
-import json
-import struct
+try:
+    import ujson as json
+except Exception:
+    import json
+
+try:
+    import ustruct as _struct
+except Exception:
+    import struct as _struct
+
 from lib.buffer_hub import AtomicStreamHub
 
 
 HDR_IN = 16
 HDR_OUT = 16
 
-IN_STRUCT = struct.Struct("<HHhhHHI")
-OUT_STRUCT = struct.Struct("<HHhhHHHH")
+class _MiniStruct:
+    def __init__(self, fmt):
+        self.fmt = fmt
+        self.size = _struct.calcsize(fmt)
+
+    def pack_into(self, buf, offset, *args):
+        return _struct.pack_into(self.fmt, buf, offset, *args)
+
+    def unpack_from(self, buf, offset=0):
+        return _struct.unpack_from(self.fmt, buf, offset)
+
+IN_STRUCT = _MiniStruct("<HHhhHHI")
+OUT_STRUCT = _MiniStruct("<HHhhHHHH")
 
 
-def ensure_jpeg_decoder_service(bus, name="jpeg_decoder"):
+def ensure_jpeg_service(bus, name="jpeg_decoder"):
     svc = bus.get_service(name)
     if svc is not None:
         return svc
@@ -76,18 +95,6 @@ def _dir_name(path):
     return path[:i]
 
 
-def _join(a, b):
-    if not a:
-        return str(b)
-    if not b:
-        return str(a)
-    a = str(a)
-    b = str(b)
-    if a.endswith("/"):
-        return a + b.lstrip("/")
-    return a + "/" + b.lstrip("/")
-
-
 def _extract_layout(dp):
     layout = dp.get("display_Layout") or dp.get("layout") or []
     if not isinstance(layout, list):
@@ -130,7 +137,7 @@ def _manifest_max_under(manifest, base_dir):
 
 
 def configure_from_dp_config(bus, dp, dp_config_path=None, manifest=None, service_name="jpeg_decoder"):
-    svc = ensure_jpeg_decoder_service(bus, name=service_name)
+    svc = ensure_jpeg_service(bus, name=service_name)
 
     jpeg_cfg = dp.get("jpeg") if isinstance(dp, dict) else None
     if not isinstance(jpeg_cfg, dict):

@@ -1,0 +1,31 @@
+{
+    "assets_root": "/sd",
+    "jpeg": {
+        "pixel_format": "RGB565_LE",
+        "rotation": 0,
+        "block": true,
+        "return_bytes": false,
+        "step_blocks": 1,
+        "max_jpeg_bytes": 0,
+        "max_block_h": 16
+    },
+    "display_Layout": [
+        {
+            "type": "background",
+            "height": 240,
+            "width": 240,
+            "x": 0,
+            "y": 0,
+            "depth": 1
+        }
+    ],
+    
+    "counter_time": [
+        5,
+        4,
+        8,
+        3,
+        120
+    ]
+}
+

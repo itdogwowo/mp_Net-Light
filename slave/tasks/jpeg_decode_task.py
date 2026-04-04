@@ -1,13 +1,13 @@
 import time
 from lib.task import Task
 from lib.sys_bus import bus
-from lib.jpeg_decoder_service import HDR_IN, HDR_OUT, IN_STRUCT, OUT_STRUCT, ensure_jpeg_decoder_service, get_output_entry, get_state_entry
+from lib.jpeg_service import HDR_IN, HDR_OUT, IN_STRUCT, OUT_STRUCT, ensure_jpeg_service, get_output_entry, get_state_entry
 
 
-class JpegDecodeCoreTask(Task):
+class JpegDecodeTask(Task):
     def on_start(self):
         super().on_start()
-        self._svc = ensure_jpeg_decoder_service(bus)
+        self._svc = ensure_jpeg_service(bus)
         self._seen_epoch = None
         self._decoder = None
         self._job = None
