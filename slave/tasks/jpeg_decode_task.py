@@ -11,6 +11,7 @@ class JpegDecodeTask(Task):
         self._seen_epoch = None
         self._decoder = None
         self._job = None
+        self._last_idle_log_ms = 0
 
     def _set_error(self, label, msg):
         st = get_state_entry(self._svc, label)
@@ -148,6 +149,24 @@ class JpegDecodeTask(Task):
             meta["x0"] = int(job.get("x0", 0) or 0)
             meta["y0"] = int(job.get("y0", 0) or 0)
             out["meta"] = meta
+            if ok:
+                try:
+                    bus.shared["jpeg_last_done"] = {
+                        "label": str(job.get("out_label") or label),
+                        "seq": int(job.get("seq", 0) or 0),
+                        "w": int(job.get("w", 0) or 0),
+                        "h": int(job.get("h", 0) or 0),
+                        "ms": time.ticks_ms(),
+                    }
+                except Exception:
+                    pass
+                if bool(self._svc.get("log_done", False)):
+                    try:
+                        print(
+                            f"🖼️ [JPEG] Decoded frame label={job.get('out_label') or label} seq={int(job.get('seq', 0) or 0)} {int(job.get('w', 0) or 0)}x{int(job.get('h', 0) or 0)}"
+                        )
+                    except Exception:
+                        pass
 
         try:
             job["src_hub"].release_read()
@@ -190,6 +209,19 @@ class JpegDecodeTask(Task):
             self._finish_job(ok=False, err="block_hub missing")
             return
 
+        exchange_full_frame = bool(self._svc.get("exchange_full_frame", True))
+        framebuf = None if out is None else out.get("framebuf")
+        rect = {} if out is None else (out.get("rect") or {})
+        fw = int(rect.get("w", 0) or 0)
+        fh = int(rect.get("h", 0) or 0)
+        if exchange_full_frame:
+            if framebuf is None:
+                self._finish_job(ok=False, err="framebuf missing")
+                return
+            if fw <= 0 or fh <= 0:
+                self._finish_job(ok=False, err="rect missing")
+                return
+
         step_blocks = int(self._svc.get("step_blocks", 0) or 0)
         if step_blocks <= 0:
             step_blocks = int(job.get("blocks", 1) or 1) - int(job.get("bi", 0) or 0)
@@ -201,10 +233,6 @@ class JpegDecodeTask(Task):
         for _ in range(step_blocks):
             if int(job["bi"]) >= int(job["blocks"]):
                 break
-
-            wv = out_hub.get_write_view()
-            if wv is None:
-                return
 
             try:
                 blk = self._decoder.decode(job["jpeg_data"])
@@ -224,28 +252,44 @@ class JpegDecodeTask(Task):
 
             payload_len = int(job["w"]) * int(h_this) * int(job["bpp"])
 
-            out_flags = 0
-            if int(job["bi"]) == 0:
-                out_flags |= 1
-            if int(job["bi"]) == int(job["blocks"]) - 1:
-                out_flags |= 2
-
-            OUT_STRUCT.pack_into(
-                wv,
-                0,
-                payload_len,
-                int(job["seq"]),
-                int(job["x0"]),
-                int(job["y0"]) + int(job["y"]),
-                int(job["w"]),
-                int(h_this),
-                int(out_flags),
-                int(job["fmt_code"]),
-            )
-
             mv = memoryview(blk)
-            wv[HDR_OUT : HDR_OUT + payload_len] = mv[:payload_len]
-            out_hub.commit()
+            if exchange_full_frame:
+                if int(job["w"]) != fw or int(job["h"]) != fh:
+                    self._finish_job(ok=False, err="img size mismatch rect")
+                    return
+                row_bytes = int(job["w"]) * int(job["bpp"])
+                dst_stride = fw * int(job["bpp"])
+                dst = memoryview(framebuf)
+                src = mv[:payload_len]
+                dy = 0
+                while dy < int(h_this):
+                    di = (int(job["y"]) + dy) * dst_stride
+                    si = dy * row_bytes
+                    dst[di : di + row_bytes] = src[si : si + row_bytes]
+                    dy += 1
+            else:
+                wv = out_hub.get_write_view()
+                if wv is None:
+                    return
+                out_flags = 0
+                if int(job["bi"]) == 0:
+                    out_flags |= 1
+                if int(job["bi"]) == int(job["blocks"]) - 1:
+                    out_flags |= 2
+                OUT_STRUCT.pack_into(
+                    wv,
+                    0,
+                    payload_len,
+                    int(job["seq"]),
+                    int(job["x0"]),
+                    int(job["y0"]) + int(job["y"]),
+                    int(job["w"]),
+                    int(h_this),
+                    int(out_flags),
+                    int(job["fmt_code"]),
+                )
+                wv[HDR_OUT : HDR_OUT + payload_len] = mv[:payload_len]
+                out_hub.commit()
 
             job["y"] = int(job["y"]) + int(h_this)
             job["bi"] = int(job["bi"]) + 1
@@ -253,6 +297,26 @@ class JpegDecodeTask(Task):
                 st["decoded_blocks"] = int(st.get("decoded_blocks", 0) or 0) + 1
 
         if int(job["bi"]) >= int(job["blocks"]):
+            if exchange_full_frame:
+                wv = out_hub.get_write_view()
+                if wv is None:
+                    self._finish_job(ok=False, err="output hub full")
+                    return
+                payload_len = int(job["w"]) * int(job["h"]) * int(job["bpp"])
+                OUT_STRUCT.pack_into(
+                    wv,
+                    0,
+                    payload_len,
+                    int(job["seq"]),
+                    int(job["x0"]),
+                    int(job["y0"]),
+                    int(job["w"]),
+                    int(job["h"]),
+                    3,
+                    int(job["fmt_code"]),
+                )
+                wv[HDR_OUT : HDR_OUT + payload_len] = memoryview(framebuf)[:payload_len]
+                out_hub.commit()
             self._finish_job(ok=True)
 
     def _step_full_mode(self):
@@ -312,6 +376,28 @@ class JpegDecodeTask(Task):
         if self._job is None:
             self._pick_job()
             if self._job is None:
+                now = time.ticks_ms()
+                if time.ticks_diff(now, int(self._last_idle_log_ms or 0)) > 1000:
+                    self._last_idle_log_ms = now
+                    try:
+                        src = self._svc.get("source") or []
+                        st = self._svc.get("state") or []
+                        fills = []
+                        for it in src:
+                            try:
+                                hub = it.get("hub")
+                                fills.append((str(it.get("label") or ""), hub.get_fill_level() if hub else -1))
+                            except Exception:
+                                pass
+                        busy = []
+                        for s in st:
+                            try:
+                                busy.append((str(s.get("label") or ""), int(s.get("busy", 0) or 0), str(s.get("last_err") or "")))
+                            except Exception:
+                                pass
+                        print(f"⏳ [JPEG] waiting input fills={fills} state={busy}")
+                    except Exception:
+                        pass
                 return
 
         if not self._ensure_decoder(self._job["label"]):
@@ -324,4 +410,3 @@ class JpegDecodeTask(Task):
             self._step_block_mode()
         else:
             self._step_full_mode()
-

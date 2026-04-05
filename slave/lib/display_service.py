@@ -14,6 +14,9 @@ def ensure_display_service(bus, name="display"):
         "last_ms": 0,
         "displayed_blocks": 0,
         "rr": 0,
+        "hook_enable": False,
+        "hook": None,
+        "full_frame_only": False,
     }
     bus.register_service(name, svc)
     try:
@@ -30,3 +33,11 @@ def service_error(svc, err):
     except Exception:
         pass
 
+
+def set_frame_hook(bus, fn=None, *, enable=True, full_frame_only=True, name="display"):
+    svc = ensure_display_service(bus, name=name)
+    svc["hook"] = fn
+    svc["hook_enable"] = bool(enable and fn is not None)
+    svc["full_frame_only"] = bool(full_frame_only)
+    svc["cfg_epoch"] = (int(svc.get("cfg_epoch", 0) or 0) + 1) & 0xFFFF
+    return svc

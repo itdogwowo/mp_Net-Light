@@ -11,6 +11,7 @@ class DisplayTask(Task):
         self._svc = ensure_display_service(bus)
         self._lcd = None
         self._jpeg = None
+        self._post = None
         self._swap_buf = None
 
     def _resolve_lcd(self):
@@ -31,6 +32,13 @@ class DisplayTask(Task):
         self._jpeg = svc
         return svc
 
+    def _resolve_post(self):
+        if self._post is not None:
+            return self._post
+        svc = bus.get_service("jpeg_post")
+        self._post = svc
+        return svc
+
     def loop(self):
         if not self.running:
             return
@@ -46,7 +54,13 @@ class DisplayTask(Task):
         if jpeg is None or not jpeg.get("enable"):
             return
 
-        outs = jpeg.get("output") or []
+        post = self._resolve_post()
+        if post is not None and post.get("enable", True) and (post.get("output") or []):
+            outs = post.get("output") or []
+            use_post = True
+        else:
+            outs = jpeg.get("output") or []
+            use_post = False
         n = len(outs)
         if n <= 0:
             return
@@ -59,7 +73,7 @@ class DisplayTask(Task):
             out = outs[i]
             if not out or not out.get("enabled", True):
                 continue
-            hub = out.get("block_hub")
+            hub = out.get("hub") if use_post else out.get("block_hub")
             if hub is None:
                 continue
             rv = hub.get_read_view()
@@ -74,7 +88,40 @@ class DisplayTask(Task):
                     except Exception:
                         pass
                     continue
+                if bool(self._svc.get("full_frame_only", False)):
+                    if not ((int(flags) & 1) and (int(flags) & 2)):
+                        try:
+                            hub.release_read()
+                        except Exception:
+                            pass
+                        continue
                 payload = rv[HDR_OUT : HDR_OUT + payload_len]
+                hook = self._svc.get("hook", None)
+                if bool(self._svc.get("hook_enable", False)) and hook is not None:
+                    info = {
+                        "label": str(out.get("label") or ""),
+                        "seq": int(seq),
+                        "x": int(x),
+                        "y": int(y),
+                        "w": int(w),
+                        "h": int(h),
+                        "flags": int(flags),
+                        "fmt": int(fmt),
+                        "pixel_format": str(jpeg.get("pixel_format") or ""),
+                    }
+                    try:
+                        new_payload = hook(payload, info)
+                        if new_payload is not None:
+                            if int(len(new_payload)) != int(payload_len):
+                                raise ValueError("hook payload length mismatch")
+                            payload = new_payload
+                    except Exception as e:
+                        try:
+                            hub.release_read()
+                        except Exception:
+                            pass
+                        service_error(self._svc, e)
+                        return
                 lcd.set_window(int(x), int(y), int(x) + int(w) - 1, int(y) + int(h) - 1)
                 pf = str(jpeg.get("pixel_format") or "")
                 if pf.endswith("_LE") and (int(payload_len) & 1) == 0:
@@ -115,3 +162,4 @@ class DisplayTask(Task):
         super().on_stop()
         self._lcd = None
         self._jpeg = None
+        self._post = None

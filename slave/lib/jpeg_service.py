@@ -41,6 +41,8 @@ def ensure_jpeg_service(bus, name="jpeg_decoder"):
         "pixel_format": "RGB565_LE",
         "rotation": 0,
         "block": True,
+        "exchange_full_frame": True,
+        "log_done": True,
         "return_bytes": False,
         "step_blocks": 0,
         "max_jpeg_bytes": 0,
@@ -57,6 +59,21 @@ def ensure_jpeg_service(bus, name="jpeg_decoder"):
     if name == "jpeg_decoder":
         try:
             bus.register_service("jepg_decoder", svc)
+        except Exception:
+            pass
+        try:
+            bus.register_provider(
+                "jpeg_frames",
+                lambda: sum(int(st.get("decoded_frames", 0) or 0) for st in (svc.get("state") or [])),
+            )
+            bus.register_provider(
+                "jpeg_blocks",
+                lambda: sum(int(st.get("decoded_blocks", 0) or 0) for st in (svc.get("state") or [])),
+            )
+            bus.register_provider(
+                "jpeg_last_ms",
+                lambda: max([int(st.get("last_ms", 0) or 0) for st in (svc.get("state") or [])] or [0]),
+            )
         except Exception:
             pass
     return svc
@@ -146,6 +163,7 @@ def configure_from_dp_config(bus, dp, dp_config_path=None, manifest=None, servic
     pixel_format = jpeg_cfg.get("pixel_format") or svc.get("pixel_format") or "RGB565_LE"
     rotation = int(jpeg_cfg.get("rotation", svc.get("rotation", 0) or 0) or 0)
     block = bool(jpeg_cfg.get("block", svc.get("block", True)))
+    exchange_full_frame = bool(jpeg_cfg.get("exchange_full_frame", svc.get("exchange_full_frame", True)))
     return_bytes = bool(jpeg_cfg.get("return_bytes", svc.get("return_bytes", False)))
     step_blocks = int(jpeg_cfg.get("step_blocks", svc.get("step_blocks", 0) or 0) or 0)
 
@@ -189,7 +207,7 @@ def configure_from_dp_config(bus, dp, dp_config_path=None, manifest=None, servic
 
         src_hub = AtomicStreamHub(HDR_IN + max_jpeg_bytes, num_buffers=3)
         max_frame_bytes = w * h * bpp
-        max_block_bytes = w * max_block_h * bpp
+        max_block_bytes = max_frame_bytes if (exchange_full_frame or not block) else (w * max_block_h * bpp)
         out_block_hub = AtomicStreamHub(HDR_OUT + max_block_bytes, num_buffers=3)
         framebuf = bytearray(max_frame_bytes)
 
@@ -205,7 +223,7 @@ def configure_from_dp_config(bus, dp, dp_config_path=None, manifest=None, servic
             {
                 "label": label,
                 "enabled": True,
-                "mode": "framebuf",
+                "mode": "frame" if exchange_full_frame else "blocks",
                 "rect": {"x": x, "y": y, "w": w, "h": h},
                 "framebuf": framebuf,
                 "block_hub": out_block_hub,
@@ -229,6 +247,7 @@ def configure_from_dp_config(bus, dp, dp_config_path=None, manifest=None, servic
     svc["pixel_format"] = pixel_format
     svc["rotation"] = rotation
     svc["block"] = block
+    svc["exchange_full_frame"] = exchange_full_frame
     svc["return_bytes"] = return_bytes
     svc["step_blocks"] = step_blocks
     svc["max_jpeg_bytes"] = max_jpeg_bytes
@@ -290,3 +309,59 @@ def pack_block_header(buf, payload_len, *, seq=0, x=0, y=0, w=0, h=0, flags=0, f
 
 def unpack_block_header(buf):
     return OUT_STRUCT.unpack_from(buf, 0)
+
+
+def submit_jpeg_bytes(svc, label, jpeg_bytes, *, seq=0, x0=0, y0=0, flags=0, fmt_code=0, path_hash=0):
+    src = get_source_entry(svc, label)
+    if src is None:
+        return False
+    hub = src.get("hub")
+    if hub is None:
+        return False
+    wv = hub.get_write_view()
+    if wv is None:
+        return False
+    mv = memoryview(jpeg_bytes)
+    n = int(len(mv))
+    cap = int(len(wv)) - HDR_IN
+    if n <= 0 or cap <= 0 or n > cap:
+        return False
+    wv[HDR_IN : HDR_IN + n] = mv
+    pack_in_header(wv, n, seq=seq, x0=x0, y0=y0, flags=flags, fmt_code=fmt_code, path_hash=path_hash)
+    hub.commit()
+    return True
+
+
+def submit_jpeg_file(svc, label, path, *, seq=0, x0=0, y0=0, flags=0, fmt_code=0, path_hash=0):
+    src = get_source_entry(svc, label)
+    if src is None:
+        return False
+    hub = src.get("hub")
+    if hub is None:
+        return False
+    wv = hub.get_write_view()
+    if wv is None:
+        return False
+    cap = int(len(wv)) - HDR_IN
+    if cap <= 0:
+        return False
+    n = 0
+    try:
+        with open(path, "rb") as f:
+            n = f.readinto(wv[HDR_IN : HDR_IN + cap])
+            if n is None:
+                n = 0
+            try:
+                extra = f.read(1)
+                if extra:
+                    return False
+            except Exception:
+                pass
+    except Exception:
+        return False
+    n = int(n or 0)
+    if n <= 0:
+        return False
+    pack_in_header(wv, n, seq=seq, x0=x0, y0=y0, flags=flags, fmt_code=fmt_code, path_hash=path_hash)
+    hub.commit()
+    return True

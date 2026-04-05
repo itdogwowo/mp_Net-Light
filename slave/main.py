@@ -10,6 +10,8 @@ from tasks.bus_decode import BusDecodeTask
 from tasks.render import RenderTask
 from tasks.web_ui import WebUITask
 from tasks.jpeg_decode_task import JpegDecodeTask
+from tasks.jpeg_feed_task import JpegFeedTask
+from tasks.jpeg_post_task import JpegPostTask
 from tasks.display_task import DisplayTask
 from apa102 import APA102
 from lib.jpeg_service import ensure_jpeg_service, load_dp_config, configure_from_dp_config
@@ -53,7 +55,9 @@ def launcher():
     tm.register_task("bus_decode", BusDecodeTask, default_affinity=(1, 0)) # Core 0
     tm.register_task("web_ui",  WebUITask,   default_affinity=(1, 0)) # Core 0
     tm.register_task("render",  RenderTask,  default_affinity=(0, 1)) # Core 1
+    tm.register_task("jpeg_feed", JpegFeedTask, default_affinity=(0, 0))
     tm.register_task("jpeg_decode", JpegDecodeTask, default_affinity=(0, 0))
+    tm.register_task("jpeg_post", JpegPostTask, default_affinity=(0, 0))
     tm.register_task("display", DisplayTask, default_affinity=(0, 0))
 
     net_cfg = bus.shared.get("Network") or {}
@@ -73,10 +77,14 @@ def launcher():
                 bus.shared.setdefault("task_errors", {})["display"] = str(e)
         core = int(disp_cfg.get("task_core", 1) or 1)
         if core == 0:
+            tm.set_affinity("jpeg_feed", (1, 0))
             tm.set_affinity("jpeg_decode", (1, 0))
+            tm.set_affinity("jpeg_post", (1, 0))
             tm.set_affinity("display", (1, 0))
         else:
+            tm.set_affinity("jpeg_feed", (0, 1))
             tm.set_affinity("jpeg_decode", (0, 1))
+            tm.set_affinity("jpeg_post", (0, 1))
             tm.set_affinity("display", (0, 1))
 
     try:
