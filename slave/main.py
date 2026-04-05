@@ -9,6 +9,10 @@ from tasks.network import NetworkTask
 from tasks.bus_decode import BusDecodeTask
 from tasks.render import RenderTask
 from tasks.web_ui import WebUITask
+from tasks.dp_manager_task import DpManagerTask
+from tasks.jpeg_decode_task import JpegDecodeTask
+from tasks.dp_buffer_task import DpBufferTask
+from tasks.display_task import DisplayTask
 from apa102 import APA102
 
 def launcher():
@@ -47,6 +51,10 @@ def launcher():
     tm.register_task("bus_decode", BusDecodeTask, default_affinity=(1, 0)) # Core 0
     tm.register_task("web_ui",  WebUITask,   default_affinity=(1, 0)) # Core 0
     tm.register_task("render",  RenderTask,  default_affinity=(0, 1)) # Core 1
+    tm.register_task("dp_manager", DpManagerTask, default_affinity=(1, 0))
+    tm.register_task("jpeg_decode", JpegDecodeTask, default_affinity=(0, 1))
+    tm.register_task("dp_buffer", DpBufferTask, default_affinity=(0, 1))
+    tm.register_task("display", DisplayTask, default_affinity=(0, 1))
 
     try:
         # 7. 啟動 Core 1 Runner (新線程)
