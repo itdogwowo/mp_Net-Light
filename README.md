@@ -7,7 +7,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-ESP32-green.svg)]()
-[![MicroPython](https://img.shields.io/badge/MicroPython-≥1.23-orange.svg)]()
+[![MicroPython](https://img.shields.io/badge/MicroPython-≥1.26-orange.svg)]()
 
 *Not just another LED controller. A dual-core, protocol-driven, heterogeneous lighting platform.*  
 *不只是又一臺 LED 控制器。雙核心、協議驅動、異質燈光平臺。*
