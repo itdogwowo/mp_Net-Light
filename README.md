@@ -2,23 +2,21 @@
 
 # mp_Net-Light
 
-**MicroPython Networked LED Control System**  
-**MicroPython 網路化 LED 控制系統**
+**MicroPython Networked LED Control System**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-ESP32-green.svg)]()
+[![Platform](https://img.shields.io/badge/platform-ESP32|S3|P4-green.svg)]()
 [![MicroPython](https://img.shields.io/badge/MicroPython-≥1.26-orange.svg)]()
 
-*Not just another LED controller. A dual-core, protocol-driven, heterogeneous lighting platform.*  
-*不只是又一臺 LED 控制器。雙核心、協議驅動、異質燈光平臺。*
+*Not just another LED controller. A dual-core, protocol-driven, heterogeneous lighting platform.*
 
 ---
 
 </div>
 
-## Overview · 概述
+## Overview
 
-**mp_Net-Light** is a high-performance networked LED control system built on **ESP32 + MicroPython**. It transforms a microcontroller into a full-fledged **network node** capable of driving **WS2812, APA102, and PCA9685 simultaneously** — controlled in real-time over TCP/WebSocket from a Django server, synced with xLights sequences, and managed with industrial-grade file transfer and atomic writes.
+**mp_Net-Light** is a high-performance networked LED control system built on **ESP32 / S3 / P4 + MicroPython**. It transforms a microcontroller into a full-fledged **network node** capable of driving **WS2812, APA102, and PCA9685 simultaneously** — controlled in real-time over TCP/WebSocket, synced with xLights sequences, and managed with industrial-grade file transfer and atomic writes.
 
 Unlike WLED (general-purpose home lighting) or FPP (large-scale sequence player), mp_Net-Light occupies a unique intersection:
 
@@ -30,19 +28,19 @@ Unlike WLED (general-purpose home lighting) or FPP (large-scale sequence player)
 
 ---
 
-**mp_Net-Light** 是一套基於 **ESP32 + MicroPython** 的高效能網路化 LED 控制系統。它將微控制器轉變為完整的**網路節點**，可同時驅動 **WS2812、APA102 與 PCA9685**，透過 Django 伺服器以 TCP/WebSocket 即時控制，與 xLights 序列同步播放，並配備工業級檔案傳輸與原子寫入機制。
+## Supported Hardware
 
-不同於 WLED（通用家居燈光）或 FPP（大規模序列播放器），mp_Net-Light 站在獨特的交點：
+| SoC | Cores | Ethernet | WiFi | Status |
+|-----|-------|----------|------|--------|
+| **ESP32** (LX6) | 2× Xtensa | RMII + SPI (W5500) | 2.4 GHz | ✅ Primary target |
+| **ESP32-S3** (LX7) | 2× Xtensa | SPI (W5500) | 2.4 GHz | ✅ Network tested |
+| **ESP32-P4** (RISC-V) | 2× RISC-V | RMII | ❌ (no WiFi) | ✅ Verified with Ethernet (~1ms ping) |
 
-- **純 Python 開發** — 秒級迭代，無需 C 工具鏈
-- **真正的雙核心架構** — Core 0 專責網路，Core 1 專責渲染，互不競爭
-- **異質 LED 混合輸出** — 一臺 ESP32 同時驅動 WS2812 + APA102 + PCA9685，共用統一緩衝區
-- **協議驅動設計** — Schema 定義指令，擴展無需重新編譯
-- **xLights 序列支援** — PXLD v3 格式橋接專業燈光設計到 MicroPython 播放
+All three support MicroPython ≥1.26 with full Viper native code emitter.
 
 ---
 
-## Architecture · 架構
+## Architecture
 
 ```
                     ┌──────────────────────────────────────────┐
@@ -69,40 +67,35 @@ Core 0 (Network)    │            Core 1 (Rendering)            │
          │     Providers, Shared)   │
          │                          │
 ┌────────▼──────────────────────────▼──────────────────────────┐
-│                    PC Server (Django)                        │
-│  · WebSocket bus for real-time control                       │
+│                    PC Control                                  │
+│  · Django server (WebSocket + REST + Web UI)                 │
+│  · NetBusMaster CLI (direct TCP control, no server needed)   │
 │  · PXLD v3 decoder for xLights sequence playback             │
-│  · REST API + Web UI for device management                   │
 │  · Slave discovery via UDP heartbeat                         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The dual-core architecture is the foundation. **Core 0** handles all I/O: TCP/WebSocket connections, binary protocol parsing, schema decoding, file system operations. **Core 1** is dedicated to LED rendering: consuming frame data from the lock-free `AtomicStreamHub`, performing Viper-accelerated pixel format conversion, and driving the physical LED hardware.
+**Core 0** handles all I/O: TCP/WebSocket connections, binary protocol parsing, schema decoding, file system operations. **Core 1** is dedicated to LED rendering: consuming frame data from the lock-free `AtomicStreamHub`, performing Viper-accelerated pixel format conversion, and driving the physical LED hardware.
 
 Communication between cores happens through `AtomicStreamHub` — a multi-slot ring buffer using atomic state transitions (`IDLE → READY → READING`), requiring no locks and producing zero garbage collection pressure.
 
 ---
 
-雙核心架構是基礎。**Core 0** 處理所有 I/O：TCP/WebSocket 連線、二進位協定解析、Schema 解碼、檔案系統操作。**Core 1** 專職 LED 渲染：從無鎖 `AtomicStreamHub` 消費幀資料、執行 Viper 加速的像素格式轉換、驅動實體 LED 硬體。
+## Features
 
-核心間通訊透過 `AtomicStreamHub` — 一種多槽位環形緩衝區，使用原子狀態轉換（`IDLE → READY → READING`），不需要鎖，不產生 GC 壓力。
-
----
-
-## Features · 功能
-
-### Core System · 核心系統
+### Core System
 
 | Feature | Description |
 |---------|-------------|
 | **Dual-Core Architecture** | Network I/O on Core 0, LED rendering on Core 1 — no frame drops under load |
 | **Schema-Driven Protocol** | Commands defined in JSON Schema; add new commands without recompiling firmware |
 | **AtomicStreamHub** | Lock-free, zero-copy, 3-slot ring buffer for inter-core data transfer |
-| **SysBus** | Service registry, dynamic providers, and shared state — the nervous system of the device |
+| **SysBus** | Service registry, dynamic providers, and shared state |
 | **Task Orchestrator** | Register tasks with core affinity; migrate between cores at runtime |
+| **CLI Tools** | `NetBusMaster.py` for direct TCP/WS device control without server dependency |
 | **Performance Benchmarks** | Built-in RAM bandwidth test (discard/copy/hub_copy modes) for measuring protocol throughput |
 
-### LED Drivers · LED 驅動
+### LED Drivers
 
 | Driver | Type | Interface | Speed | Features |
 |--------|------|-----------|-------|----------|
@@ -112,16 +105,14 @@ Communication between cores happens through `AtomicStreamHub` — a multi-slot r
 
 **Unique capability**: All three driver types can operate **simultaneously** from a single unified RGBW frame buffer. A single `LEDStreamer.show_all()` call converts and outputs to WS2812 strips, APA102 strips, and PCA9685 PWM channels in one pass.
 
-**獨有能力**：三種驅動可從同一個 RGBW 統一幀緩衝區**同時輸出**。單次 `LEDStreamer.show_all()` 呼叫即可一次完成 WS2812 燈帶、APA102 燈帶與 PCA9685 PWM 通道的轉換與輸出。
-
-### Network · 網路
+### Network
 
 | Interface | Type | Details |
 |-----------|------|---------|
 | **WiFi STA** | Wireless | Auto-connect with config fallback to AP mode |
 | **WiFi AP** | Wireless | Failsafe hotspot for headless configuration |
-| **RMII Ethernet** | Wired | LAN8720 / IP101 PHY support |
-| **SPI Ethernet** | Wired | WIZNET5K (W5500) support |
+| **RMII Ethernet** | Wired | LAN8720 / IP101 PHY support (ESP32, ESP32-P4) |
+| **SPI Ethernet** | Wired | WIZNET5K (W5500) support (ESP32, ESP32-S3) |
 
 | Protocol | Transport | Purpose |
 |----------|-----------|---------|
@@ -130,7 +121,14 @@ Communication between cores happens through `AtomicStreamHub` — a multi-slot r
 | **HTTP** | TCP | Embedded Web UI on port 80 |
 | **mDNS** | UDP | Local network name resolution |
 
-### Sequence Playback · 序列播放
+### Control Options
+
+You don't need the Django server to control devices. Two options:
+
+- **Django Server** (`server/`): Full WebSocket-based control, REST API, Web UI, PXLD playback management, device discovery dashboard
+- **NetBusMaster CLI** (`tools/NetBusMaster.py`): Direct TCP/WebSocket control — send commands, manage files, run benchmarks, control playback. Zero server setup required.
+
+### Sequence Playback
 
 ```
 xLights (lighting design)
@@ -150,24 +148,24 @@ Dual-core playback from local flash
 - **Frame-accurate sync**: Future-time PLAY command enables sub-millisecond multi-device synchronization
 - **Seek, pause, loop**: Full transport control via protocol commands
 
-### File Transfer · 檔案傳輸
+### File Transfer
 
 - **Chunk-based upload** with resume support
 - **Atomic writes**: File is finalized only after SHA256 verification
 - **File manifest caching**: Accelerates directory queries
 - **Full filesystem scan**: On-demand with manifest generation
 
-### System Management · 系統管理
+### System Management
 
 - **OTA file updates**: Push new Python modules over the network — no firmware reflash needed
 - **WiFi scanning**: List nearby access points on demand
 - **Configuration persistence**: JSON + BTree database; passwords auto-isolated to secure storage
-- **Embedded Web UI**: Control panel served from the device itself
+- **Embedded Web UI**: Control panel served from the device itself, accessible from any browser
 - **WebSocket monitor**: Real-time FPS, frame count, and device metrics
 
 ---
 
-## Performance · 效能
+## Performance
 
 | Metric | Value | Conditions |
 |--------|-------|------------|
@@ -175,7 +173,8 @@ Dual-core playback from local flash
 | **Effective throughput (full stack)** | 400~500 KB/s | CRC32 + Schema decode + Dispatch + Hub transfer |
 | **CRC32 decode speed** | 4~5 MB/s | MicroPython with Viper optimization |
 | **LED rendering** | 40+ FPS @ 1000+ LEDs | Dual-core with `@micropython.viper` conversion |
-| **Ethernet ping** | ~1ms | RMII PHY on LAN, no WiFi jitter |
+| **Ethernet ping** | ~1ms | RMII PHY on LAN / ESP32-P4, no WiFi jitter |
+| **S3 network test** | ✅ Verified | ESP32-S3 with W5500 Ethernet tested |
 
 **Scaling**: At 40 FPS, 500 KB/s supports ~3200 RGBW LEDs. For larger installations, sequences are pre-loaded to local flash, making playback performance independent of network throughput.
 
@@ -191,7 +190,7 @@ Target: **2~3 MB/s effective throughput** (see [`doc/PROTOCOL_OPTIMIZATION_PLAN.
 
 ---
 
-## Project Structure · 專案結構
+## Project Structure
 
 ```
 mp_Net-Light/
@@ -235,15 +234,15 @@ mp_Net-Light/
 │       ├── file.json               # File transfer commands
 │       ├── stream.json             # Stream playback commands
 │       └── ram_bench.json          # RAM benchmark commands
-├── server/                         # PC-side Django server
+├── server/                         # PC-side Django server (optional)
 │   ├── core/                       # Discovery + protocol services
 │   └── light_control/              # WebSocket playback + REST API
-├── tools/                          # PC tools
+├── tools/                          # PC tools (CLI, no server needed)
 │   ├── NetBusMaster.py             # Full device management console
 │   ├── PXLDv3Splitter.py           # xLights sequence → per-slave .bin
 │   └── pc_test_tool.py             # PC-side test and benchmark
 ├── doc/                            # Design documentation
-│   ├── AI_CONTEXT.md               # Full system reference (architecture, protocol)
+│   ├── AI_CONTEXT.md               # Complete system reference
 │   ├── DualCoreTaskOrchestrator.md  # Dual-core task design
 │   ├── PROTOCOL_OPTIMIZATION_PLAN.md # Protocol throughput optimization
 │   ├── RAM_BENCH.md                 # RAM benchmark protocol
@@ -253,7 +252,7 @@ mp_Net-Light/
 
 ---
 
-## Documentation · 文件
+## Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -265,24 +264,25 @@ mp_Net-Light/
 
 ---
 
-## Comparison · 對比
+## Comparison
 
 | Dimension | mp_Net-Light | WLED | FPP (Falcon Player) |
 |-----------|:------------:|:----:|:-------------------:|
 | **Language** | MicroPython | C++ (Arduino) | C++ / Python |
-| **Hardware** | ESP32 | ESP8266 / ESP32 | Raspberry Pi / BeagleBone |
-| **Dual-Core Architecture** | ✅ Explicit task separation | ❌ Single-thread | ❌ Linux (process-based) |
+| **Hardware** | ESP32 / S3 / P4 | ESP8266 / ESP32 | Raspberry Pi / BeagleBone |
+| **Dual-Core Architecture** | ✅ Explicit task separation | ❌ | ❌ (Linux process-based) |
 | **Heterogeneous LED mixing** | ✅ WS2812+APA102+PCA9685 | ❌ Same type per instance | ✅ Via hardware channels |
 | **Built-in effects** | ❌ (playback-focused) | ✅ 117+ effects | ✅ Via xLights sequences |
 | **xLights integration** | ✅ PXLD v3 converter | ⚠️ Partial (UDP realtime) | ✅ Native |
-| **Ethernet support** | ✅ RMII + SPI (W5500) | ❌ WiFi only | ✅ (primary interface) |
+| **Ethernet** | ✅ RMII + SPI (W5500) | ❌ WiFi only | ✅ (primary interface) |
 | **Protocol** | Schema-driven binary (TCP/WS) | JSON API + E1.31/Art-Net | E1.31 / DDP / DMX |
 | **File transfer** | Atomic write + SHA256 verify | Basic config backup | Linux filesystem |
-| **OTA updates** | Python file push (no reflash) | Full firmware reflash | Package manager |
-| **Development cycle** | Edit → upload → run (~10s) | Edit → compile → flash (~2min) | Edit → build → deploy |
+| **OTA** | Python file push (no reflash) | Full firmware reflash | Package manager |
+| **Control** | Django server **or** standalone CLI | Web UI + mobile apps | FPP web UI |
+| **Dev cycle** | Edit → upload → run (~10s) | Edit → compile → flash (~2min) | Edit → build → deploy |
 | **Target user** | Developers, artists, custom installations | General home users | Professional light shows |
 
-### What this project is not · 這個專案不是什麼
+### What this project is not
 
 - **Not a WLED replacement** — WLED excels at out-of-box home lighting with 117+ effects and a polished UI. Use WLED when you need "smart lights in 30 minutes."
 - **Not an FPP alternative** — FPP drives hundreds of thousands of LEDs via dedicated hardware controllers. It is the standard for professional Christmas and stage lighting.
@@ -290,23 +290,25 @@ mp_Net-Light/
 
 ---
 
-## Quick Start · 快速開始
+## Quick Start
 
 ### Hardware Requirements
 
-- ESP32 board (with PSRAM recommended)
-- USB cable for initial firmware flashing
+- ESP32 / ESP32-S3 / ESP32-P4 board (PSRAM recommended)
+- USB cable for initial MicroPython flashing
 - LED strip(s): WS2812, APA102, or PCA9685-based PWM LEDs
 - (Optional) RMII Ethernet PHY (LAN8720/IP101) or SPI Ethernet (W5500)
 - (Optional) MicroSD card module for large sequence storage
 
 ### Software Setup
 
-1. **Flash MicroPython** to your ESP32
+1. **Flash MicroPython ≥1.26** to your board
 2. **Upload the `slave/` directory** to the device filesystem
 3. **Configure** `slave/config.json` for your LED setup and network
-4. **(Optional) Start the Django server**: `cd server && pip install -r requirements.txt && python manage.py runserver`
-5. **Power on** — the ESP32 auto-connects to the server via WebSocket
+4. Choose your control method:
+   - **CLI**: `python tools/NetBusMaster.py` (no server needed, direct control)
+   - **Server**: `cd server && pip install -r requirements.txt && python manage.py runserver`
+5. **Power on** — the device auto-connects via WebSocket
 
 ---
 
