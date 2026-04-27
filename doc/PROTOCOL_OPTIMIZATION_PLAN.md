@@ -285,8 +285,37 @@ Phase 1~3 提到的優化全部只用 `viper` + `native` + 預分配技巧就能
 3. 比對 `performance_report.md` 的 400~500 KB/s 基線
 
 ---
+## 7. DMA 直接操作暫存器（未來項目）
 
-## 7. 參考
+本專案的協議層優化不涉及 DMA。但經過討論，記錄以下供其他項目參考：
+
+### MicroPython 上操作 DMA 的現實
+
+`machine.mem32[addr] = val` 可以直接讀寫硬體暫存器（包括 GDMA），但有以下限制：
+
+| 問題 | 原因 |
+|------|------|
+| DMA buffer memory type | MicroPython heap 可能在 PSRAM 上，DMA 只能使用內部 DRAM |
+| Cache coherency | CPU 寫了 buffer 但 DMA 讀到 stale data，MicroPython 無法執行 `dpandb` |
+| Descriptor 手動填 | DMA descriptor 是 64-byte struct，需用 `mem32` 逐字節填入 linked list |
+| 中斷 latency | MicroPython `irq()` callback ~50µs，吃掉 DMA 的低延遲優勢 |
+| Buffer alignment | DMA 要求 16/32-byte aligned，`bytearray` 不保證 |
+
+### 建議做法
+
+```python
+# 不建議：mem32 硬幹 DMA 暫存器
+mem32[GDMA_CH0_DESC_ADDR] = desc_addr  # 不穩定，難 debug
+
+# 建議：寫 C module 包裝 ESP-IDF GDMA API
+# dma_streamer.c → compile into firmware → Python import
+import dma_streamer
+dma_streamer.apa102_write(spi_buffer, len)  # 全速 DMA
+```
+
+C module 方式可保留 `apa102.py` 的 `buf / spi_buffer` 結構，僅替換最底層的 `show_raw()` 實現。
+
+### 參考資源
 
 - [`doc/RAM_BENCH.md`](./RAM_BENCH.md) — RAM 測速協議細節
 - [`doc/performance_report.md`](./performance_report.md) — 當前性能基線
