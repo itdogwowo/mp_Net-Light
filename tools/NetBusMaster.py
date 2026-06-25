@@ -351,12 +351,69 @@ class NetBusMaster:
     def load_config(self):
         if os.path.exists(self.config_file):
             with open(self.config_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config = json.load(f)
+            
+            mapping = config.get("mapping", {})
+            normalized_mapping = {}
+            changed = False
+            
+            for raw_id, node_info in mapping.items():
+                normalized_id = self.normalize_device_id(raw_id)
+                if normalized_id != raw_id:
+                    changed = True
+                
+                if normalized_id not in normalized_mapping:
+                    normalized_mapping[normalized_id] = node_info
+                else:
+                    existing = normalized_mapping[normalized_id]
+                    if existing.get("play_id") is None and node_info.get("play_id") is not None:
+                        existing["play_id"] = node_info["play_id"]
+                    if not existing.get("last_sha") and node_info.get("last_sha"):
+                        existing["last_sha"] = node_info["last_sha"]
+            
+            config["mapping"] = normalized_mapping
+            if changed:
+                with open(self.config_file, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=4, ensure_ascii=False)
+            
+            return config
         return {"sync_delay_ms": 150, "mapping": {}}
     
     def save_config(self):
         with open(self.config_file, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, indent=4, ensure_ascii=False)
+
+    def normalize_device_id(self, raw_id):
+        if not raw_id:
+            return raw_id
+        
+        device_id = str(raw_id).strip().strip('/')
+        if device_id.startswith("ws/"):
+            device_id = device_id[3:]
+        
+        return device_id
+
+    def migrate_mapping_key(self, old_id, new_id):
+        old_id = self.normalize_device_id(old_id)
+        new_id = self.normalize_device_id(new_id)
+        
+        if not old_id or not new_id or old_id == new_id:
+            return False
+        
+        mapping = self.config.setdefault("mapping", {})
+        if old_id not in mapping:
+            return False
+        
+        old_entry = mapping.pop(old_id)
+        target_entry = mapping.setdefault(new_id, {})
+        
+        if target_entry.get("play_id") is None and old_entry.get("play_id") is not None:
+            target_entry["play_id"] = old_entry["play_id"]
+        if not target_entry.get("last_sha") and old_entry.get("last_sha"):
+            target_entry["last_sha"] = old_entry["last_sha"]
+        
+        self.save_config()
+        return True
     
     def get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -396,7 +453,7 @@ class NetBusMaster:
             if len(parts) >= 2:
                 path = parts[1].strip('/')
                 if path and path != 'ws':
-                    cid = path
+                    cid = self.normalize_device_id(path)
             
             resp = ("HTTP/1.1 101 Switching Protocols\r\n"
                     "Upgrade: websocket\r\n"
@@ -465,7 +522,7 @@ class NetBusMaster:
                 # 🔧 修复: MCU 回报的 render_fps 实际是当前帧号
                 current_frame = status_data.get('render_fps', 0)  # ✅ 这是帧号
                 mem_free = status_data.get('mem_free', 0)
-                real_id = status_data.get('id')
+                real_id = self.normalize_device_id(status_data.get('id'))
                 
                 # 🔧 更新当前帧号 (触发 FPS 计算)
                 self.panel.update_device(
@@ -476,6 +533,7 @@ class NetBusMaster:
                 
                 # 设备 ID 转移
                 if real_id and real_id != cid:
+                    self.migrate_mapping_key(cid, real_id)
                     if cid in self.panel.monitors:
                         self.panel.monitors[real_id] = self.panel.monitors.pop(cid)
                         self.panel.monitors[real_id].device_id = real_id
