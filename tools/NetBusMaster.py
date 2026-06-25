@@ -5,6 +5,7 @@ import os, sys
 import hashlib
 import struct
 import json
+import shlex
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -13,6 +14,16 @@ from collections import defaultdict, deque
 # ==================== 音頻模式自動檢測 (修復導入) ====================
 AUDIO_MODE = 'miniaudio'
 mixer = None  # 全局變量
+
+
+def print_audio_install_guide():
+    python_cmd = shlex.quote(sys.executable)
+    print("⚠️ 警告: pygame 和 miniaudio 都未安裝，音訊功能不可用")
+    print("請使用目前這個 Python 環境安裝其中一個套件:")
+    print(f"  優先推薦: {python_cmd} -m pip install miniaudio")
+    print(f"  備用方案: {python_cmd} -m pip install pygame")
+    print("安裝完成後，重新執行本程式即可啟用音訊功能。")
+    print(f"可選驗證: {python_cmd} -m pip show miniaudio pygame")
 
 try:
     import miniaudio
@@ -23,7 +34,7 @@ except ImportError:
         pygame.mixer.init()
         mixer = pygame.mixer  # 正確引用
     except ImportError:
-        print("⚠️ 警告: pygame 和 miniaudio 都未安裝,音訊功能不可用")
+        print_audio_install_guide()
         AUDIO_MODE = None
 
 print(f"[Audio Mode] {AUDIO_MODE}")
@@ -1066,7 +1077,8 @@ class NetBusMaster:
                         stream = miniaudio.stream_file(file_path)
                         device.start(stream)
                         
-                        while device.is_active and self.running and self.is_playing:
+                        # miniaudio 1.71 使用 running 表示裝置是否仍在播放
+                        while getattr(device, "running", False) and self.running and self.is_playing:
                             while self.is_paused and self.is_playing:
                                 time.sleep(0.1)
                             time.sleep(0.1)
